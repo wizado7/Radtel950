@@ -1,0 +1,537 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "application.hpp"
+#include "settings_flash.hpp"
+#include "settings_export.hpp"
+#include "settings_import.hpp"
+#include "fm_board.hpp"
+#include "voice_rx.hpp"
+#include "voice_watch.hpp"
+#ifdef RT950_BENCH_TX_HZ
+#include "voice_tx_board.hpp"
+#ifdef RT950_MAIN_TX
+#include "aprs_beacon.hpp"
+#include "aprs_dac.hpp"
+#include "aprs_adc.hpp"
+#include "aprs_background.hpp"
+#include "channel_scan.hpp"
+#include "voice_battery_limits.hpp"
+#include "aprs_ble.hpp"
+#endif
+#endif
+#include "controls.hpp"
+#include "board.h"
+#include "ui.hpp"
+extern "C" {
+#include "drivers/lcd.h"
+#include "app/encoder.h"
+#include "../diagnostic/nmea_status.h"
+#include "drivers/gpio.h"
+uint32_t get_tick(void);
+void delay_ms(uint32_t);
+}
+using namespace rt950;
+#ifdef RT950_MAIN_TX
+static uint8_t held_ptt_source,enabled_ptt_inputs;
+static uint16_t session_power_mv;
+static bool tail_hold;
+#endif
+extern "C" int main(void) {
+    SCB->SCR &= ~6u; // shallow sleep; never inherit SLEEPDEEP/SLEEPONEXIT
+    board_init();board_battery_init(get_tick());lcd_init();encoder_init();
+    Application app;load_settings(app);
+    board_display_init();ui_boot_screen();board_display_brightness((uint8_t)app.brightness());delay_ms(400);
+    SettingsAutosave autosave;autosave.begin(app,get_tick());Controls keys;PowerSwitch power;WakeGuard wake_keys;
+    // Recovery route to diagnostics even if the matrix labels are wrong.
+    // A held key at boot always enters diagnostics.
+    if(board_ptt_mask()) app.key(Key::Debug);
+    board_gps_enable(app.config().gps_on);
+    uint32_t last_input=get_tick(),last_draw=last_input;
+    uint32_t last_encoder=last_input;
+    bool keys_awake=true;
+    fm::BoardProbe fm_probe;
+    voice::BoardReceiver voice_rx;voice::Watch voice_watch;
+#ifdef RT950_BENCH_TX_HZ
+    voice::initialize_factory_spi();
+    voice::UhfCalibration factory;
+    voice::CalibrationStatus factory_status;
+    const bool factory_valid=voice::read_board_uhf_calibration(factory,&factory_status);
+#ifdef RT950_BENCH_MATRIX
+    voice::VhfPaCalibration vhf;
+    const bool vhf_valid=factory_valid && voice::read_board_vhf_calibration(vhf);
+#endif
+#ifdef RT950_MAIN_TX
+    voice::SqlCalibration sql_calibration;
+    if(voice::read_board_sql_calibration(sql_calibration))voice_rx.use_sql_calibration(sql_calibration);
+    voice::BatteryTxLimits battery_limits;
+    const bool battery_limits_factory=factory_valid && voice::read_board_battery_limits(battery_limits);
+    voice::CbPaCalibration cb;
+    const bool cb_valid=factory_valid && voice::read_board_cb_calibration(cb);
+#endif
+    voice::BoardUhfTx tx_board(voice_rx,factory,voice::factory_power_selector(TxPower::Low),[] {
+#ifdef RT950_MAIN_TX
+        if(board_power_switch_off())return false;
+        if(tail_hold)return voice::tail_inputs_released(board_ptt_mask(),enabled_ptt_inputs);
+        return voice::ptt_source(board_ptt_mask()&enabled_ptt_inputs)==held_ptt_source &&
+            held_ptt_source;
+#else
+        return (board_ptt_mask()&1u) && !board_power_switch_off();
+#endif
+    }
+#ifdef RT950_BENCH_MATRIX
+    ,vhf_valid?&vhf:nullptr
+#endif
+#ifdef RT950_MAIN_TX
+    ,cb_valid?&cb:nullptr
+#endif
+    );
+    voice::UhfTransmitter<voice::BoardUhfTx> transmitter(tx_board);
+    voice::Ptt ptt;
+#ifdef RT950_MAIN_TX
+    voice::BoardUhfTx packet_board(voice_rx,factory,voice::factory_power_selector(TxPower::Low),[] {
+        return !board_ptt_mask() && !board_power_switch_off();
+    },vhf_valid?&vhf:nullptr,nullptr,true);
+    voice::UhfTransmitter<voice::BoardUhfTx> packet_rf(packet_board);
+    aprs::DacBurst packet_audio;
+    aprs::AdcCapture packet_rx;
+    aprs::BleExport ble_export;
+    aprs::BackgroundListen aprs_background(get_tick());
+    voice::ChannelScan channel_scan;
+    uint32_t last_gps_export=get_tick()-2000u;
+    aprs::FrameTransmitter packet_frame;
+    aprs::BeaconSession<decltype(packet_rf),aprs::DacBurst> beacon(packet_rf,packet_audio);
+    uint32_t last_beacon=get_tick(),beacon_tx_hz=0;
+#endif
+#endif
+    static SettingsExport<BackupUart> settings_export;
+    static SettingsImport<BackupUart> settings_import;
+    InputStatus input;bool gps=app.config().gps_on,display_awake=true,wake_encoder=false;
+#ifdef RT950_BENCH_TX_HZ
+    input.factory_ctcss_raw=factory.ctcss_raw;
+    input.factory_ctcss_level=factory.ctcss_level;
+#endif
+#ifdef RT950_MAIN_TX
+    uint32_t release_notice_since=0;
+#endif
+    app.activity(get_tick());
+    custom_heartbeat=get_tick();custom_watchdog_armed=1;
+    for(;;) {
+        const uint32_t now=get_tick();custom_heartbeat=now;
+        // A held PTT is activity even at the exact auto-lock deadline.
+        if(board_ptt_mask())app.activity(now);
+        app.tick(now);
+        board_battery_poll(now);
+        const bool switch_off=board_power_switch_off()!=0;
+        if(power.poll(switch_off,now)) {
+            settings_export.cancel();settings_import.cancel();
+#ifdef RT950_BENCH_TX_HZ
+#ifdef RT950_MAIN_TX
+            ble_export.enable(false,now);
+            packet_rx.stop();
+            beacon.stop(now);
+#endif
+            ptt.poll(transmitter,{},now,false);
+#endif
+            fm_probe.poll(false,now);
+            voice_rx.enable(false);
+            autosave.poll(app,now,true,board_ptt_mask()!=0);
+            board_power_cut();
+        }
+        if(uint32_t(now-last_input)>=10u) {
+            board_gps_poll(now);
+            last_input=now;input.sampled=board_scan_key();const uint8_t code=keys.poll(input.sampled,now);
+            if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
+            keys_awake=wake_keys.poll(input.sampled,now);
+            if(code!=255) {input.last=uint8_t(code&127u);++input.presses;if(keys_awake)dispatch_key(app,code);}
+        }
+        if(uint32_t(now-last_encoder)>=1u) {
+            last_encoder=now;const int8_t dir=encoder_poll();
+            input.encoder_ab=encoder_state();const uint32_t edges=encoder_edges();
+            if(edges!=input.edges){if(!app.screen_awake())wake_encoder=true;app.activity(now);}
+            input.edges=edges;input.invalid_edges=encoder_invalid_edges();input.encoder_lost=encoder_overruns();
+            if(dir) {if(dir>0)++input.cw;else ++input.ccw;if(!wake_encoder)app.key(dir>0?Key::Up:Key::Down);wake_encoder=false;}
+        }
+        input.ptt_mask=board_ptt_mask();
+        if(!app.side_ptt_enabled())input.ptt_mask&=3u;
+        if(input.ptt_mask) {
+            app.backup_ptt();settings_export.cancel();settings_import.cancel();
+            app.activity(now);
+            if(app.page()==Page::FmProbe && app.fm_audio())app.key(Key::Back);
+        }
+        if(app.page()==Page::Debug) {
+            if(input.sampled==10)board_radio_led(1,0);
+            else if(input.sampled==11)board_radio_led(0,1);
+            else if(input.sampled==17)board_radio_led(0,0);
+        }
+        if(!switch_off) {
+            bool rf_busy=input.ptt_mask!=0;
+#ifdef RT950_MAIN_TX
+            rf_busy=rf_busy || beacon.active();
+#endif
+            if(const char *result=autosave.poll(app,now,false,rf_busy || settings_export.active() || settings_import.active() || app.page()==Page::Backup || app.page()==Page::Import))app.report_save(result);
+        }
+        input.save_state=autosave.state();
+        if(app.take_aprs_clear())input.aprs_stations.clear();
+        const Page page=app.page();
+        const bool fm_open=page==Page::FmProbe;
+        const bool voice_enabled=!switch_off && !fm_open &&
+            page!=Page::Debug && page!=Page::LcdTest && page!=Page::FlashInfo;
+        input.monitor_active=app.monitor_active();
+        const bool monitor=input.monitor_active;
+        bool tx_owns_radio=false,transmitting=false;
+#ifdef RT950_BENCH_TX_HZ
+        const auto &config=app.config();
+#ifdef RT950_MAIN_TX
+        enabled_ptt_inputs=uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u));
+        const uint8_t source=voice::ptt_source(input.ptt_mask&enabled_ptt_inputs);
+        const bool tx_session=ptt.state()==voice::Ptt::State::Preparing ||
+            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
+        const uint8_t tx_slot=!source && tx_session?ptt.target_slot():voice::ptt_slot(source,config.active);
+#else
+        const uint8_t tx_slot=config.active;
+#endif
+        const auto &slot=config.vfo[tx_slot];
+        const auto &profile=app.radio_profile(tx_slot);
+#ifdef RT950_MAIN_TX
+        ble_export.enable(config.ble_on && !switch_off,now);
+        const bool export_allowed=config.ble_on && config.ble_export && !switch_off;
+        ble_export.poll(export_allowed,now);
+        const bool ptt_down=board_ptt_mask()!=0;
+        const bool power_sample_ok=board_battery_sample_fresh(now);
+        const uint8_t battery_raw=board_battery_raw();
+        const bool power_tx_ok=power_sample_ok && battery_limits.permits(battery_raw);
+        app.power_battery(power_sample_ok?board_battery_mv():0);
+        const bool aprs_allowed=config.aprs_rx && voice_enabled && !ptt_down && !monitor &&
+            page!=Page::PowerCalibration && page!=Page::PowerMeasured &&
+            ptt.state()==voice::Ptt::State::Idle && !beacon.active();
+        const bool background=aprs_background.poll(now,aprs_allowed && page==Page::Radio,
+            voice_rx.status().ready && voice_rx.has_sample() && !voice_rx.carrier() &&
+            !voice_rx.status().receiving,uint32_t(config.aprs_scan_seconds)*1000u);
+        const bool aprs_page=page==Page::Aprs || page==Page::AprsMessages;
+        const bool aprs_listen=background || (aprs_allowed && aprs_page);
+        if(!aprs_listen)packet_rx.stop();
+        const auto &identity=app.beacon_identity();
+        const uint32_t packet_hz=config.aprs_hz;
+        const bool fix=config.gps_on && nav_fix_fresh(now);
+        const bool packet_calibrated=packet_hz%10==0 && (voice::vhf_tx_frequency(packet_hz)?
+            vhf_valid && vhf.bias(packet_hz,voice::factory_power_selector(TxPower::Low)):
+            factory_valid && voice::uhf_tx_frequency(packet_hz));
+        const bool beacon_allowed=page==Page::Radio && voice_enabled && !ptt_down && !monitor && power_tx_ok &&
+            packet_calibrated && config.beacon_on && fix && identity.callsign[0];
+        if(beacon.active() && (beacon_tx_hz!=packet_hz || !beacon_allowed))beacon.stop(now);
+        if(!beacon.active() && beacon_allowed && !aprs_listen && !voice_rx.carrier() &&
+           voice_rx.status().ready && ptt.state()==voice::Ptt::State::Idle &&
+           uint32_t(now-last_beacon)>=config.beacon_seconds*1000u) {
+            last_beacon=now;
+            const auto &nav=*nav_get();
+            if(aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
+                                   nav.lat,nav.ns[0],nav.lon,nav.ew[0],
+                                   beacon_symbols[app.beacon_symbol_index()].code)) {
+                voice_watch.poll(voice_rx,config,now,false,false);
+                beacon_tx_hz=packet_hz;
+                beacon.start(packet_hz,now);
+            }
+        }
+        if(beacon.active())beacon.poll(packet_frame,now,beacon_allowed);
+#endif
+#ifdef RT950_MAIN_TX
+        const bool vhf_tx=voice::vhf_tx_frequency(slot.tx_hz);
+        const bool cb_tx=voice::cb_fm_frequency(slot.tx_hz);
+        const bool frequency_allowed=cb_tx?
+            slot.rx_hz==slot.tx_hz && profile.shift==Shift::None && profile.power==TxPower::Low &&
+            profile.tx_tone.kind==ToneKind::Off && profile.rx_tone.kind==ToneKind::Off:
+            vhf_tx?voice::vhf_tx_frequency(slot.rx_hz):
+            voice::uhf_tx_frequency(slot.tx_hz) && voice::uhf_tx_frequency(slot.rx_hz);
+        const uint8_t selector=voice::factory_power_selector(profile.power);
+        const bool numeric=numeric_power(profile.power);
+        const unsigned pa_index=voice::uhf_pa_index(slot.tx_hz);
+        const uint8_t factory_low=factory_valid && pa_index<13?factory.pa[2][pa_index]:0;
+        app.power_code_limit(factory_low);
+        // Select a record at the unkeyed battery voltage. Normal battery
+        // protection remains live during TX; load sag must not select another
+        // PA code in the middle of a session.
+        if(ptt.state()==voice::Ptt::State::Idle)session_power_mv=uint16_t(app.power_battery());
+        const bool power_probe=app.power_test(tx_slot) && (source==1 || (!source && tx_session));
+        const auto measured=resolve_target_power(app.measured_power(),profile,slot.rx_hz,slot.tx_hz,
+            session_power_mv,factory_low,power_probe,app.power_code());
+        const uint8_t measured_code=measured.code;
+        const bool numeric_ready=measured.ready;
+        if(ptt.state()==voice::Ptt::State::Idle) {
+            tx_board.select_power(selector);
+            tx_board.select_measured_bias(numeric?slot.tx_hz:0,measured_code);
+        }
+        const bool power_allowed=selector<3 && tx_board.power_selector()==selector && numeric_ready &&
+            tx_board.measured_bias()==measured_code && tx_board.measured_frequency()==(numeric?slot.tx_hz:0);
+        input.power_status=!numeric?"":!numeric_ready?"POWER CALIBRATION NEEDED":
+            profile.power==TxPower::Lpd10mW?"10 mW TARGET / RECORD":"0.5 W TARGET / RECORD";
+        const bool calibration_valid=cb_tx?cb_valid && cb.bias(slot.tx_hz,selector):vhf_tx?
+            vhf_valid && vhf.bias(slot.tx_hz,selector):factory_valid;
+#else
+        const bool simplex=slot.tx_hz==slot.rx_hz && profile.shift==Shift::None;
+        bool frequency_allowed=simplex && slot.rx_hz==RT950_BENCH_TX_HZ;
+        bool power_allowed=profile.power==TxPower::Low;
+#ifdef RT950_BENCH_MATRIX
+        frequency_allowed=frequency_allowed ||
+            (simplex && (slot.rx_hz==430025000u || slot.rx_hz==460025000u)) ||
+            (slot.rx_hz==430025000u && slot.tx_hz==430625000u &&
+             profile.shift==Shift::Plus && profile.power==TxPower::Low);
+        if(slot.rx_hz==145500000u)
+            frequency_allowed=simplex && profile.power==TxPower::Low;
+        const uint8_t selector=voice::factory_power_selector(profile.power);
+        if(ptt.state()==voice::Ptt::State::Idle)tx_board.select_power(selector);
+        power_allowed=selector<3 && tx_board.power_selector()==selector;
+#endif
+        bool calibration_valid=factory_valid;
+#ifdef RT950_BENCH_MATRIX
+        if(slot.tx_hz==145500000u)
+            calibration_valid=vhf_valid && vhf.bias(slot.tx_hz,tx_board.power_selector());
+#endif
+#endif
+#ifdef RT950_MAIN_TX
+        if(ptt.state()==voice::Ptt::State::Idle) {
+            tx_board.select_tone(profile.tx_tone);
+            tx_board.select_bandwidth(profile.narrow);
+            tx_board.select_microphone(app.mic_gain());
+        }
+#endif
+        const bool tone_allowed=tx_board.permits_tone(profile.tx_tone)
+#ifndef RT950_MAIN_TX
+            && profile.rx_tone.kind==ToneKind::Off
+#endif
+            ;
+        const bool allowed=calibration_valid && voice_enabled &&
+#ifdef RT950_MAIN_TX
+            app.voice_tx_page(power_probe) && power_tx_ok &&
+#else
+            page==Page::Radio &&
+#endif
+            frequency_allowed &&
+#ifdef RT950_MAIN_TX
+            (!cb_tx || profile.narrow) &&
+#else
+            profile.narrow &&
+#endif
+            !profile.tx_inhibit &&
+            !profile.reverse && tone_allowed &&
+#ifdef RT950_MAIN_TX
+            tx_board.microphone_gain()==app.mic_gain() &&
+#endif
+            power_allowed;
+#ifdef RT950_MAIN_TX
+        const bool pressed=source!=0;
+        if(ptt.state()==voice::Ptt::State::Idle)held_ptt_source=source;
+        // Keep a finite software limit even when the configured TOT is off.
+        const uint16_t timeout=power_probe?5:profile.timeout_seconds?profile.timeout_seconds:300;
+        const bool tail_enabled=app.enabled(Option::Tail) && !power_probe && !cb_tx && held_ptt_source!=0;
+        tail_hold=!pressed && allowed && tail_enabled &&
+            (ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending);
+        const voice::TxRequest request{slot.tx_hz,timeout,tx_slot,
+            allowed && (source==held_ptt_source || tail_hold),profile.busy_lock,tail_enabled};
+#else
+        const bool pressed=(input.ptt_mask&1u)!=0;
+        const voice::TxRequest request{slot.tx_hz,15,tx_slot,allowed,true};
+#endif
+        if(pressed && allowed && ptt.state()==voice::Ptt::State::Idle)
+            voice_watch.poll(voice_rx,config,now,false,false);
+        // After a preempted packet the shared receiver may still be restarting.
+#ifdef RT950_MAIN_TX
+        const bool was_transmitting=ptt.state()==voice::Ptt::State::Transmitting ||
+            ptt.state()==voice::Ptt::State::Ending;
+#endif
+        if(!pressed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready)
+            ptt.poll(transmitter,request,now,pressed);
+#ifdef RT950_MAIN_TX
+        if(!pressed && was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
+            release_notice_since=now;
+#endif
+        transmitting=ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
+        tx_owns_radio=transmitting || ptt.state()==voice::Ptt::State::Preparing;
+#ifdef RT950_MAIN_TX
+        constexpr const char *tx_labels[]={"TX SLOT A","TX SLOT B","TX SLOT C"};
+        const char *tx_on=power_probe?"POWER TEST / UNMEASURED":tx_labels[tx_slot];
+#else
+        constexpr const char *tx_on="BENCH TX ON";
+#endif
+#ifdef RT950_MAIN_TX
+        if(beacon.active()) {
+            tx_owns_radio=true;
+            transmitting=beacon.transmitting();
+        }
+#endif
+        const char *calibration_error="TX NO CALIBRATION";
+#ifdef RT950_MAIN_TX
+        constexpr const char *factory_errors[]={"TX NO CALIBRATION","CAL SPI UNAVAILABLE",
+            "CAL SPI READ FAILED","CAL MARKER INVALID","CAL PA TABLE INVALID","CAL MIC INVALID"};
+        if(!factory_valid)calibration_error=factory_errors[unsigned(factory_status)];
+#endif
+        input.bench_ptt=ptt.state()==voice::Ptt::State::Ending?"TX ENDING":!pressed?"":transmitting?tx_on:tx_owns_radio?"TX PREPARING":
+            profile.tx_inhibit?"TX INHIBITED":
+            !slot.tx_hz?"TX FREQ UNSET":
+            !calibration_valid?calibration_error:
+#ifdef RT950_MAIN_TX
+            !power_sample_ok?"TX BATTERY SENSOR":
+            !power_tx_ok?(battery_raw<battery_limits.low?"TX LOW BATTERY":"TX HIGH VOLTAGE"):
+            numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
+#endif
+            !allowed?"TX PROFILE BLOCKED":"TX BLOCKED / RELEASE";
+#ifdef RT950_MAIN_TX
+        constexpr const char *release_errors[]={"","TX END NOT PERMITTED","TX END PROFILE CHANGED",
+            "TX END TIME LIMIT","TX END RADIO BLOCKED","TX END SIGNAL FAILED"};
+        if(!pressed && ptt.state()==voice::Ptt::State::Idle &&
+           ptt.release_error()!=voice::Ptt::ReleaseError::None && uint32_t(now-release_notice_since)<2000u) {
+            input.bench_ptt=release_errors[unsigned(ptt.release_error())];
+            if(ptt.release_error()==voice::Ptt::ReleaseError::Signalling) {
+                constexpr const char *tail_errors[]={"TX END SIGNAL FAILED","TX END NO RF STATE",
+                    "TX END LEVEL INVALID","TX END WRITE BLOCKED"};
+                input.bench_ptt=tail_errors[unsigned(tx_board.tail_failure())];
+            }
+        }
+        if(beacon.transmitting())input.bench_ptt="APRS TX";
+        auto &diagnostics=input.power;
+        diagnostics.low=battery_limits.low;diagnostics.high=battery_limits.High;
+        diagnostics.factory_limits=battery_limits_factory;
+        diagnostics.profile_check=profile.tx_inhibit?"TX INHIBITED":!slot.tx_hz?"TX FREQ UNSET":
+            !calibration_valid?calibration_error:!power_sample_ok?"TX BATTERY SENSOR":
+            !power_tx_ok?(battery_raw<battery_limits.low?"TX LOW BATTERY":"TX HIGH VOLTAGE"):
+            !frequency_allowed?"TX OUT OF BAND":profile.reverse?"TX PROFILE BLOCKED":
+            !tone_allowed?"TX TONE INVALID":!power_allowed?"POWER CALIBRATION NEEDED":
+            cb_tx && !profile.narrow?"TX PROFILE BLOCKED":"STATIC CHECKS PASS";
+        const bool packet_transmitting=beacon.transmitting();
+        const uint8_t commanded_code=(CRM->APB1EN&CRM_APB1EN_DACEN)?uint8_t(DAC->DHR8R2):0;
+        diagnostics.trace.observe(now,transmitting,packet_transmitting?beacon_tx_hz:slot.tx_hz,
+            packet_transmitting?TxSupplyTrace::Owner::Aprs:TxSupplyTrace::Owner::Voice,
+            commanded_code,board_battery_mv(),board_battery_sample_age(now),power_sample_ok);
+#endif
+#endif
+        input.power.battery_mv=board_battery_mv();
+        input.power.raw12=board_battery_raw12();input.power.raw8=board_battery_raw();
+        input.power.adc_age=board_battery_sample_age(now);input.power.adc_errors=board_battery_errors();
+        input.power.fresh=board_battery_sample_fresh(now)!=0;
+        if(!voice_enabled) {
+            voice_watch.poll(voice_rx,app.config(),now,false,false);
+            voice_rx.enable(false);
+        }
+        fm_probe.poll(fm_open,now,app.sw_am());
+        if(app.page()==Page::FmProbe) {
+            fm_probe.listen(app.fm_request(),app.fm_seek(),app.fm_audio(),now);
+            if(app.fm_seek() && fm_probe.seek_finished())app.fm_seek_result(fm_probe.seek_result());
+            input.fm_audio_enabled=fm_probe.audio_enabled();
+            input.fm_audio_error=fm_probe.audio_error();
+            const auto &state=fm_probe.state();
+            input.fm_phase=state.phase();input.fm_failure=state.failure();
+            input.fm_frequency=state.frequency();input.fm_part=state.part();
+            input.fm_signal_ready=state.signal(now,input.fm_signal);
+        }
+#ifdef RT950_MAIN_TX
+        const bool scanning=app.scan_page() && voice_enabled && !ptt_down && !tx_owns_radio;
+        const bool scan_sample=channel_scan.frequency() &&
+            voice_rx.status().frequency==channel_scan.frequency() && voice_rx.has_sample();
+        const unsigned previous_channel=app.scan_channel();
+        const auto *previous_memory=app.memory(previous_channel);
+        const auto &previous_profile=previous_memory?previous_memory->radio:app.scan_vfo_profile();
+        const bool scan_open=previous_profile.squelch==0 && previous_profile.rx_tone.kind==ToneKind::Off?
+            voice_rx.carrier():voice_rx.squelch_open(now);
+        const unsigned scanned=channel_scan.poll(app,now,app.scan_page() && voice_enabled,
+            scan_sample,scan_open,!scanning);
+        app.scan_target(scanned,channel_scan.frequency());
+#endif
+        if(voice_enabled && !tx_owns_radio) {
+            voice_rx.enable(true);
+            // Select/settle the active slot before opening Monitor audio.
+            // This avoids briefly opening whichever slot Watch had visited.
+            if(monitor)voice_watch.poll(voice_rx,app.config(),now,
+                (voice_rx.status().ready || voice_rx.status().frequency) && !voice_rx.status().fault,true);
+#ifdef RT950_MAIN_TX
+            const auto *scan_memory=scanning?app.memory(scanned):nullptr;
+            const auto &rx_profile=scan_memory?scan_memory->radio:scanning?app.scan_vfo_profile():
+                app.radio_profile(voice_watch.slot());
+            const Tone rx_tone=aprs_listen?Tone{}:rx_profile.rx_tone;
+            voice_rx.set_profile(rx_tone,rx_tone.kind==ToneKind::Ctcss?factory.ctcss_level:
+                rx_tone.kind==ToneKind::Dcs?factory.dcs_level:0,now,aprs_listen || rx_profile.narrow,rx_profile.squelch);
+            if(scanning) {
+                voice_watch.poll(voice_rx,config,now,false,false);
+                if(channel_scan.frequency() && (voice_rx.status().frequency!=channel_scan.frequency() ||
+                   scanned!=previous_channel))
+                    voice_rx.tune(channel_scan.frequency(),now);
+            }
+            if(aprs_listen) {
+                voice_watch.poll(voice_rx,config,now,false,false);
+                if(voice_rx.status().frequency!=config.aprs_rx_hz) {
+                    packet_rx.stop();
+                    voice_rx.tune(config.aprs_rx_hz,now);
+                }
+            }
+#endif
+#ifdef RT950_MAIN_TX
+            voice_rx.poll(now,ptt_down,monitor,aprs_listen);
+#else
+            voice_rx.poll(now,input.ptt_mask!=0,monitor);
+#endif
+            const auto &rx=voice_rx.status();
+#ifdef RT950_MAIN_TX
+            if(aprs_listen) {
+                struct ReceiveContext {
+                    InputStatus &status;
+                    aprs::BleExport &ble;
+                    uint32_t now;
+                    bool export_allowed,background;
+                } receive{input,ble_export,now,export_allowed,background};
+                packet_rx.poll(rx.ready && rx.frequency==config.aprs_rx_hz && !rx.fault,now,
+                    [](void *context,const uint8_t *frame,size_t size) {
+                        size_t payload=0;
+                        auto &received=*static_cast<ReceiveContext *>(context);
+                        if(!aprs::ui_payload(frame,size,payload))return;
+                        ++received.status.aprs_frames;
+                        if(received.background)++received.status.aprs_background_frames;
+                        received.status.aprs_stations.record(frame,size,received.now);
+                        received.status.aprs_messages.record(frame,size);
+                        if(received.export_allowed && !received.ble.enqueue(frame,size,received.now))
+                            ++received.status.aprs_export_dropped;
+                    },&receive);
+            } else if(!scanning)
+#endif
+            voice_watch.poll(voice_rx,app.config(),now,(rx.ready || rx.frequency) && !rx.fault,
+                             input.ptt_mask!=0 || monitor);
+        }
+#ifdef RT950_MAIN_TX
+        input.aprs_receiving=packet_rx.running();
+        input.aprs_windows=aprs_background.windows();
+        input.aprs_cancelled=aprs_background.cancelled();
+        if(export_allowed && uint32_t(now-last_gps_export)>=2000u) {
+            last_gps_export=now;
+            const aprs::GpsTelemetry gps_status(*nav_get(),config.gps_on,board_gps_bytes()!=0,now);
+            ble_export.enqueue_gps(gps_status,now);
+        }
+#endif
+        if(app.page()!=Page::Backup)settings_export.cancel();
+        if(app.page()!=Page::Import)settings_import.cancel();
+        const bool backup_allowed=app.page()==Page::Backup && !switch_off && !board_ptt_mask() && !transmitting;
+        if(app.take_backup_request() && backup_allowed)settings_export.begin(app,now);
+        settings_export.poll(now,backup_allowed);
+        const bool import_allowed=app.page()==Page::Import && !switch_off && !board_ptt_mask() && !transmitting;
+        if(app.take_import_request() && import_allowed && !settings_import.active())settings_import.begin(now);
+        settings_import.poll(now,import_allowed);
+        app.import_ready(settings_import.phase()==ImportPhase::Checked);
+        if(app.take_import_apply() && import_allowed) {
+            settings_import.apply(app,now);app.import_ready(false);ui_invalidate();
+        }
+        input.import_phase=settings_import.phase();input.import_received=settings_import.received();
+        input.import_channels=uint16_t(settings_import.channels());
+        input.backup_phase=settings_export.phase();input.backup_sent=settings_export.sent();input.backup_total=settings_export.total();
+        input.voice=voice_rx.status();
+#ifdef RT950_MAIN_TX
+        // A packet carrier is not activity on the voice slot shown on the home screen.
+        if(aprs_listen)input.voice.receiving=false;
+#endif
+        input.voice.slot=voice_watch.slot();
+        if(page!=Page::Debug)board_radio_led(input.voice.receiving && !input.ptt_mask,transmitting);
+        if(gps!=app.config().gps_on) {gps=app.config().gps_on;board_gps_enable(gps);}
+        if(!app.screen_awake() && display_awake){board_display_sleep();display_awake=false;}
+        if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
+        if(app.screen_awake() && uint32_t(now-last_draw)>=200u) {last_draw=now;ui_draw(app,input,now);}
+        board_display_brightness(app.screen_awake()?(uint8_t)app.brightness():0);
+        // Sleep only the CPU, keep SysTick/UART and GPIO polling active.
+        // SysTick wakes us every millisecond; the watchdog still checks main.
+        if(app.power_save()) __asm volatile("dsb\n wfi" ::: "memory");
+    }
+}
+

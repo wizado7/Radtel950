@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "../diagnostic/nmea_status.h"
+void board_init(void);
+void board_display_init(void);
+void board_display_brightness(uint8_t level);
+void board_display_tick(void);
+void board_display_sleep(void);
+void board_display_begin_wake(void);
+void board_display_shutdown(void);
+void board_radio_led(uint8_t rx,uint8_t tx);
+void board_battery_init(uint32_t now);
+void board_battery_poll(uint32_t now);
+uint16_t board_battery_mv(void);
+uint8_t board_battery_sample_fresh(uint32_t now);
+uint16_t board_flash_kib(void);
+uint8_t board_storage_probe(void); /* bit 0/1: nonblank slot, 255: unsupported */
+uint8_t board_battery_percent_from_mv(uint16_t mv);
+uint8_t board_battery_raw(void);
+uint16_t board_battery_raw12(void);
+uint32_t board_battery_sample_age(uint32_t now);
+uint32_t board_battery_errors(void);
+uint8_t board_scan_key(void); // OEM-compatible raw codes 0..21, 255 = none
+uint8_t board_power_switch_off(void);
+void board_power_cut(void);
+uint8_t board_ptt_mask(void); /* bit 0 PE3, bit 1 PE2, bit 2 PE5, pressed */
+void board_gps_enable(uint8_t on);
+void board_gps_poll(uint32_t now);
+uint32_t board_gps_bytes(void);
+uint32_t board_gps_errors(void);
+uint32_t board_gps_dropped(void);
+extern volatile uint32_t custom_heartbeat;
+extern volatile uint8_t custom_watchdog_armed;
+#ifdef __cplusplus
+}
+#endif
