@@ -3,6 +3,18 @@
 #include <stdint.h>
 
 namespace rt950 {
+enum class SupplyFault : uint8_t { None, Sensor, Low, High };
+constexpr SupplyFault classify_supply(bool fresh,uint8_t raw,uint8_t low,uint8_t high) {
+    return !fresh?SupplyFault::Sensor:raw<low?SupplyFault::Low:raw>high?SupplyFault::High:SupplyFault::None;
+}
+inline const char *supply_fault_text(SupplyFault fault) {
+    switch(fault) {
+    case SupplyFault::Sensor:return "TX BATTERY SENSOR";
+    case SupplyFault::Low:return "TX LOW BATTERY";
+    case SupplyFault::High:return "TX HIGH VOLTAGE";
+    default:return "";
+    }
+}
 // A volatile history of actual battery ADC samples around the last TX.
 // It neither measures RF power nor controls the transmitter.
 class TxSupplyTrace final {
@@ -21,7 +33,7 @@ public:
             active_=true;has_session_=true;frequency_=hz;owner_=owner;started_=now;
             before_=idle_valid_ && uint32_t(now-idle_stamp_)<2000u?idle_mv_:0;
             idle_valid_=false;
-            minimum_=maximum_=0;samples_=0;sample_seen_=false;
+            minimum_=maximum_=0;samples_=0;sample_seen_=false;fault_=SupplyFault::None;
         }
         code_=code;
         // A sample from before keying is not evidence of voltage under TX.
@@ -44,6 +56,8 @@ public:
     unsigned maximum() const {return maximum_;}
     unsigned samples() const {return samples_;}
     unsigned code() const {return code_;}
+    void trip(SupplyFault fault) {if(active_ && fault_==SupplyFault::None)fault_=fault;}
+    SupplyFault fault() const {return fault_;}
     bool sag_valid() const {return before_ && samples_;}
     int sag() const {return int(before_)-int(minimum_);}
 private:
@@ -51,13 +65,35 @@ private:
     uint16_t idle_mv_=0,before_=0,minimum_=0,maximum_=0,samples_=0;
     uint8_t code_=0;
     Owner owner_=Owner::Voice;
+    SupplyFault fault_=SupplyFault::None;
     bool active_=false,has_session_=false,idle_valid_=false,sample_seen_=false;
+};
+// Time attributed to the previous loop state, in a rolling uint32_t timebase.
+// These overlapping counters report work scheduled by firmware, not current.
+class WorkloadTime final {
+public:
+    enum Activity : uint8_t { SingleRx, WatchRx, Gps, Ble, AprsRx, Tx, Count };
+    void observe(uint32_t now,uint8_t mask) {
+        const uint32_t elapsed=now-last_;
+        for(unsigned i=0;i<Count;++i)if(mask_&(1u<<i)) {
+            const uint32_t room=UINT32_MAX-active_[i];
+            active_[i]+=elapsed<room?elapsed:room;
+        }
+        last_=now;mask_=mask;
+    }
+    uint32_t seconds(Activity activity) const {return active_[activity]/1000u;}
+private:
+    uint32_t active_[Count]{},last_=0;
+    uint8_t mask_=0;
 };
 struct PowerDiagnostics {
     TxSupplyTrace trace{};
+    WorkloadTime workload{};
     uint32_t adc_age=0xffffffffu,adc_errors=0;
     uint16_t battery_mv=0,raw12=0;
     uint8_t raw8=0,low=0,high=0;
+    uint8_t reset_flags=0;
+    int mcu_degrees=-32768;
     bool fresh=false,factory_limits=false;
     const char *profile_check="NO DATA";
 };

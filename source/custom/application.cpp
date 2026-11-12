@@ -77,6 +77,8 @@ void Application::user_key(unsigned which,bool held) {
  case KeyAction::Gps:key(Key::Gps);break;
  case KeyAction::Aprs:key(Key::Aprs);break;
  case KeyAction::Channels:key(Key::Channels);break;
+ case KeyAction::ScanChannels:key(Key::ChannelScan);break;
+ case KeyAction::ScanVfo:key(Key::VfoScan);break;
  default:break;
  }
 }
@@ -287,6 +289,12 @@ void Application::fm_seek_result(uint16_t found) {
 void Application::digit(unsigned d) {
     last_activity_=now_;
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
+    if(d>9)return;
+    if(page_==Page::Radio && config_.vfo[config_.active].channel_mode)key(Key::Channels);
+    if(page_==Page::Channels || page_==Page::StoreChannel) {
+        if(editor_digits_==2){editor_digits_=0;editor_value_=0;}
+        editor_value_=editor_value_*10u+d;++editor_digits_;notify("");return;
+    }
     if(page_==Page::FmPresets || page_==Page::AmPresets) {
         if(!broadcast_confirm() && d>=1 && d<=BroadcastCount)broadcast_selection_=uint8_t(d-1);
         return;
@@ -596,7 +604,7 @@ void Application::key(Key k) {
     }
     if(page_==Page::PowerStatus) {
         if(k==Key::Up || k==Key::Down)
-            power_status_page_=uint8_t((power_status_page_+(k==Key::Down?1u:2u))%3u);
+            power_status_page_=uint8_t((power_status_page_+(k==Key::Down?1u:3u))%4u);
         if(k==Key::Back || k==Key::Menu){page_=Page::Settings;notify("");}
         return;
     }
@@ -646,9 +654,12 @@ void Application::key(Key k) {
     if(k==Key::PowerCalibration) {
         const auto &profile=active_radio_profile();
         const uint32_t hz=config_.vfo[config_.active].tx_hz;
-        if(!numeric_power(profile.power) || !power_channel(profile.power,hz) || !profile.narrow ||
+        if(!numeric_power(profile.power) || !profile.narrow ||
            profile.shift!=Shift::None || profile.reverse || hz!=config_.vfo[config_.active].rx_hz) {
             notify("SELECT TARGET AND SIMPLEX");return;
+        }
+        if(hz!=calibration_frequency(profile.power)) {
+            notify(profile.power==TxPower::Lpd10mW?"SET VFO TO 433.00000":"SET VFO TO 446.00000");return;
         }
         const auto *point=measured_power_.find(profile.power,hz,power_battery_mv_);
         power_code_=point?point->code:1;power_hz_=hz;power_kind_=profile.power;
@@ -940,11 +951,11 @@ void Application::key(Key k) {
     if(k==Key::ChannelScan || k==Key::VfoScan) {
         parent_=page_==Page::Settings?Page::Settings:Page::Radio;
         page_=k==Key::ChannelScan?Page::ChannelScan:Page::VfoScan;
-        scan_channel(MemoryCount);scan_reverse_=false;notify("");return;
+        scan_channel(MemoryCount);scan_reverse_=false;scan_step_=false;notify("");return;
     }
     if(scan_page() && k!=Key::Back && k!=Key::Menu) {
         if(k==Key::Up || k==Key::Down)scan_reverse_=k==Key::Down;
-        if(k==Key::Right || k==Key::Up || k==Key::Down)scan_paused_=false;
+        if(k==Key::Right || k==Key::Up || k==Key::Down){scan_paused_=false;scan_step_=true;}
         if(k==Key::Ok && scan_frequency_) {
             if(!scan_paused_)scan_paused_=true;
             else if(page_==Page::ChannelScan && recall(scan_channel_)) {
@@ -991,7 +1002,17 @@ void Application::key(Key k) {
         if(k==Key::Channels)select_channel_for_list();
         return;
     }
+    if(page_==Page::ConfirmStore) {
+        if(k==Key::Back || k==Key::Menu){page_=Page::StoreChannel;notify("");}
+        if(k==Key::Ok && channel_visible(channel_) && store(channel_)){
+            page_=Page::Radio;notify("CHANNEL UPDATED");
+        }
+        return;
+    }
     if(k==Key::Erase) {
+        if((page_==Page::Channels || page_==Page::StoreChannel) && editor_digits_) {
+            editor_value_/=10u;--editor_digits_;notify("");return;
+        }
         if(page_==Page::ScreenTimer || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || frequency_editor()){if(editor_digits_){editor_value_/=10u;--editor_digits_;notify("");}return;}
         k=Key::Back;
     }
@@ -1005,10 +1026,19 @@ void Application::key(Key k) {
         else {page_=(page_==Page::Gps || page_==Page::Aprs || page_==Page::AprsMessages || page_==Page::Debug || page_==Page::Channels || page_==Page::Battery || page_==Page::StoreChannel || page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::Timezone || page_==Page::LcdTest || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || page_==Page::WatchSlots || scan_page() || page_==Page::ScanMode || page_==Page::BeaconSymbol || page_==Page::ClearAprs || frequency_editor() || page_==Page::BeaconIdentity || page_==Page::CoordinateFormat || page_==Page::SpeedUnits || page_==Page::AltitudeUnits || page_==Page::LanguageSelect || page_==Page::VfoStep || page_==Page::MenuTimeout || page_==Page::RadioOptions || page_==Page::FlashInfo || page_==Page::FmProbe)?parent_:Page::Radio;invalid_=false;notify("");}
         return;
     }
+    if(page_==Page::TxFrequency && k==Key::Left) {
+        editor_value_=base_rx(config_.active)/10u;
+        editor_digits_=8;notify("");return;
+    }
+    if(page_==Page::TxFrequency && k==Key::Right) {
+        editor_value_=0;editor_digits_=1;notify("");return;
+    }
     if(frequency_editor()) {
+        const bool tx_editor=page_==Page::TxFrequency;
         if(k==Key::Ok) {
             if(editor_digits_) {
-                if(editor_digits_<6 && !(scan_bound_editor() && !editor_value_)){notify("ENTER 6 TO 8 DIGITS");return;}
+                const bool unset=!editor_value_ && (scan_bound_editor() || tx_editor);
+                if(editor_digits_<6 && !unset){notify("ENTER 6 TO 8 DIGITS");return;}
                 uint32_t hz=editor_value_*10u;
                 for(unsigned i=editor_digits_;i<8;++i)hz*=10u;
                 if(scan_bound_editor()) {
@@ -1022,8 +1052,8 @@ void Application::key(Key k) {
                     editable_radio_profile().offset_hz=hz;
                     sync_frequencies();
                 } else {
-                    if(!frequency_valid(hz)){notify("FREQUENCY OUT OF BAND");return;}
-                    if(hz<30000000u && (page_!=Page::TxFrequency || !voice::cb_fm_frequency(hz))) {
+                    if(!unset && (!frequency_valid(hz) ||
+                       (hz<30000000u && (!tx_editor || !voice::cb_fm_frequency(hz))))) {
                         notify("FREQUENCY OUT OF BAND");return;
                     }
                     if(page_==Page::AprsRxFrequency)config_.aprs_rx_hz=hz;
@@ -1101,29 +1131,43 @@ void Application::key(Key k) {
         if(digits_){notify("APPLY OR CANCEL INPUT FIRST");return;}
         if(!frequency_valid(config_.vfo[config_.active].rx_hz)){notify("SET FREQUENCY FIRST");return;}
         parent_=page_==Page::Settings?Page::Settings:Page::Radio;
-        channel_=config_.vfo[config_.active].memory_channel;
-        if(memories_[channel_].occupied && !channel_visible(channel_)) {
-            for(unsigned i=0;i<MemoryCount;++i)if(!memories_[i].occupied || channel_visible(i)){channel_=i;break;}
+        select_channel_for_list();
+        if(!config_.vfo[config_.active].channel_mode) {
+            for(unsigned i=0;i<MemoryCount;++i)if(!memories_[i].occupied){channel_=i;break;}
         }
-        page_=Page::StoreChannel;return;
+        if(memories_[channel_].occupied && !channel_visible(channel_)){notify("NO CHANNEL SPACE");return;}
+        editor_value_=0;editor_digits_=0;page_=Page::StoreChannel;notify("");return;
     }
-    if(page_==Page::Channels && k==Key::Right && channel_visible(channel_)) {
+    if(page_==Page::Channels && !editor_digits_ && k==Key::Right && channel_visible(channel_)) {
         scan_excluded_[channel_/32]^=1u<<(channel_%32);
         notify("");return;
     }
     if(page_==Page::Channels || page_==Page::StoreChannel || page_==Page::ManageChannel) {
         if(k==Key::Up || k==Key::Down) {
+            if(page_!=Page::ManageChannel){editor_value_=0;editor_digits_=0;notify("");}
             for(unsigned n=1;n<=MemoryCount;++n) {
                 unsigned i=unsigned((int(channel_)+(k==Key::Down?1:-1)*int(n)+int(MemoryCount))%int(MemoryCount));
                 if(channel_visible(i) || (page_==Page::StoreChannel && !memories_[i].occupied)){channel_=i;break;}
             }
         } else if(k==Key::Ok) {
+            if(page_!=Page::ManageChannel && editor_digits_) {
+                const unsigned index=editor_value_-1u;
+                if(index>=MemoryCount || (!channel_visible(index) &&
+                   (page_!=Page::StoreChannel || memories_[index].occupied))) {
+                    notify("CHANNEL NOT IN LIST");return;
+                }
+                channel_=index;editor_value_=0;editor_digits_=0;
+            }
             if(page_==Page::ManageChannel) {
                 if(!channel_visible(channel_)){notify("NO SAVED CHANNELS");return;}
                 if(channel_action_==Key::RenameChannel)open_name_editor(memories_[channel_].name);
                 else if(channel_action_==Key::DeleteChannel){page_=Page::ConfirmDelete;notify("");}
                 else {zone_selection_=active_zone_;page_=Page::Zones;notify("");}
-            } else if(page_==Page::StoreChannel) {if((channel_visible(channel_) || !memories_[channel_].occupied) && store(channel_)){page_=Page::Radio;notify("CHANNEL UPDATED");}else notify("CANNOT SAVE CHANNEL");}
+            } else if(page_==Page::StoreChannel) {
+                if(channel_visible(channel_)){page_=Page::ConfirmStore;notify("");}
+                else if(!memories_[channel_].occupied && store(channel_)){page_=Page::Radio;notify("CHANNEL UPDATED");}
+                else notify("CANNOT SAVE CHANNEL");
+            }
             else if(recall(channel_)){page_=Page::Radio;notify("CHANNEL SELECTED");}else notify("NO SAVED CHANNELS");
         }
         return;

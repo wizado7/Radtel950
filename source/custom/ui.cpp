@@ -73,7 +73,7 @@ void stat(unsigned y,const char *name,const char *value) {panel(y,28);label(16,y
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_power_status(const Application &app,const InputStatus &input,bool force) {
  const auto &p=input.power;const auto &trace=p.trace;const unsigned page=app.power_status_page();
- static constexpr const char *titles[]={"1/3 Battery readings","2/3 Last TX supply","3/3 Available sensors"};
+ static constexpr const char *titles[]={"1/4 Battery readings","2/4 Last TX supply","3/4 Available sensors","4/4 Activity time"};
  if(force)label(10,52,titles[page],accent,bg);
  char value[20];
  if(page==0) {
@@ -107,14 +107,24 @@ void draw_power_status(const Application &app,const InputStatus &input,bool forc
   } else copy(value,"--");
   if(changed(5,value,force))stat(206,"Sag mV",value);
   num(value,trace.samples());if(changed(6,value,force))stat(238,"TX samples",value);
-  const char *note=!trace.has_session()?"NO TX HISTORY":!trace.samples()?"NO SAMPLE DURING TX":
+  const char *note=trace.fault()!=SupplyFault::None?supply_fault_text(trace.fault()):
+      !trace.has_session()?"NO TX HISTORY":!trace.samples()?"NO SAMPLE DURING TX":
       trace.owner()==TxSupplyTrace::Owner::Aprs?"APRS TX SAMPLES":"VOICE TX SAMPLES";
   if(changed(7,note,force)){rect(8,276,224,12,bg);label(10,278,note,muted,bg);}
- } else {
+ } else if(page==2) {
   if(trace.has_session())num(value,trace.code());else copy(value,"--");
   if(changed(1,value,force))stat(78,"Last PA DAC",value);
+  if(p.mcu_degrees==-32768)copy(value,translate(draw_language,"NO DATA"));
+  else {
+   value[0]='~';
+   unsigned offset=1;
+   if(p.mcu_degrees<0)value[offset++]='-';
+   num(value+offset,unsigned(p.mcu_degrees<0?-p.mcu_degrees:p.mcu_degrees));
+   while(value[offset])++offset;
+   copy(value+offset," C");
+  }
+  if(changed(2,value,force))stat(110,"MCU temp",value);
   if(force) {
-   stat(110,"MCU temp",translate(draw_language,"NOT READ"));
    stat(142,"PA temp",translate(draw_language,"NOT VERIFIED"));
    stat(174,"PA current",translate(draw_language,"NOT VERIFIED"));
    stat(206,"RF / SWR",translate(draw_language,"NOT VERIFIED"));
@@ -123,6 +133,24 @@ void draw_power_status(const Application &app,const InputStatus &input,bool forc
   if(changed(6,check,force)) {
    panel(238,48);label(16,244,"Profile check",muted);
    label(16,266,check,ink);
+  }
+ } else {
+  static constexpr const char *labels[]={"Single RX s","Watch RX s","GPS on s","BLE on s","APRS RX s","TX time s"};
+  for(unsigned i=0;i<WorkloadTime::Count;++i) {
+   num(value,p.workload.seconds(WorkloadTime::Activity(i)));
+   if(changed(i+1,value,force))stat(78+32*i,labels[i],value);
+  }
+  if(force) {
+   // Show all flags because the CRM may report multiple causes at once.
+   constexpr const char *names[]={"PIN","POR","SW","WDT","WWDT","LP"};
+   char flags[32]{};
+   unsigned length=0;
+   for(unsigned i=0;i<6;++i)if(p.reset_flags&(1u<<i)) {
+    if(length)flags[length++]=' ';
+    for(const char *name=names[i];*name;++name)flags[length++]=*name;
+   }
+   label(10,278,"Reset flags",muted,bg);
+   label(94,278,length?flags:"--",ink,bg);
   }
  }
 }
@@ -425,13 +453,17 @@ void draw_import(const Application &a,const InputStatus &input,bool force) {
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_key_binding(const Application &a,bool force) {
  if(force)label(10,52,Application::key_binding_labels[a.binding_selection()],accent,bg);
- for(unsigned i=0;i<unsigned(KeyAction::Count);++i) {
+ constexpr unsigned rows=8;
+ const unsigned draft=a.binding_draft(),first=draft<rows?0:draft-rows+1;
+ for(unsigned row=0;row<rows;++row) {
+  const unsigned i=first+row;
   const bool active=i==a.binding_draft();
-  const char signature[]={char('0'+i),char('0'+active),0};
-  if(!changed(i+1,signature,force))continue;
-  const unsigned y=72+i*24;const uint16_t fill=active?selected:card;
+  const bool applied=i==unsigned(a.key_action(a.binding_selection()));
+  const char signature[]={char('0'+i),char('0'+active),char('0'+applied),0};
+  if(!changed(row+1,signature,force))continue;
+  const unsigned y=72+row*24;const uint16_t fill=active?selected:card;
   rect(8,y,224,22,fill);label(16,y+7,Application::key_action_labels[i],active?accent:ink,fill);
-  if(i==unsigned(a.key_action(a.binding_selection())))label(214,y+7,"*",accent,fill);
+  if(applied)label(214,y+7,"*",accent,fill);
  }
  if(force)label(10,278,a.binding_selection()<2 && a.side_ptt_enabled()?"PF1 USED BY PTT C":"HOLD 700 MS / RELEASE",muted,bg);
 }
@@ -815,7 +847,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(4,value,force))stat(148,"MHz",value);
   const char *direction=a.scan_reverse()?"SCAN DOWN":"SCAN UP";
   if(changed(6,direction,force))stat(180,"DIRECTION",direction);
-  const char *hint=a.scan_paused()?(vfo_scan?"OK: USE FREQ   >: RESUME":"OK: USE CHANNEL   >: RESUME"):"OK: PAUSE SCAN";
+  const char *hint=a.scan_paused()?(vfo_scan?"OK: USE FREQ   >: RESUME":"OK: USE CHANNEL   >: RESUME"):"OK PAUSE / ARROWS STEP";
   if(changed(5,hint,force)){rect(8,228,224,17,bg);label(10,232,hint,muted,bg);}
  } else if(a.page()==Page::VoiceRx) {
   const auto &rx=input.voice;
@@ -878,19 +910,50 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  } else if(a.page()==Page::ConfirmDelete) {
   if(force){panel(52,88);label(16,66,"Delete this channel?",accent);label(16,98,a.memory(a.channel_selection())->name);}
   if(force)label(10,266,"OK DELETE / BACK CANCEL",muted,bg);
+ } else if(a.page()==Page::ConfirmStore) {
+  if(force) {
+   const auto &memory=*a.memory(a.channel_selection());
+   char channel[8]="CH ";num(channel+3,a.channel_selection()+1);
+   panel(52,55);label(16,63,"Replace this channel?",accent);
+   label(16,86,channel);label(72,86,memory.name);
+   char value[16];freq(value,memory.rx_hz);stat(120,"Saved MHz",value);
+   freq(value,a.config().vfo[a.config().active].rx_hz);stat(154,"New MHz",value);
+   label(10,266,"OK REPLACE / BACK CANCEL",muted,bg);
+  }
  } else if(a.page()==Page::Channels || a.page()==Page::StoreChannel || a.page()==Page::ManageChannel) {
-  unsigned occupied[64],count=0;
-  for(unsigned i=0;i<64;++i)if(a.channel_visible(i) || (a.page()==Page::StoreChannel && !a.memory(i)->occupied))occupied[count++]=i;
+  unsigned occupied[Application::MemoryCount],count=0;
+  for(unsigned i=0;i<Application::MemoryCount;++i)if(a.channel_visible(i) || (a.page()==Page::StoreChannel && !a.memory(i)->occupied))occupied[count++]=i;
   unsigned selected_row=0;for(unsigned i=0;i<count;++i)if(occupied[i]==a.channel_selection())selected_row=i;
   const unsigned first=selected_row<6?0:selected_row-5;
   for(unsigned row=0;row<6;++row) {
    char name[30]{};const unsigned n=first+row;
-   if(n<count){copy(name,"CH ");num(name+3,occupied[n]+1);unsigned j=0;while(name[j])++j;name[j++]=' ';copy(name+j,a.memory(occupied[n])->name);while(name[j])++j;name[j++]=' ';freq(name+j,a.memory(occupied[n])->rx_hz);j=0;while(name[j])++j;name[j++]=occupied[n]==a.channel_selection()?'>':' ';if(a.page()==Page::Channels && !a.scan_eligible(occupied[n]))name[j++]='X';name[j]=0;}
+   if(n<count){
+    const auto &memory=*a.memory(occupied[n]);
+    copy(name,"CH ");num(name+3,occupied[n]+1);
+    unsigned j=0;while(name[j])++j;name[j++]=' ';
+    if(memory.occupied){
+     copy(name+j,memory.name);while(name[j])++j;name[j++]=' ';
+     freq(name+j,memory.rx_hz);
+    } else copy(name+j,translate(draw_language,"FREE SLOT"));
+    while(name[j])++j;
+    name[j++]=occupied[n]==a.channel_selection()?'>':' ';
+    if(a.page()==Page::Channels && !a.scan_eligible(occupied[n]))name[j++]='X';
+    name[j]=0;
+   }
    if(changed(row+1,name,force)) {const uint16_t fill=n<count&&occupied[n]==a.channel_selection()?selected:card;rect(8,52+row*35,224,30,fill);label(17,63+row*35,name,ink,fill);}
   }
-  const char *hint=a.page()==Page::ManageChannel?(a.feedback()[0]?a.feedback():!count?"NO SAVED CHANNELS":
-     a.channel_action()==Key::RenameChannel?"Rename channel":a.channel_action()==Key::DeleteChannel?"Delete channel":"Move channel"):a.page()==Page::StoreChannel?"OK REPLACE / BACK CANCEL":count?"OK LOAD   >: SCAN ON/OFF":"EMPTY: SAVE FROM VFO FIRST";
-  if(changed(8,hint,force)){rect(8,266,224,20,bg);label(10,271,hint,muted,bg);}
+  const bool entering=a.page()!=Page::ManageChannel && a.editor_digits();
+  const char *hint=a.feedback()[0]?a.feedback():entering?"Channel number":
+     a.page()==Page::ManageChannel?(!count?"NO SAVED CHANNELS":
+     a.channel_action()==Key::RenameChannel?"Rename channel":a.channel_action()==Key::DeleteChannel?"Delete channel":"Move channel"):
+     a.page()==Page::StoreChannel?"OK SAVE / TYPE CH NUMBER":count?"OK LOAD   >: SCAN ON/OFF":"EMPTY: SAVE FROM VFO FIRST";
+  char channel_number[8]{};
+  if(entering && !a.feedback()[0])num(channel_number,a.editor_value());
+  const bool hint_changed=changed(8,hint,force),number_changed=changed(10,channel_number,force);
+  if(hint_changed || number_changed){
+   rect(8,266,224,16,bg);label(10,271,hint,muted,bg);
+   if(channel_number[0])label(155,271,channel_number,ink,bg);
+  }
   const char *save_status=save_state_label(input.save_state);
   if(changed(9,a.zone_name(a.active_zone()),force)){rect(8,282,72,10,bg);label(10,283,a.zone_name(a.active_zone()),accent,bg);}
   if(changed(7,save_status,force)){rect(88,282,144,10,bg);label(88,283,save_status,muted,bg);}
@@ -953,7 +1016,11 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   } else if(offset && !a.active_radio_profile().offset_hz)copy(value,"000.00000");
   else freq(value,rx?a.config().aprs_rx_hz:tx?a.profile_tx_frequency():offset?a.active_radio_profile().offset_hz:a.config().aprs_hz);
   if(changed(1,value,force)){panel(52,92);label(16,65,rx?"APRS RX FREQUENCY":tx?"TX frequency":offset?"Repeater offset":"BEACON FREQUENCY",accent);lcd_draw_string_2x(16,96,value,ink,card);}
-  if(force){panel(160,72);label(16,174,offset?"TYPE 000600 FOR 0.600 MHz":"TYPE 144800 FOR 144.800 MHz",muted);label(16,198,"RF OFF",muted);}
+  if(force){
+   panel(160,72);label(16,174,offset?"TYPE 000600 FOR 0.600 MHz":"TYPE 144800 FOR 144.800 MHz",muted);
+   label(16,198,tx?"LEFT: TX = RX / RIGHT: CLEAR":"RF OFF",muted);
+   if(tx)label(16,216,"OK APPLY / BACK CANCEL",muted);
+  }
   if(changed(8,a.feedback(),force)){rect(8,266,224,20,bg);label(10,271,a.feedback(),muted,bg);}
  } else if(a.page()==Page::WatchSlots) {
   if(force)label(10,52,"WATCH SLOTS",accent,bg);

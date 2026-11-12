@@ -205,6 +205,12 @@ struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',l
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
 assert backup.inspect_backup(fixture)['snapshot_schema']==2
+scan_backup=bytearray(fixture)
+struct.pack_into('<4I',scan_backup,48+7992,8,9,2,0)
+struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
+struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==2
+fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8056
 print('HOST portable migration: schema1 8040-byte backup/upload retained, schema2 8056-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
@@ -1104,6 +1110,9 @@ if a.stock:
   result=call_tx(u,symbols['aprs_adc_probe'],mode,budget=5000000)
   assert result==0,(mode,result)
  print('ARM APRS ADC1: TIM2/CH2, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
+ result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
+ assert result==0,f'MCU diagnostics failed at C++ line {result}'
+ print('ARM MCU diagnostics: CRM flags, ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
 
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)

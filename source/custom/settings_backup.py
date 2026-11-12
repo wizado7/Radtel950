@@ -15,6 +15,7 @@ HEADER = 48
 MAX_PAYLOAD = 8192
 CANONICAL_SIZE = 7992
 PORTABLE_SIZE = 8008
+KEY_ACTION_COUNT = 10
 
 
 def parse_header(header):
@@ -45,7 +46,7 @@ def inspect_backup(data):
         raise ValueError('backup payload CRC mismatch')
     words = struct.unpack('<' + str(size//4) + 'I', payload)
     schema = struct.unpack_from('<I', data, 16)[0]
-    if schema == 2 and any(action >= 8 for action in words[1998:]):
+    if schema == 2 and any(action >= KEY_ACTION_COUNT for action in words[CANONICAL_SIZE//4:]):
         raise ValueError('invalid user key action')
     if words[0] not in (0, 1):
         raise ValueError('invalid language field')

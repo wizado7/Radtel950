@@ -6,7 +6,8 @@
 #define REG(off) (*(volatile uint32_t *)(0x40012800u+(off)))
 static uint32_t since,last_good,errors;
 static uint16_t millivolts,raw12;
-static uint8_t state,raw;
+static uint8_t state,raw,fast;
+void board_battery_fast(uint8_t enabled){fast=enabled;}
 void board_battery_init(uint32_t now) {
     CRM->CFGR=(CRM->CFGR&~0xc000u)|0x8000u; /* APB2 /6 */
     CRM->APB2EN|=0x600u;
@@ -37,7 +38,7 @@ void board_battery_poll(uint32_t now) {
                 since=now;state=6;
             }
         }break;
-    case 6:if((uint32_t)(now-since)>=1000u)start(now,4);break;
+    case 6:if((uint32_t)(now-since)>=(fast?20u:1000u))start(now,4);break;
     case 7:if((uint32_t)(now-since)>=1000u)board_battery_init(now);break;
     default:break;
     }

@@ -29,7 +29,7 @@ public:
         if(channel==Channel::Pending)return Ptt::Preparation::Pending;
         if(channel==Channel::Failed)return Ptt::Preparation::Failed;
         clear_=channel==Channel::Clear;
-        if(busy_lock_ && !clear_)return Ptt::Preparation::Failed;
+        if(busy_lock_ && !clear_)return Ptt::Preparation::Busy;
         uint16_t mic=0;
         if(!board_.read(0x7d,mic) || mic==0xffff ||
            !board_.tx_values(mic,values_))

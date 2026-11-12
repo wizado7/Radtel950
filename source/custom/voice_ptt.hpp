@@ -19,12 +19,13 @@ struct TxRequest {
 // stop disables RF first and unwinds both prepared and keyed states.
 class Ptt final {
 public:
-    enum class Preparation : uint8_t { Pending, Ready, Failed };
+    enum class Preparation : uint8_t { Pending, Ready, Failed, Busy };
     enum class State : uint8_t { WaitRelease, Idle, Preparing, Transmitting, Ending };
     enum class ReleaseError : uint8_t { None, Permission, Changed, Timeout, Radio, Signalling };
     State state() const {return state_;}
     uint8_t target_slot() const {return target_.slot;}
     ReleaseError release_error() const {return release_error_;}
+    bool blocked_by_carrier() const {return state_==State::WaitRelease && blocked_by_carrier_;}
 
     template<class Backend>
     void poll(Backend &backend,const TxRequest &request,uint32_t now,bool pressed) {
@@ -38,6 +39,7 @@ public:
             return;
         }
         if(!pressed) {
+            blocked_by_carrier_=false;
             if(state_==State::Transmitting && target_.tail) {
                 if(!request.authorized)release_error_=ReleaseError::Permission;
                 else if(!same_target(request))release_error_=ReleaseError::Changed;
@@ -84,8 +86,9 @@ public:
         }
         const auto ready=backend.poll_ready(now);
         if(ready==Preparation::Pending)return;
-        if(ready==Preparation::Failed || (target_.busy_lock && !backend.channel_clear()) ||
-           !backend.key()) {
+        blocked_by_carrier_=ready==Preparation::Busy ||
+            (ready==Preparation::Ready && target_.busy_lock && !backend.channel_clear());
+        if(ready!=Preparation::Ready || blocked_by_carrier_ || !backend.key()) {
             finish(backend,State::WaitRelease);
             return;
         }
@@ -106,5 +109,6 @@ private:
     TxRequest target_{};
     ReleaseError release_error_=ReleaseError::None;
     uint32_t since_=0,ending_ms_=0;
+    bool blocked_by_carrier_=false;
 };
 }

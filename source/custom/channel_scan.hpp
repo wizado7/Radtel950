@@ -11,14 +11,15 @@ public:
         if(!enabled){channel_=None;frequency_=0;started_=false;return channel_;}
         if(suspended)return channel_;
         const bool vfo=app.page()==Page::VfoScan;
+        const bool manual_step=app.take_scan_step();
         if(!started_ || vfo!=vfo_) {
             started_=true;vfo_=vfo;channel_=None;frequency_=0;
             advance(app,now);return channel_;
         }
-        if(!frequency_ || app.scan_paused())return channel_;
-        if(app.scan_mode()==ScanMode::Search && holding_) {
+        if(manual_step) {
             advance(app,now);return channel_;
         }
+        if(!frequency_ || app.scan_paused())return channel_;
         if(sampled && open) {
             if(app.scan_mode()==ScanMode::Search)app.pause_scan();
             if(!holding_ || app.scan_mode()==ScanMode::Carrier)last_open_=now;

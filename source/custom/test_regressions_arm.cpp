@@ -18,6 +18,7 @@
 #include "aprs_background.hpp"
 #include "voice_battery_limits.hpp"
 #include "aprs_adc.hpp"
+#include "mcu_diagnostics.hpp"
 #include "drivers/dma.h"
 #include "voice_watch.hpp"
 #include "channel_scan.hpp"
@@ -279,6 +280,11 @@ extern "C" int regression_tests() {
   CHECK(scan.poll(scan_app,180,true,true,true)==2);
   CHECK(scan.poll(scan_app,1179,true,true,false)==2);
   CHECK(scan.poll(scan_app,1180,true,true,false)==3);
+  CHECK(scan.poll(scan_app,1181,true,true,true)==3);
+  scan_app.key(Key::Down);
+  CHECK(scan.poll(scan_app,1182,true,true,true)==2);
+  scan_app.key(Key::Up);
+  CHECK(scan.poll(scan_app,1183,true,false,false)==3);
   scan_app.scan_channel(3);
   scan_app.key(Key::Ok);
   CHECK(scan_app.scan_paused() && scan_app.page()==Page::ChannelScan);
@@ -763,12 +769,14 @@ extern "C" int regression_tests() {
  CHECK(tx_board.tuned==446081250 && tx_board.bias_value==0 && tx_board.route_writes==0);
  tx_board.observation=TxBoard::Channel::Busy;
  integrated.poll(uhf_tx,target,10,true);
- CHECK(tx_board.restores==1 && tx_board.nonzero_bias==0 && tx_board.route_writes==0);
+ CHECK(integrated.blocked_by_carrier() && tx_board.restores==1 && tx_board.nonzero_bias==0 && tx_board.route_writes==0);
+ integrated.poll(uhf_tx,target,10,true);CHECK(integrated.blocked_by_carrier() && tx_board.restores==1);
  integrated.poll(uhf_tx,target,11,false);
+ CHECK(!integrated.blocked_by_carrier());
  tx_board.observation=TxBoard::Channel::Clear;
  tx_board.configure_ok=false;
  integrated.poll(uhf_tx,target,12,true);
- CHECK(tx_board.restores==2 && tx_board.nonzero_bias==0 && tx_board.route_writes==6);
+ CHECK(!integrated.blocked_by_carrier() && tx_board.restores==2 && tx_board.nonzero_bias==0 && tx_board.route_writes==6);
  integrated.poll(uhf_tx,target,13,false);
  tx_board.configure_ok=true;
  integrated.poll(uhf_tx,target,14,true);
@@ -1059,6 +1067,12 @@ extern "C" int regression_tests() {
  CHECK(!repeater.active_radio_profile().reverse && repeater.config().vfo[1].rx_hz==446018750);
  CHECK(repeater.recall(63) && repeater.config().vfo[1].rx_hz==145000000 && !repeater.config().vfo[1].tx_hz);
  repeater.key(Key::Mode);CHECK(repeater.config().vfo[1].rx_hz==446018750);
+ repeater.key(Key::TxFrequency);repeater.key(Key::Left);repeater.key(Key::Ok);
+ CHECK(repeater.config().vfo[1].rx_hz==repeater.config().vfo[1].tx_hz);
+ repeater.key(Key::TxFrequency);repeater.key(Key::Right);repeater.key(Key::Back);
+ CHECK(repeater.config().vfo[1].tx_hz==446018750);
+ repeater.key(Key::TxFrequency);repeater.key(Key::Right);repeater.key(Key::Ok);
+ CHECK(!repeater.config().vfo[1].tx_hz && repeater.config().vfo[1].rx_hz==446018750);
  Application zones;
  CHECK(zones.active_zone()==0 && zones.channel_visible(0));
  zones.key(Key::RenameChannel);zones.key(Key::Ok);zones.digit(7);zones.key(Key::Back);
@@ -1192,8 +1206,24 @@ extern "C" int regression_tests() {
  enter(preset,"435125");preset.key(Key::Save);
  CHECK(preset.page()==Page::StoreChannel);CHECK(preset.memory(0)->rx_hz==446006250);
  preset.key(Key::Back);CHECK(preset.memory(0)->rx_hz==446006250);
- preset.key(Key::Save);preset.key(Key::Ok);CHECK(preset.memory(1)->rx_hz==435125000);
+ preset.key(Key::Save);preset.key(Key::Ok);
+ CHECK(preset.page()==Page::ConfirmStore && !preset.voice_tx_page() && preset.memory(1)->rx_hz==446018750);
+ preset.key(Key::Back);CHECK(preset.page()==Page::StoreChannel && preset.memory(1)->rx_hz==446018750);
+ preset.key(Key::Ok);preset.key(Key::Ok);CHECK(preset.memory(1)->rx_hz==435125000);
  CHECK(preset.memory(1)->name[0]=='P');
+ preset.key(Key::Mode);preset.digit(6);preset.digit(4);preset.key(Key::Ok);
+ CHECK(preset.page()==Page::Radio && preset.config().vfo[0].channel_mode && preset.config().vfo[0].memory_channel==63);
+ preset.digit(9);preset.digit(9);preset.key(Key::Ok);
+ CHECK(preset.page()==Page::Channels && preset.config().vfo[0].memory_channel==63);
+ preset.key(Key::Erase);preset.key(Key::Erase);preset.digit(2);preset.key(Key::Ok);
+ CHECK(preset.page()==Page::Radio && preset.config().vfo[0].memory_channel==1);
+ Application free_channels(false);
+ CHECK(free_channels.set_frequency(435125000) && free_channels.store(0));
+ CHECK(free_channels.set_frequency(435137500));
+ free_channels.key(Key::Save);
+ CHECK(free_channels.channel_selection()==1);
+ free_channels.digit(6);free_channels.digit(4);free_channels.key(Key::Ok);
+ CHECK(free_channels.page()==Page::Radio && free_channels.memory(63)->rx_hz==435137500);
  Application fresh;CHECK(fresh.memory(1)->rx_hz==446018750);
  WakeGuard wake;Controls wake_vm;wake.begin();
  CHECK(!wake.poll(2,0));wake_vm.poll(2,0);wake_vm.poll(2,30);
@@ -1845,13 +1875,15 @@ extern "C" int measured_power_tests() {
  MeasuredPower table;
  RadioProfile profile;profile.power=TxPower::Pmr500mW;
  constexpr uint32_t pmr=446081250, lpd=433075000;
+ constexpr uint32_t pmr_ref=446000000, lpd_ref=433000000;
  CHECK(target_mw(profile.power)==500 && target_mw(TxPower::Lpd10mW)==10);
  CHECK(power_channel(profile.power,pmr) && !power_channel(profile.power,pmr+10));
  CHECK(!power_channel(TxPower::Lpd10mW,pmr) && power_channel(TxPower::Lpd10mW,lpd));
  CHECK(!resolve_target_power(table,profile,pmr,pmr,8000,95,false,1).ready);
- CHECK(resolve_target_power(table,profile,pmr,pmr,8000,95,true,1).code==1);
- CHECK(!resolve_target_power(table,profile,pmr,pmr,8000,95,true,96).ready);
- CHECK(!resolve_target_power(table,profile,pmr,pmr,8000,0,true,1).ready);
+ CHECK(!resolve_target_power(table,profile,pmr,pmr,8000,95,true,1).ready);
+ CHECK(resolve_target_power(table,profile,pmr_ref,pmr_ref,8000,95,true,1).ready);
+ CHECK(!resolve_target_power(table,profile,pmr_ref,pmr_ref,8000,95,true,96).ready);
+ CHECK(!resolve_target_power(table,profile,pmr_ref,pmr_ref,8000,0,true,1).ready);
  CHECK(table.store({pmr,8000,480,42,TxPower::Pmr500mW}));
  CHECK(resolve_target_power(table,profile,pmr,pmr,7900,95,false,1).code==42);
  CHECK(!resolve_target_power(table,profile,pmr,pmr,7899,95,false,1).ready);
@@ -1868,6 +1900,17 @@ extern "C" int measured_power_tests() {
  for(unsigned i=0;i<15;++i)CHECK(table.store({lpd+25000*i,8000,9,10,TxPower::Lpd10mW}));
  CHECK(table.count()==16 && !table.store({lpd+25000*15,8000,9,10,TxPower::Lpd10mW}));
  CHECK(table.find(TxPower::Pmr500mW,pmr,8050)->code==41);
+ CHECK(!table.find(TxPower::Pmr500mW,pmr+12500,8050));
+ profile.shift=Shift::None;
+ MeasuredPower reference;
+ CHECK(reference.store({pmr_ref,8000,480,42,TxPower::Pmr500mW}));
+ CHECK(reference.store({lpd_ref,8000,9,12,TxPower::Lpd10mW}));
+ CHECK(reference.find(TxPower::Lpd10mW,434750000,8000)->code==12);
+ CHECK(resolve_target_power(reference,profile,446006250,446006250,8000,95,false,0).code==42);
+ CHECK(resolve_target_power(reference,profile,446193750,446193750,8000,95,false,0).ready);
+ CHECK(!resolve_target_power(reference,profile,pmr,pmr,8000,41,false,0).ready);
+ CHECK(!resolve_target_power(reference,profile,pmr,pmr,8101,95,false,0).ready);
+ CHECK(!resolve_target_power(reference,profile,pmr_ref,pmr_ref,8000,95,false,0).ready);
  Application app(false);CHECK(app.set_frequency(pmr));
  app.key(Key::Menu);CHECK(app.page()==Page::Settings);
  app.key(Key::Ok);CHECK(app.menu_group()==MenuGroup::Radio);
@@ -1879,6 +1922,8 @@ extern "C" int measured_power_tests() {
  CHECK(app.radio_draft()==4);
  app.key(Key::Ok);CHECK(app.active_radio_profile().power==TxPower::Pmr500mW);
  app.power_battery(8000);app.power_code_limit(95);app.key(Key::PowerCalibration);
+ CHECK(app.page()!=Page::PowerCalibration);
+ CHECK(app.set_frequency(pmr_ref));app.key(Key::PowerCalibration);
  CHECK(app.page()==Page::PowerCalibration && !app.power_test(0) && app.power_code()==1);
  app.digit(4);app.digit(2);app.key(Key::Ok);CHECK(app.power_code()==42 && !app.power_test(0));
  app.key(Key::Ok);CHECK(app.power_test(0) && !app.power_test(1));
@@ -1956,6 +2001,25 @@ extern "C" int band_profile_tests() {
 }
 
 extern "C" int power_diagnostics_tests() {
+ constexpr voice::BatteryTxLimits limits{};
+ CHECK(classify_supply(true,128,limits.low,limits.High)==SupplyFault::Low);
+ CHECK(classify_supply(true,187,limits.low,limits.High)==SupplyFault::None);
+ CHECK(classify_supply(true,188,limits.low,limits.High)==SupplyFault::High);
+ CHECK(classify_supply(false,160,limits.low,limits.High)==SupplyFault::Sensor);
+ constexpr SupplyFault faults[]={SupplyFault::Low,SupplyFault::High,SupplyFault::Sensor};
+ for(auto fault:faults) {
+  TxBackend backend;voice::Ptt ptt;
+  voice::TxRequest request{446081250,15,0,true,false,true};
+  ptt.poll(backend,request,0,false);
+  ptt.poll(backend,request,1,true);
+  CHECK(ptt.state()==voice::Ptt::State::Transmitting);
+  const bool fresh=fault!=SupplyFault::Sensor;
+  const uint8_t raw=fault==SupplyFault::Low?128:fault==SupplyFault::High?188:160;
+  request.authorized=classify_supply(fresh,raw,limits.low,limits.High)==SupplyFault::None;
+  ptt.poll(backend,request,22,true);
+  CHECK(ptt.state()==voice::Ptt::State::WaitRelease && backend.stops==1 && !backend.tails);
+  request.authorized=true;ptt.poll(backend,request,23,true);CHECK(backend.keys==1);
+ }
  TxSupplyTrace trace;using Owner=TxSupplyTrace::Owner;
  CHECK(!trace.has_session() && !trace.samples());
  trace.observe(100,false,0,Owner::Voice,0,8000,20,true);
@@ -1970,10 +2034,11 @@ extern "C" int power_diagnostics_tests() {
  CHECK(trace.samples()==2 && trace.minimum()==7600 && trace.maximum()==7800 && trace.sag()==400);
  trace.observe(500,true,446081250,Owner::Voice,42,0,0xffffffffu,false);
  CHECK(trace.samples()==2 && trace.minimum()==7600);
+ trace.trip(SupplyFault::Low);trace.trip(SupplyFault::Sensor);
  trace.observe(600,false,0,Owner::Voice,0,7900,0,true);
- CHECK(trace.frequency()==446081250 && trace.code()==42 && trace.samples()==2);
+ CHECK(trace.frequency()==446081250 && trace.code()==42 && trace.samples()==2 && trace.fault()==SupplyFault::Low);
  trace.observe(700,true,144800000,Owner::Aprs,20,7900,100,true);
- CHECK(trace.owner()==Owner::Aprs && trace.before()==7900 && !trace.samples());
+ CHECK(trace.owner()==Owner::Aprs && trace.before()==7900 && !trace.samples() && trace.fault()==SupplyFault::None);
  trace.observe(701,true,144800000,Owner::Aprs,20,7800,0,true);CHECK(trace.samples()==1);
  trace.observe(702,true,145500000,Owner::Voice,10,7800,1,true);
  CHECK(!trace.before() && !trace.samples() && trace.frequency()==145500000);
@@ -1984,17 +2049,53 @@ extern "C" int power_diagnostics_tests() {
  trace.observe(100,false,0,Owner::Voice,0,8200,2000,false);
  trace.observe(200,true,446081250,Owner::Voice,35,8200,2100,false);
  CHECK(!trace.before() && !trace.samples());
+ WorkloadTime workload;
+ workload.observe(0xfffffff0u,1u<<WorkloadTime::Gps);
+ workload.observe(0x10u,(1u<<WorkloadTime::Gps)|(1u<<WorkloadTime::WatchRx));
+ workload.observe(0x10u+2990u,1u<<WorkloadTime::Tx);
+ CHECK(workload.seconds(WorkloadTime::Gps)==3 && workload.seconds(WorkloadTime::WatchRx)==2);
+ CHECK(!workload.seconds(WorkloadTime::Tx));
  Application app;
  app.key(Key::PowerStatus);CHECK(app.page()==Page::PowerStatus && !app.power_status_page());
  CHECK(!app.voice_tx_page() && !app.voice_tx_page(true));
  app.tick(100000);CHECK(app.page()==Page::PowerStatus);
  app.key(Key::Down);CHECK(app.power_status_page()==1);
  app.key(Key::Down);CHECK(app.power_status_page()==2);
+ app.key(Key::Down);CHECK(app.power_status_page()==3);
  app.key(Key::Down);CHECK(app.power_status_page()==0);
- app.key(Key::Up);CHECK(app.power_status_page()==2);
+ app.key(Key::Up);CHECK(app.power_status_page()==3);
  const auto hz=app.config().vfo[0].rx_hz;
  app.digit(4);app.key(Key::Ok);CHECK(app.page()==Page::PowerStatus && app.config().vfo[0].rx_hz==hz);
  app.key(Key::Back);CHECK(app.page()==Page::Settings);
+ return 0;
+}
+
+extern "C" int mcu_diagnostics_probe() {
+ McuTemperature sensor;
+ CRM->CSR=(1u<<29)|(1u<<28)|3u;
+ CHECK(capture_reset_flags()==12 && CRM->CSR==((1u<<24)|1u));
+ ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA;
+ CRM->APB2EN=CRM_APB2EN_ADC1EN|CRM_APB2EN_ADC2EN;
+ sensor.poll(true,0);
+ CHECK(ADC1->CR2==(ADC_CR2_ADON|ADC_CR2_DMA));
+ ADC1->CR2=0;ADC1->SMPR1=2;ADC1->SQR3=2;
+ CRM->APB2EN=CRM_APB2EN_ADC2EN;ADC2->CR2=0x123;
+ sensor.poll(false,1);sensor.poll(true,2);sensor.poll(true,3);
+ CHECK(ADC1->CR2&ADC_CR2_RSTCAL);
+ ADC1->CR2&=~ADC_CR2_RSTCAL;sensor.poll(true,4);
+ CHECK(ADC1->CR2&ADC_CR2_CAL);
+ ADC1->CR2&=~ADC_CR2_CAL;sensor.poll(true,5);
+ CHECK(ADC1->SQR3==16 && (ADC1->CR2&(1u<<23)));
+ ADC1->DR=1536;ADC1->SR=ADC_SR_EOC;sensor.poll(true,6);
+ CHECK(ADC1->SQR3==17);
+ ADC1->DR=1440;ADC1->SR=ADC_SR_EOC;sensor.poll(true,7);
+ CHECK(sensor.reading(7)==25 && sensor.reading(6007)==McuTemperature::Unavailable);
+ CHECK(ADC1->CR2==0 && ADC1->SMPR1==2 && ADC1->SQR3==2 &&
+       ADC2->CR2==0x123 && CRM->APB2EN==CRM_APB2EN_ADC2EN);
+ sensor.poll(true,2002);sensor.poll(false,2003);
+ CHECK(ADC1->CR2==0 && CRM->APB2EN==CRM_APB2EN_ADC2EN);
+ sensor.poll(true,2004);sensor.poll(true,2024);
+ CHECK(ADC1->CR2==0 && sensor.reading(2024)==McuTemperature::Unavailable);
  return 0;
 }
 
@@ -2560,11 +2661,17 @@ extern "C" int user_key_tests() {
  uint8_t portable[Application::SnapshotCapacity],packed[Application::SnapshotCapacity];
  CHECK(app.save_portable_snapshot(portable,sizeof portable)==8008 && app.save_snapshot(packed,sizeof packed)==7992);
  Application loaded(false);CHECK(loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(1)==KeyAction::Gps);
- portable[7992]=8;CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
+ portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
  const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==2);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
+ bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
+ dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);home();
+ dispatch_key(app,129);CHECK(app.page()==Page::VfoScan);home();
+ const auto scan_size=app.save_compact_snapshot(packed,sizeof packed);
+ CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
+       loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
  // Freeze the v1 decoder: remove exactly the four new one-byte fields.
  const auto encoded=word(packed+12);CHECK(encoded>=4);
  const auto old_encoded=encoded-4,old_size=(20+old_encoded+3u)&~3u;

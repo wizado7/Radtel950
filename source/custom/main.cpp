@@ -12,6 +12,7 @@
 #include "aprs_beacon.hpp"
 #include "aprs_dac.hpp"
 #include "aprs_adc.hpp"
+#include "mcu_diagnostics.hpp"
 #include "aprs_background.hpp"
 #include "channel_scan.hpp"
 #include "voice_battery_limits.hpp"
@@ -36,6 +37,10 @@ static uint16_t session_power_mv;
 static bool tail_hold;
 #endif
 extern "C" int main(void) {
+#ifdef RT950_MAIN_TX
+    const uint8_t reset_flags=capture_reset_flags();
+    McuTemperature mcu_temperature;
+#endif
     SCB->SCR &= ~6u; // shallow sleep; never inherit SLEEPDEEP/SLEEPONEXIT
     board_init();board_battery_init(get_tick());lcd_init();encoder_init();
     Application app;load_settings(app);
@@ -105,6 +110,9 @@ extern "C" int main(void) {
     static SettingsExport<BackupUart> settings_export;
     static SettingsImport<BackupUart> settings_import;
     InputStatus input;bool gps=app.config().gps_on,display_awake=true,wake_encoder=false;
+#ifdef RT950_MAIN_TX
+    input.power.reset_flags=reset_flags;
+#endif
 #ifdef RT950_BENCH_TX_HZ
     input.factory_ctcss_raw=factory.ctcss_raw;
     input.factory_ctcss_level=factory.ctcss_level;
@@ -117,7 +125,13 @@ extern "C" int main(void) {
     for(;;) {
         const uint32_t now=get_tick();custom_heartbeat=now;
         // A held PTT is activity even at the exact auto-lock deadline.
-        if(board_ptt_mask())app.activity(now);
+        const uint8_t raw_ptt=board_ptt_mask();
+        if(raw_ptt)app.activity(now);
+#ifdef RT950_MAIN_TX
+        board_battery_fast(raw_ptt || beacon.active() ||
+            ptt.state()==voice::Ptt::State::Preparing ||
+            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending);
+#endif
         app.tick(now);
         board_battery_poll(now);
         const bool switch_off=board_power_switch_off()!=0;
@@ -198,7 +212,10 @@ extern "C" int main(void) {
         const bool ptt_down=board_ptt_mask()!=0;
         const bool power_sample_ok=board_battery_sample_fresh(now);
         const uint8_t battery_raw=board_battery_raw();
-        const bool power_tx_ok=power_sample_ok && battery_limits.permits(battery_raw);
+        const auto supply_fault=classify_supply(power_sample_ok,battery_raw,battery_limits.low,battery_limits.High);
+        const bool power_tx_ok=supply_fault==SupplyFault::None;
+        // Capture the reason before a voice or APRS stop removes TX ownership.
+        if(!power_tx_ok)input.power.trace.trip(supply_fault);
         app.power_battery(power_sample_ok?board_battery_mv():0);
         const bool aprs_allowed=config.aprs_rx && voice_enabled && !ptt_down && !monitor &&
             page!=Page::PowerCalibration && page!=Page::PowerMeasured &&
@@ -209,6 +226,10 @@ extern "C" int main(void) {
         const bool aprs_page=page==Page::Aprs || page==Page::AprsMessages;
         const bool aprs_listen=background || (aprs_allowed && aprs_page);
         if(!aprs_listen)packet_rx.stop();
+        // Release ADC1 before the APRS capture below may start in this same loop.
+        mcu_temperature.poll(page==Page::PowerStatus && app.power_status_page()==2 &&
+            !aprs_listen && !ptt_down && !beacon.active() && !switch_off,now);
+        input.power.mcu_degrees=mcu_temperature.reading(now);
         const auto &identity=app.beacon_identity();
         const uint32_t packet_hz=config.aprs_hz;
         const bool fix=config.gps_on && nav_fix_fresh(now);
@@ -368,11 +389,10 @@ extern "C" int main(void) {
             !slot.tx_hz?"TX FREQ UNSET":
             !calibration_valid?calibration_error:
 #ifdef RT950_MAIN_TX
-            !power_sample_ok?"TX BATTERY SENSOR":
-            !power_tx_ok?(battery_raw<battery_limits.low?"TX LOW BATTERY":"TX HIGH VOLTAGE"):
+            !power_tx_ok?supply_fault_text(supply_fault):
             numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
 #endif
-            !allowed?"TX PROFILE BLOCKED":"TX BLOCKED / RELEASE";
+            !allowed?"TX PROFILE BLOCKED":ptt.blocked_by_carrier()?"TX CHANNEL BUSY":"TX BLOCKED / RELEASE";
 #ifdef RT950_MAIN_TX
         constexpr const char *release_errors[]={"","TX END NOT PERMITTED","TX END PROFILE CHANGED",
             "TX END TIME LIMIT","TX END RADIO BLOCKED","TX END SIGNAL FAILED"};
@@ -390,8 +410,7 @@ extern "C" int main(void) {
         diagnostics.low=battery_limits.low;diagnostics.high=battery_limits.High;
         diagnostics.factory_limits=battery_limits_factory;
         diagnostics.profile_check=profile.tx_inhibit?"TX INHIBITED":!slot.tx_hz?"TX FREQ UNSET":
-            !calibration_valid?calibration_error:!power_sample_ok?"TX BATTERY SENSOR":
-            !power_tx_ok?(battery_raw<battery_limits.low?"TX LOW BATTERY":"TX HIGH VOLTAGE"):
+            !calibration_valid?calibration_error:!power_tx_ok?supply_fault_text(supply_fault):
             !frequency_allowed?"TX OUT OF BAND":profile.reverse?"TX PROFILE BLOCKED":
             !tone_allowed?"TX TONE INVALID":!power_allowed?"POWER CALIBRATION NEEDED":
             cb_tx && !profile.narrow?"TX PROFILE BLOCKED":"STATIC CHECKS PASS";
@@ -527,6 +546,16 @@ extern "C" int main(void) {
         if(gps!=app.config().gps_on) {gps=app.config().gps_on;board_gps_enable(gps);}
         if(!app.screen_awake() && display_awake){board_display_sleep();display_awake=false;}
         if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
+#ifdef RT950_MAIN_TX
+        using Load=WorkloadTime;
+        const bool voice_listening=voice_enabled && !tx_owns_radio && !aprs_listen && input.voice.ready;
+        const bool watching=voice_listening && !monitor && !scanning && app.enabled(Option::Watch);
+        input.power.workload.observe(now,
+            (voice_listening && !watching && !scanning?1u<<Load::SingleRx:0u) |
+            (watching?1u<<Load::WatchRx:0u) | (gps?1u<<Load::Gps:0u) |
+            (config.ble_on && !switch_off?1u<<Load::Ble:0u) |
+            (packet_rx.running()?1u<<Load::AprsRx:0u) | (transmitting?1u<<Load::Tx:0u));
+#endif
         if(app.screen_awake() && uint32_t(now-last_draw)>=200u) {last_draw=now;ui_draw(app,input,now);}
         board_display_brightness(app.screen_awake()?(uint8_t)app.brightness():0);
         // Sleep only the CPU, keep SysTick/UART and GPIO polling active.

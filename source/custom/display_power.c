@@ -4,8 +4,12 @@
 #include "drivers/lcd.h"
 /* PC6/PB3 backlight enable pins; no alternate-function/timer remap assumed.
  * Four levels via SysTick, 250Hz PWM (50% has 500Hz edges). Verify on panel. */
-static volatile uint8_t ready,duty;
-static uint8_t phase,lit;
+static volatile uint8_t ready;
+/* The flash wait loop continues this PWM while SysTick is masked. */
+volatile uint8_t board_backlight_duty,board_backlight_phase;
+#define duty board_backlight_duty
+#define phase board_backlight_phase
+static uint8_t lit;
 void board_display_init(void){ready=0;phase=0;lit=0;duty=0;lcd_backlight_off();ready=1;}
 void board_display_brightness(uint8_t level){duty=level<=4?level:4;}
 void board_display_tick(void) {

@@ -9,6 +9,9 @@ constexpr bool numeric_power(TxPower power) {
 constexpr unsigned target_mw(TxPower power) {
     return power==TxPower::Lpd10mW?10:power==TxPower::Pmr500mW?500:0;
 }
+constexpr uint32_t calibration_frequency(TxPower power) {
+    return power==TxPower::Lpd10mW?433000000u:power==TxPower::Pmr500mW?446000000u:0;
+}
 constexpr bool power_channel(TxPower power,uint32_t hz) {
     if(power==TxPower::Lpd10mW)
         return hz>=433075000u && hz<=434750000u && (hz-433075000u)%25000u==0;
@@ -40,7 +43,7 @@ struct MeasuredPowerPoint {
     TxPower power=TxPower::Low;
 };
 // These are operator-entered measurement records, not an RF power sensor.
-// No frequency interpolation or extrapolation across battery voltage is made.
+// A reference measurement supplies one code for its profile within the voltage window.
 class MeasuredPower final {
 public:
     static constexpr unsigned Capacity=16,VoltageWindow=100;
@@ -49,17 +52,25 @@ public:
     static unsigned distance(unsigned a,unsigned b) {return a>b?a-b:b-a;}
     static bool valid(const MeasuredPowerPoint &point) {
         if(!point.hz)return !point.battery_mv && !point.measured_mw && !point.code && point.power==TxPower::Low;
-        return power_channel(point.power,point.hz) && point.code && point.code<255 &&
+        return (point.hz==calibration_frequency(point.power) || power_channel(point.power,point.hz)) &&
+            point.code && point.code<255 &&
             point.battery_mv>=6400 && point.battery_mv<=8400 && point.measured_mw &&
             point.measured_mw<=target_mw(point.power);
     }
-    const MeasuredPowerPoint *find(TxPower power,uint32_t hz,unsigned mv) const {
+    const MeasuredPowerPoint *find_exact(TxPower power,uint32_t hz,unsigned mv) const {
         const MeasuredPowerPoint *best=nullptr;
         for(const auto &point:points)
             if(point.hz && valid(point) && point.hz==hz && point.power==power &&
                distance(point.battery_mv,mv)<=VoltageWindow &&
                (!best || distance(point.battery_mv,mv)<distance(best->battery_mv,mv)))best=&point;
         return best;
+    }
+    const MeasuredPowerPoint *find(TxPower power,uint32_t hz,unsigned mv) const {
+        const uint32_t reference=calibration_frequency(power);
+        if(!reference || (hz!=reference && !power_channel(power,hz)))return nullptr;
+        const auto *point=find_exact(power,reference,mv);
+        // Legacy measurements only describe the channel they were made on.
+        return point?point:find_exact(power,hz,mv);
     }
     bool store(MeasuredPowerPoint point) {
         if(!point.hz || !valid(point))return false;
@@ -80,7 +91,8 @@ struct TargetPowerDecision {bool ready=true;uint8_t code=0;};
 inline TargetPowerDecision resolve_target_power(const MeasuredPower &table,const RadioProfile &profile,
     uint32_t rx,uint32_t tx,unsigned resting_mv,uint8_t factory_low,bool probe,uint8_t probe_code) {
     if(!numeric_power(profile.power))return {};
-    if(!power_channel(profile.power,tx) || !profile.narrow || profile.reverse ||
+    const uint32_t reference=calibration_frequency(profile.power);
+    if((probe?tx!=reference:!power_channel(profile.power,tx)) || !profile.narrow || profile.reverse ||
        profile.shift!=Shift::None || rx!=tx || !factory_low)return {false,0};
     const auto *point=table.find(profile.power,tx,resting_mv);
     const uint8_t code=probe?probe_code:point?point->code:0;

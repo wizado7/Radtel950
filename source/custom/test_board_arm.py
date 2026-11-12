@@ -248,6 +248,21 @@ assert m.function('board_battery_errors')==2
 print('ARM battery: ADC2 PA1 sequence, dummy sample, OEM raw oracle, 12-bit 7.736V scaling, 2s freshness, EOC/calibration timeouts PASS')
 
 m=Machine(raw)
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_init')
+poll_battery(1);adc(8,reg(8)&~8);poll_battery(2);adc(8,reg(8)&~4);poll_battery(3)
+adc(0,2);poll_battery(4);adc(0,2);adc(0x4c,0xa00);poll_battery(5)
+m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_battery_fast')
+adc(0,2);poll_battery(24);assert reg(0)&2
+poll_battery(25);assert not reg(0)&2
+adc(0,2);poll_battery(26);adc(0,2);adc(0x4c,188<<4);poll_battery(27)
+assert m.function('board_battery_raw')==188
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_fast')
+adc(0,2);poll_battery(1026);assert reg(0)&2
+poll_battery(1027);assert not reg(0)&2
+print('ARM battery schedule: 20ms TX conversions, high sample and return to 1s standby PASS')
+
+
+m=Machine(raw)
 for mv,want in [(0,255),(6000,0),(6400,0),(7400,52),(7420,53),(7460,55),(8319,99),(8320,100),(8400,100),(9000,100)]:
     m.u.reg_write(UC_ARM_REG_R0,mv);assert m.function('board_battery_percent_from_mv')==want
 previous=0
@@ -402,6 +417,32 @@ def flash_call(name,*values):
     return fm.call(symbols[name],budget=4000000)
 operation=next(name for name,address in symbols.items()
                if 'flash_operation' in name and 0x20000000<=address<0x20018000)
+class BusyFlashModel(FlashModel):
+    def __init__(self):
+        super().__init__()
+        self.cycles=0
+        self.edges=[]
+        self.u.hook_add(UC_HOOK_MEM_READ,self.cycle,begin=0xe0001004,end=0xe0001004)
+    def cycle(self,u,access,address,size,value,data):
+        self.put(address,self.cycles)
+        self.cycles+=120000
+        if self.cycles==9*120000:self.put(0x4002200c,32)
+    def write(self,u,access,address,size,value,data):
+        super().write(u,access,address,size,value,data)
+        if address==0x40022010 and value==66:self.put(0x4002200c,1)
+        if address in (GPIO[2]+16,GPIO[2]+20,GPIO[1]+16,GPIO[1]+20):
+            self.edges.append((address,value))
+
+fm=BusyFlashModel()
+flash_call('board_display_init');flash_call('board_display_brightness',2);flash_call('board_display_tick')
+fm.edges.clear()
+assert flash_call(operation,0x08010000,0,1)
+off=[(GPIO[2]+20,64),(GPIO[1]+20,8)]
+on=[(GPIO[2]+16,64),(GPIO[1]+16,8)]
+assert fm.edges==off+on+off+on
+assert fm.odr[GPIO[2]]&64 and fm.odr[GPIO[1]]&8
+print('ARM flash busy: backlight PWM continues and resumes at the original output state PASS')
+fm=FlashModel()
 for address,erase in ((0x08000000,1),(0x08002ffc,0),(0x08003000,1),(0x0800fffc,0),
                       (0x08010001,0),(0x08010004,1),(0x08013ffc,1),(0x08014000,0),
                       (0x08014000,1),(0xffffffff,0)):
@@ -632,7 +673,9 @@ print('ARM menu timeout UI: System navigation, complete RU/EN lists and LCD boun
 # A fresh model selects the numeric target through the actual radio menu.
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 set_frequency=next(n for n in symbols if n.startswith('_ZN5rt95011Application13set_frequencyE'))
-menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,446081250);menu_ui.function(set_frequency)
+def menu_frequency(hz):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,hz);menu_ui.function(set_frequency)
+menu_frequency(446000000)
 menu_ui.u.mem_write(0x20015000,struct.pack('<I',0x20015e00)) # bench_ptt -> empty text
 menu_key('Menu');menu_key('Ok')
 for _ in range(4):menu_key('Down')
@@ -646,6 +689,7 @@ assert 'Калибровка мощности TX' in menu_ui.texts and 'Цель
 menu_key('Left');menu_draw()
 assert 'СТЕРЕТЬ ЗАМЕРЫ МОЩНОСТИ?' in menu_ui.texts
 print('ARM numeric power UI: 10 mW/0.5 W choices, RU/EN calibration and clear confirmation bounds PASS')
+menu_frequency(446081250)
 menu_key('BandProfile');menu_draw()
 assert 'Профили LPD / PMR (RU)' in menu_ui.texts and 'PMR: цель 0,5 Вт' in menu_ui.texts
 assert '446.08125' in menu_ui.texts
@@ -655,15 +699,17 @@ menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu
 assert 'LPD / PMR profiles (RU)' in menu_ui.texts and 'PMR: 0.5 W target' in menu_ui.texts
 print('ARM RU LPD/PMR picker UI: both bands, channel frequencies and bilingual LCD bounds PASS')
 menu_key('PowerStatus');menu_draw()
-assert '1/3 Battery readings' in menu_ui.texts and 'TX DISABLED ON THIS PAGE' in menu_ui.texts
-menu_key('Down');menu_draw();assert '2/3 Last TX supply' in menu_ui.texts and 'NO TX HISTORY' in menu_ui.texts
+assert '1/4 Battery readings' in menu_ui.texts and 'TX DISABLED ON THIS PAGE' in menu_ui.texts
+menu_key('Down');menu_draw();assert '2/4 Last TX supply' in menu_ui.texts and 'NO TX HISTORY' in menu_ui.texts
 menu_key('Down');menu_draw()
-assert '3/3 Available sensors' in menu_ui.texts and 'NOT READ' in menu_ui.texts and 'NOT VERIFIED' in menu_ui.texts
+assert '3/4 Available sensors' in menu_ui.texts and 'NO DATA' in menu_ui.texts and 'NOT VERIFIED' in menu_ui.texts
+menu_key('Down');menu_draw();assert '4/4 Activity time' in menu_ui.texts and 'GPS on s' in menu_ui.texts and 'Reset flags' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('PowerStatus');menu_draw()
-assert '1/3 Измерения питания' in menu_ui.texts
-menu_key('Down');menu_draw();assert '2/3 Питание при TX' in menu_ui.texts
-menu_key('Down');menu_draw();assert '3/3 Доступные датчики' in menu_ui.texts and 'НЕ ПОДТВ.' in menu_ui.texts
-print('ARM power diagnostics UI: three read-only pages, real unavailable states, RU/EN and LCD bounds PASS')
+assert '1/4 Измерения питания' in menu_ui.texts
+menu_key('Down');menu_draw();assert '2/4 Питание при TX' in menu_ui.texts
+menu_key('Down');menu_draw();assert '3/4 Доступные датчики' in menu_ui.texts and 'НЕ ПОДТВ.' in menu_ui.texts
+menu_key('Down');menu_draw();assert '4/4 Время работы' in menu_ui.texts and 'Приём APRS, с' in menu_ui.texts
+print('ARM power diagnostics UI: four read-only pages, activity time, RU/EN and LCD bounds PASS')
 menu_key('MicGain');menu_draw()
 assert all(label in menu_ui.texts for label in ('Чувствительность микрофона','Низкая','Средняя','Высокая (завод.)'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('MicGain');menu_draw()
@@ -709,6 +755,8 @@ menu_ui.u.mem_write(menu_app+field_offsets[0],bytes([95]))
 menu_ui.u.mem_write(menu_app+field_offsets[1],struct.pack('<H',8000))
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,446018750);menu_ui.function(set_frequency)
 menu_key('BandProfile');menu_key('Ok');menu_key('PowerCalibration');menu_draw()
+assert 'SET VFO TO 446.00000' in menu_ui.texts
+menu_frequency(446000000);menu_key('PowerCalibration');menu_draw()
 assert 'CODE IS NOT POWER' in menu_ui.texts and '50 OHM LOAD + RF METER' in menu_ui.texts
 menu_key('Right');menu_draw()
 assert '-- mW' in menu_ui.texts and '-- W' in menu_ui.texts and '1 mW = 0.001 W' in menu_ui.texts
@@ -725,6 +773,7 @@ assert '500 mW' in menu_ui.texts and '0.500 W' in menu_ui.texts
 menu_key('Back');menu_key('Right');menu_number(501);menu_key('Ok');menu_draw()
 assert 'MEASUREMENT ABOVE TARGET' in menu_ui.texts
 menu_key('Back');menu_key('Back');menu_key('BandProfile');menu_key('Right');menu_key('Ok')
+menu_frequency(433000000)
 menu_key('PowerCalibration');menu_key('Right');menu_number(9);menu_draw()
 assert '9 mW' in menu_ui.texts and '0.009 W' in menu_ui.texts
 menu_key('Back');menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
@@ -734,6 +783,18 @@ menu_key('Ok');menu_draw();assert '9 мВт' in menu_ui.texts
 menu_key('Back');menu_key('PowerCalibration');menu_draw()
 assert '9 мВт' in menu_ui.texts and 'КОД НЕ РАВЕН МОЩНОСТИ' in menu_ui.texts
 print('ARM power units UI: explicit mW/W, 470=0.470, 500=0.500, 9=0.009, blank/zero/over-target, save and RU/EN bounds PASS')
+
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,1);menu_ui.function(ctor)
+menu_frequency(435125000);menu_key('Save');menu_number(2);menu_draw()
+assert 'Channel number' in menu_ui.texts
+menu_key('Ok');menu_draw()
+assert all(label in menu_ui.texts for label in ('Replace this channel?','CH 2','446.01875','435.12500'))
+menu_key('Back');menu_key('Back');menu_key('Mode');menu_number(64);menu_key('Ok');menu_draw()
+assert 'CH 64' in menu_ui.texts or any('64' in label for label in menu_ui.texts)
+menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+menu_key('Save');menu_key('Ok');menu_draw()
+assert 'ЗАМЕНИТЬ ЭТОТ КАНАЛ?' in menu_ui.texts
+print('ARM channel workflow UI: number entry, overwrite preview, cancel, recall and RU/EN bounds PASS')
 
 # Verify the auto-lock duration list in both languages with actual ARM UI.
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
@@ -760,9 +821,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.58','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.63','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.58','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.63','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1053,6 +1114,14 @@ for russian in (False,True):
   assert all(label in menu_ui.texts for label in (('ВЫКЛ','Монитор','FM радио','Состояние GPS') if russian else ('OFF','Monitor','FM radio','GPS status')))
   menu_key('Down');menu_draw();menu_key('Back')
 print('ARM user keys UI: four full action lists/current marks, RU/EN and LCD bounds PASS')
+
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+menu_key('Pf1Short');menu_key('Up');menu_draw()
+assert 'Scan zone channels' in menu_ui.texts and 'Scan VFO' in menu_ui.texts
+menu_key('Back');menu_frequency(145600000);menu_key('TxFrequency');menu_key('Left');menu_draw()
+assert 'LEFT: TX = RX / RIGHT: CLEAR' in menu_ui.texts and '14560000' in menu_ui.texts
+menu_key('Right');menu_draw();assert '0' in menu_ui.texts
+print('ARM quick actions UI: scrolled PF list and TX draft shortcuts PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)

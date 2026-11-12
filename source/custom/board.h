@@ -14,6 +14,7 @@ void board_display_begin_wake(void);
 void board_display_shutdown(void);
 void board_radio_led(uint8_t rx,uint8_t tx);
 void board_battery_init(uint32_t now);
+void board_battery_fast(uint8_t enabled);
 void board_battery_poll(uint32_t now);
 uint16_t board_battery_mv(void);
 uint8_t board_battery_sample_fresh(uint32_t now);
