@@ -200,6 +200,8 @@ public:
     unsigned name_cursor() const {return name_cursor_;}
     unsigned channel_selection() const { return channel_; }
     void digit(unsigned digit);
+    void observe_voice_slot(uint8_t slot,uint32_t hz);
+    int recent_voice_slot() const;
     bool set_frequency(uint32_t hz);
     bool store(unsigned index);
     bool recall(unsigned index);
@@ -243,6 +245,8 @@ private:
     unsigned scan_channel_=MemoryCount;
     uint32_t scan_frequency_=0,scan_start_=0,scan_end_=0;
     bool scan_paused_=false,scan_reverse_=false,scan_step_=false;
+    uint32_t last_voice_hz_=0,last_voice_at_=0;
+    uint8_t last_voice_slot_=3;
     ScanMode scan_mode_=ScanMode::Carrier,scan_mode_draft_=ScanMode::Carrier;
     uint8_t watch_slots_draft_=0;
     uint8_t aux_ptt_=0;

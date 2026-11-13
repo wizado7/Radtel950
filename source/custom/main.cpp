@@ -155,7 +155,11 @@ extern "C" int main(void) {
             last_input=now;input.sampled=board_scan_key();const uint8_t code=keys.poll(input.sampled,now);
             if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
             keys_awake=wake_keys.poll(input.sampled,now);
-            if(code!=255) {input.last=uint8_t(code&127u);++input.presses;if(keys_awake)dispatch_key(app,code);}
+            if(code!=255) {
+                input.last=uint8_t(code&127u);++input.presses;
+                const bool select_during_ptt=raw_ptt && code==5 && app.page()==Page::Radio;
+                if(keys_awake && !select_during_ptt)dispatch_key(app,code);
+            }
         }
         if(uint32_t(now-last_encoder)>=1u) {
             last_encoder=now;const int8_t dir=encoder_poll();
@@ -543,6 +547,10 @@ extern "C" int main(void) {
         if(aprs_listen)input.voice.receiving=false;
 #endif
         input.voice.slot=voice_watch.slot();
+#ifdef RT950_MAIN_TX
+        if(page==Page::Radio && !raw_ptt && !tx_owns_radio && input.voice.ready && input.voice.receiving)
+            app.observe_voice_slot(input.voice.slot,input.voice.frequency);
+#endif
         if(page!=Page::Debug)board_radio_led(input.voice.receiving && !input.ptt_mask,transmitting);
         if(gps!=app.config().gps_on) {gps=app.config().gps_on;board_gps_enable(gps);}
         if(!app.screen_awake() && display_awake){board_display_sleep();display_awake=false;}

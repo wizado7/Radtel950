@@ -552,11 +552,14 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  if(changed(0,line,force)) {rect(8,32,224,12,bg);label(10,34,line,accent,bg);}
  if(a.page()==Page::Radio) {
   const auto &c=a.config();
+  const int heard=a.recent_voice_slot();
   for(unsigned i=0;i<3;++i) {
    char hz[12];freq(hz,c.vfo[i].rx_hz);
    char key[30];copy(key,hz);key[10]=0; // append mode/channel to the cache signature
-   const bool receiving=input.voice.receiving && input.voice.slot==i && !input.ptt_mask;
-   unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=receiving?'R':'-';num(key+n,c.vfo[i].memory_channel);
+   const bool receiving=input.voice.ready && input.voice.receiving && input.voice.slot==i &&
+       input.voice.frequency==c.vfo[i].rx_hz && !input.ptt_mask;
+   const bool recent=heard==int(i);
+   unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=receiving?'R':recent?'L':'-';num(key+n,c.vfo[i].memory_channel);
    const bool redraw=changed(i+1,key,force) || cache.active!=c.active;
    if(!redraw)continue;
    const unsigned y=52+i*70;const bool active=c.active==i;
@@ -565,9 +568,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    char slot[2]={char('A'+i),0};label(18,y+9,slot,active?accent:muted,fill);
    label(44,y+9,c.vfo[i].channel_mode?"CH":"VFO",muted,fill);
    if(c.vfo[i].channel_mode) {char channel[12];num(channel,c.vfo[i].memory_channel+1);label(76,y+9,channel,muted,fill);label(104,y+9,a.memory(c.vfo[i].memory_channel)->name,muted,fill);}
-   label(158,y+9,receiving?"RX":active?"ACTIVE":"STANDBY",(receiving || active)?accent:muted,fill);
+   label(174,y+9,receiving?"RX":active?"ACTIVE":recent?"LAST RX":"STANDBY",(receiving || active)?accent:muted,fill);
    lcd_draw_string_2x(18,uint16_t(y+29),hz,ink,fill);label(178,y+43,"MHz",muted,fill);
-   if(c.vfo[i].rx_hz && !c.vfo[i].tx_hz)label(170,y+29,"RX ONLY",muted,fill);
+   if(c.vfo[i].rx_hz && !c.vfo[i].tx_hz)label(170,y+29,"NO TX",muted,fill);
    else if(a.reverse_active(i))label(170,y+29,"REV",accent,fill);
   }
   cache.active=c.active;
@@ -590,12 +593,17 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   else if(a.editing()) {copy(line,"Enter ");a.entry_text(line+6);copy(line+15," OK");}
   else if(input.voice.fault)copy(line,"RX BUS FAULT");
   else if(input.power_status[0])copy(line,input.power_status);
+  else if(heard>=0 && heard!=c.active) {
+   constexpr const char *select_rx[]={"Right: select RX A","Right: select RX B","Right: select RX C"};
+   copy(line,select_rx[heard]);
+  }
   else if(c.watch_mode==RT_WATCH_SINGLE)copy(line,"Watch: selected");
   else {
    const uint8_t mask=c.watch_mode==RT_WATCH_ABC?7u:uint8_t(c.watch_mask|(1u<<c.active));
    copy(line,mask==3?"Watch: A/B":mask==5?"Watch: A/C":mask==6?"Watch: B/C":"Watch: A/B/C");
   }
   if(changed(4,line,force)) {rect(8,266,224,20,bg);label(10,271,line,a.editing()?accent:muted,bg);}
+  if(force)label(10,287,"Left: Watch slots",muted,bg);
  } else if(a.page()==Page::Settings) {
   const unsigned sel=a.menu_selection(),first=sel<6?0:sel-5;
   for(unsigned row=0;row<6;++row) {

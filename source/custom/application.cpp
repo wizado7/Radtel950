@@ -290,6 +290,15 @@ void Application::fm_seek_result(uint16_t found) {
     else notify("FM no station found");
     fm_seek_=false;
 }
+void Application::observe_voice_slot(uint8_t slot,uint32_t hz) {
+    if(page_!=Page::Radio || slot>=3 || !hz || config_.vfo[slot].rx_hz!=hz)return;
+    last_voice_slot_=slot;last_voice_hz_=hz;last_voice_at_=now_;
+}
+int Application::recent_voice_slot() const {
+    if(last_voice_slot_>=3 || uint32_t(now_-last_voice_at_)>=5000u ||
+       config_.vfo[last_voice_slot_].rx_hz!=last_voice_hz_)return -1;
+    return last_voice_slot_;
+}
 void Application::digit(unsigned d) {
     last_activity_=now_;
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
@@ -978,7 +987,7 @@ void Application::key(Key k) {
         return;
     }
     if(k==Key::WatchSlots) {
-        parent_=Page::Settings;page_=Page::WatchSlots;
+        parent_=page_==Page::Radio?Page::Radio:Page::Settings;page_=Page::WatchSlots;
         watch_slots_draft_=uint8_t(watch_slots_selection());notify("");return;
     }
     if(page_==Page::WatchSlots && k!=Key::Back && k!=Key::Menu) {
@@ -1202,6 +1211,12 @@ void Application::key(Key k) {
         return;
     }
     if(page_!=Page::Radio) return;
+    if(!digits_ && k==Key::Left){key(Key::WatchSlots);return;}
+    if(!digits_ && k==Key::Right) {
+        const int heard=recent_voice_slot();
+        if(heard>=0 && heard!=config_.active){config_.active=uint8_t(heard);notify("RX SLOT SELECTED");}
+        return;
+    }
     if(k==Key::NextSlot) {cancel_entry();config_.active=uint8_t((config_.active+1)%3);}
     else if(k==Key::Ok && digits_) {
         uint32_t hz=entry_khz_;

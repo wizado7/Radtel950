@@ -866,6 +866,29 @@ extern "C" int regression_tests() {
  CHECK(side_radio.keys==2 && side_ptt.state()==voice::Ptt::State::Transmitting);
 
  Application watch_settings;
+ {
+  Application shortcuts;
+  shortcuts.key(Key::Left);
+  CHECK(shortcuts.page()==Page::WatchSlots && shortcuts.config().active==0);
+  shortcuts.key(Key::Back);CHECK(shortcuts.page()==Page::Radio);
+  shortcuts.key(Key::Left);shortcuts.key(Key::Down);shortcuts.key(Key::Ok);
+  CHECK(shortcuts.page()==Page::Radio && shortcuts.watch_slots_selection()==2);
+  const auto frequency=shortcuts.config().vfo[1].rx_hz;
+  shortcuts.tick(100);
+  shortcuts.observe_voice_slot(1,frequency+10);
+  CHECK(shortcuts.recent_voice_slot()==-1);
+  shortcuts.observe_voice_slot(1,frequency);
+  CHECK(shortcuts.recent_voice_slot()==1 && shortcuts.config().active==0);
+  shortcuts.digit(4);shortcuts.key(Key::Right);
+  CHECK(shortcuts.config().active==0 && shortcuts.editing());
+  shortcuts.key(Key::Back);shortcuts.key(Key::Right);
+  CHECK(shortcuts.config().active==1);
+  shortcuts.set_frequency(145500000);CHECK(shortcuts.recent_voice_slot()==-1);
+  shortcuts.observe_voice_slot(2,shortcuts.config().vfo[2].rx_hz);
+  shortcuts.tick(5099);CHECK(shortcuts.recent_voice_slot()==2);
+  shortcuts.tick(5100);shortcuts.key(Key::Right);
+  CHECK(shortcuts.recent_voice_slot()==-1 && shortcuts.config().active==1);
+ }
  watch_settings.key(Key::Menu);
  watch_settings.key(Key::WatchDwell);
  watch_settings.digit(9);watch_settings.digit(9);watch_settings.key(Key::Ok);

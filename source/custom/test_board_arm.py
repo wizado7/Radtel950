@@ -821,9 +821,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.64','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.65','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.64','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.65','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1129,6 +1129,26 @@ menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
 menu_key('ChannelScan');menu_draw()
 assert 'НЕТ КАНАЛОВ ДЛЯ ОБХОДА' in menu_ui.texts
 print('ARM channel scan UI: empty scan status RU/EN and LCD bounds PASS')
+
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,1);menu_ui.function(ctor)
+power_status_field=subprocess.check_output([args.prefix+'gdb','-batch',str(build/'rt950-custom-ui.elf'),
+    '-ex','p/x (unsigned long)&((rt950::InputStatus*)0)->power_status'],text=True,stderr=subprocess.DEVNULL)
+power_status_offset=int(re.search(r'\$1 = (0x[0-9a-f]+)',power_status_field).group(1),16)
+for offset in (0,power_status_offset):
+    menu_ui.u.mem_write(0x20015000+offset,struct.pack('<I',0x20015e00))
+menu_draw();assert 'Left: Watch slots' in menu_ui.texts
+menu_key('Left');menu_draw();assert 'WATCH SLOTS' in menu_ui.texts
+menu_key('Back')
+observe_voice=next(n for n in symbols if 'observe_voice_slot' in n)
+for reg,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2),(menu_app,1,446018750)):
+    menu_ui.u.reg_write(reg,value)
+menu_ui.function(observe_voice);menu_draw()
+assert 'LAST RX' in menu_ui.texts and 'Right: select RX B' in menu_ui.texts
+menu_key('Right');menu_draw()
+assert 'RX SLOT SELECTED' in menu_ui.texts
+menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back');menu_draw()
+assert 'ВЛЕВО: СЛОТЫ ОБХОДА' in menu_ui.texts
+print('ARM Watch shortcuts UI: home entry, recent slot and explicit selection PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)
