@@ -30,6 +30,13 @@ python source/custom/package_firmware.py --toolchain 'C:\arm-gnu\bin' --output f
 python source/custom/oem_channels.py dump.bin channels.csv
 ```
 
+На станции со штатной 0.29 канальную область можно получить через кабель. Сначала определите актуальный COM через `settings_backup.py --list-ports`. Для чтения нужен Python с pyserial. Результат подходит обеим утилитам переноса каналов.
+
+```powershell
+python source/custom/read_oem_channels.py --port COMx oem-channels.bin
+python source/custom/oem_channels.py oem-channels.bin channels.csv
+```
+
 Чтобы перенести выбранные FM-каналы, сначала выгрузите резервный файл со своей Custom UI. Затем укажите соответствия `OEM:CH` и создайте новый файл. В примере OEM-каналы 1 и 64 заменяют ячейки 10 и 11. Импортированные каналы получают запрет TX, а ранее выбранные слоты, ссылающиеся на эти ячейки, возвращаются в VFO. Имена приводятся к алфавиту рации и сокращаются до восьми знаков.
 
 ```powershell
