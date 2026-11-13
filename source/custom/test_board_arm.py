@@ -821,9 +821,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.66','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.67','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.66','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.67','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1165,6 +1165,13 @@ menu_draw();assert 'TX' in menu_ui.texts and '145.00000' in menu_ui.texts and 'S
 menu_ui.u.mem_write(tx_slot_address,b'\xff')
 menu_draw();assert '145.60000' in menu_ui.texts and 'SPLIT' in menu_ui.texts
 print('ARM TX slot UI: split indication, keyed frequency and return to RX PASS')
+menu_key('Channels');menu_draw();assert 'LEFT: CHANNEL ACTIONS' in menu_ui.texts
+menu_key('Left');menu_draw()
+assert all(label in menu_ui.texts for label in ('Rename channel','Move channel','Delete channel'))
+menu_key('Back');menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+menu_key('Channels');menu_key('Left');menu_draw()
+assert all(label in menu_ui.texts for label in ('Имя канала','Перенести канал','Удалить канал'))
+print('ARM channel actions UI: selected channel and three commands RU/EN PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)

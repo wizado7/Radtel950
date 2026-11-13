@@ -820,13 +820,26 @@ void Application::key(Key k) {
     }
     if(k==Key::Gps && page_==Page::Gps)return;
     if(k==Key::RenameChannel || k==Key::DeleteChannel || k==Key::MoveChannel) {
-        channel_action_=k;page_=Page::ManageChannel;select_channel_for_list();notify("");return;
+        channel_context_=false;channel_action_=k;page_=Page::ManageChannel;select_channel_for_list();notify("");return;
     }
     if(k==Key::SelectZone || k==Key::RenameZone) {
-        channel_action_=k;zone_selection_=active_zone_;page_=Page::Zones;notify("");return;
+        channel_context_=false;channel_action_=k;zone_selection_=active_zone_;page_=Page::Zones;notify("");return;
+    }
+    const Page channel_return=channel_context_?Page::Channels:Page::ManageChannel;
+    if(page_==Page::ChannelCommands) {
+        if(k==Key::Back || k==Key::Menu){page_=Page::Channels;notify("");}
+        else if(k==Key::Up || k==Key::Down)channel_command_=uint8_t((channel_command_+(k==Key::Down?1u:2u))%3u);
+        else if(k==Key::Ok && channel_visible(channel_)) {
+            constexpr Key commands[]={Key::RenameChannel,Key::MoveChannel,Key::DeleteChannel};
+            channel_action_=commands[channel_command_];
+            if(channel_action_==Key::RenameChannel)open_name_editor(memories_[channel_].name);
+            else if(channel_action_==Key::MoveChannel){zone_selection_=active_zone_;page_=Page::Zones;}
+            else page_=Page::ConfirmDelete;
+        }
+        return;
     }
     if(page_==Page::EditName && k!=Key::Menu) {
-        if(k==Key::Back){page_=channel_action_==Key::RenameZone?Page::Zones:Page::ManageChannel;notify("");}
+        if(k==Key::Back){page_=channel_action_==Key::RenameZone?Page::Zones:channel_return;notify("");}
         else if(k==Key::Left && name_cursor_)--name_cursor_;
         else if(k==Key::Right && name_cursor_<7 && name_draft_[name_cursor_])++name_cursor_;
         else if(k==Key::Erase) {
@@ -838,7 +851,7 @@ void Application::key(Key k) {
         } else if(k==Key::Ok) {
             if(!name_draft_[0]){notify("ENTER A NAME");return;}
             if(channel_action_==Key::RenameZone){text(zone_names_[zone_selection_],name_draft_);page_=Page::Zones;}
-            else {text(memories_[channel_].name,name_draft_);page_=Page::ManageChannel;}
+            else {text(memories_[channel_].name,name_draft_);page_=channel_return;}
             notify("SETTING APPLIED");
         }
         return;
@@ -847,18 +860,18 @@ void Application::key(Key k) {
         if(k==Key::Ok) {
             scan_excluded_[channel_/32]&=~(1u<<(channel_%32));
             memories_[channel_]={};reconcile_channels();select_channel_for_list();
-            page_=Page::ManageChannel;notify("CHANNEL DELETED");
-        } else if(k==Key::Back){page_=Page::ManageChannel;notify("");}
+            page_=channel_return;notify("CHANNEL DELETED");
+        } else if(k==Key::Back){page_=channel_return;notify("");}
         return;
     }
     if(page_==Page::Zones && k!=Key::Menu) {
         if(k==Key::Up || k==Key::Down)zone_selection_=(zone_selection_+(k==Key::Down?1:ZoneCount-1))%ZoneCount;
-        else if(k==Key::Back){page_=channel_action_==Key::MoveChannel?Page::ManageChannel:Page::Settings;notify("");}
+        else if(k==Key::Back){page_=channel_action_==Key::MoveChannel?channel_return:Page::Settings;notify("");}
         else if(k==Key::Ok) {
             if(channel_action_==Key::RenameZone)open_name_editor(zone_names_[zone_selection_]);
             else if(channel_action_==Key::MoveChannel) {
                 memories_[channel_].zone=uint8_t(zone_selection_);reconcile_channels();
-                select_channel_for_list();page_=Page::ManageChannel;notify("CHANNEL MOVED");
+                select_channel_for_list();page_=channel_return;notify("CHANNEL MOVED");
             } else {
                 active_zone_=zone_selection_;reconcile_channels();page_=Page::Settings;notify("ZONE SELECTED");
             }
@@ -1159,6 +1172,9 @@ void Application::key(Key k) {
     if(page_==Page::Channels && !editor_digits_ && k==Key::Right && channel_visible(channel_)) {
         scan_excluded_[channel_/32]^=1u<<(channel_%32);
         notify("");return;
+    }
+    if(page_==Page::Channels && !editor_digits_ && k==Key::Left && channel_visible(channel_)) {
+        channel_context_=true;channel_command_=0;page_=Page::ChannelCommands;notify("");return;
     }
     if(page_==Page::Channels || page_==Page::StoreChannel || page_==Page::ManageChannel) {
         if(k==Key::Up || k==Key::Down) {

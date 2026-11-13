@@ -930,6 +930,24 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  } else if(a.page()==Page::ConfirmDelete) {
   if(force){panel(52,88);label(16,66,"Delete this channel?",accent);label(16,98,a.memory(a.channel_selection())->name);}
   if(force)label(10,266,"OK DELETE / BACK CANCEL",muted,bg);
+ } else if(a.page()==Page::ChannelCommands) {
+  if(force) {
+   char title[18]="CH ";num(title+3,a.channel_selection()+1);
+   unsigned end=0;while(title[end])++end;
+   title[end++]=' ';
+   const char *name=a.memory(a.channel_selection())->name;
+   while(*name)title[end++]=*name++;
+   title[end]=0;
+   label(10,52,title,accent,bg);
+  }
+  constexpr const char *commands[]={"Rename channel","Move channel","Delete channel"};
+  for(unsigned i=0;i<3;++i) {
+   const bool active=i==a.channel_command();
+   if(!changed(i+1,active?"selected":"idle",force))continue;
+   const unsigned y=78+i*36;
+   const uint16_t fill=active?selected:card;
+   rect(8,y,224,30,fill);label(16,y+10,commands[i],ink,fill);
+  }
  } else if(a.page()==Page::ConfirmStore) {
   if(force) {
    const auto &memory=*a.memory(a.channel_selection());
@@ -977,6 +995,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   const char *save_status=save_state_label(input.save_state);
   if(changed(9,a.zone_name(a.active_zone()),force)){rect(8,282,72,10,bg);label(10,283,a.zone_name(a.active_zone()),accent,bg);}
   if(changed(7,save_status,force)){rect(88,282,144,10,bg);label(88,283,save_status,muted,bg);}
+  if(force && a.page()==Page::Channels && count) {
+   rect(8,300,224,16,bg);label(10,304,"LEFT: CHANNEL ACTIONS",muted,bg);
+  }
  } else if(a.page()==Page::Battery) {
   char adc[16],errors[16];num(adc,board_battery_raw());num(errors,board_battery_errors());
   char volts[16];if(mv){num(volts,mv/1000);unsigned v=0;while(volts[v])++v;volts[v++]='.';for(unsigned scale=100;scale;scale/=10)volts[v++]=char('0'+mv/scale%10);volts[v++]='V';volts[v]=0;}else copy(volts,"UNKNOWN");

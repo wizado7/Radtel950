@@ -1112,6 +1112,22 @@ extern "C" int regression_tests() {
  repeater.key(Key::TxFrequency);repeater.key(Key::Right);repeater.key(Key::Ok);
  CHECK(!repeater.config().vfo[1].tx_hz && repeater.config().vfo[1].rx_hz==446018750);
  Application zones;
+ {
+  Application actions;
+  actions.key(Key::Channels);actions.key(Key::Down);actions.key(Key::Left);
+  CHECK(actions.page()==Page::ChannelCommands && actions.channel_selection()==1);
+  actions.key(Key::Ok);actions.digit(7);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Channels && actions.memory(1)->name[0]=='7');
+  actions.key(Key::Left);actions.key(Key::Down);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Zones);
+  actions.key(Key::Down);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Channels && actions.memory(1)->zone==1 && !actions.channel_visible(1));
+  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::ConfirmDelete && actions.memory(0)->occupied);
+  actions.key(Key::Back);CHECK(actions.page()==Page::Channels && actions.memory(0)->occupied);
+  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Ok);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Channels && !actions.memory(0)->occupied && actions.memory(1)->occupied);
+ }
  CHECK(zones.active_zone()==0 && zones.channel_visible(0));
  zones.key(Key::RenameChannel);zones.key(Key::Ok);zones.digit(7);zones.key(Key::Back);
  CHECK(zones.memory(0)->name[0]=='P');

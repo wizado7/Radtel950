@@ -305,6 +305,7 @@ constexpr Text catalog[]={
     {"Select zone","Выбрать зону"},
     {"Rename zone","Имя зоны"},
     {"Move channel","Перенести канал"},
+    {"LEFT: CHANNEL ACTIONS","ВЛЕВО: ДЕЙСТВИЯ КАНАЛА"},
     {"Destination zone","Зона назначения"},
     {"Delete this channel?","Удалить этот канал?"},
     {"OK DELETE / BACK CANCEL","OK УДАЛИТЬ / BACK ОТМЕНА"},
