@@ -30,6 +30,15 @@ python source/custom/package_firmware.py --toolchain 'C:\arm-gnu\bin' --output f
 python source/custom/oem_channels.py dump.bin channels.csv
 ```
 
+Чтобы перенести выбранные FM-каналы, сначала выгрузите резервный файл со своей Custom UI. Затем укажите соответствия `OEM:CH` и создайте новый файл. В примере OEM-каналы 1 и 64 заменяют ячейки 10 и 11. Импортированные каналы получают запрет TX, а ранее выбранные слоты, ссылающиеся на эти ячейки, возвращаются в VFO. Имена приводятся к алфавиту рации и сокращаются до восьми знаков.
+
+```powershell
+python source/custom/import_oem_channels.py dump.bin current.rtcfg imported.rtcfg --map 1:10 --map 64:11
+python source/custom/settings_backup.py --inspect imported.rtcfg
+```
+
+Загрузите файл через **Система → Импорт настроек**, утилиту `settings_backup.py --upload imported.rtcfg --port COMx` и подтвердите на рации. Проверьте список после автосохранения и перезапуска.
+
 ## Лицензия
 
 GNU GPL версии 3. Условия приведены в [LICENSE](LICENSE).

@@ -36,6 +36,22 @@
 using namespace rt950;
 extern "C" {uint8_t regression_fixture[8192];uint32_t backup_fixture_size=0;}
 #define CHECK(x) do {if(!(x))return __LINE__;} while(0)
+
+extern "C" int oem_channel_import_probe(const uint8_t *payload,unsigned size,unsigned schema) {
+ Application app(false);
+ CHECK(app.restore_portable_snapshot(payload,size,schema));
+ const auto &channel=*app.memory(63);
+ CHECK(channel.occupied && channel.zone==9 && channel.rx_hz==446081250 && channel.tx_hz==446006250);
+ CHECK(channel.radio.tx_inhibit && channel.radio.narrow && channel.radio.busy_lock);
+ CHECK(channel.radio.power==TxPower::Low && channel.radio.rx_tone.kind==ToneKind::Ctcss &&
+       ctcss_frequency(channel.radio.rx_tone)==885);
+ CHECK(channel.radio.tx_tone.kind==ToneKind::Dcs && dcs_inverted(channel.radio.tx_tone));
+ CHECK(channel.name[0]=='T' && channel.name[4]=='-' && channel.name[5]=='O');
+ CHECK(app.compact_snapshot_size());
+ app.key(Key::SelectZone);for(unsigned i=0;i<9;++i)app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.recall(63) && !app.scan_eligible(63) && !app.config().vfo[0].tx_hz);
+ return 0;
+}
 static void enter(Application &a,const char *s) {while(*s)a.digit(unsigned(*s++-'0'));dispatch_key(a,6);}
 static void nmea(const char *body,uint32_t now) {
  nav_feed('$',now);uint8_t checksum=0;

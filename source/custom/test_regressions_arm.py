@@ -132,6 +132,30 @@ legacy_version[24:40]=b'0.68'.ljust(16,b'\0')
 import zlib
 struct.pack_into('<I',legacy_version,44,zlib.crc32(legacy_version[:44]))
 assert backup.inspect_backup(legacy_version)['firmware']=='0.68'
+from import_oem_channels import CHANNEL_BYTES, merge
+dump=bytearray(b'\xff'*CHANNEL_BYTES)
+dump[-32:]=struct.pack('<IIHHBBBBI12s',0x44608125,0x44600625,885,106,0,0,2,0x4a,0,b'Test OEM')
+for original in (fixture,):
+ converted=merge(dump,original,[(990,64)])
+ assert backup.inspect_backup(converted)['occupied_channels']==64
+ frame=converted[48:]
+ u.mem_write(symbols['regression_fixture'],frame)
+ for reg,value in ((UC_ARM_REG_R0,symbols['regression_fixture']),(UC_ARM_REG_R1,len(frame)),(UC_ARM_REG_R2,2),
+                   (UC_ARM_REG_SP,0x20017000),(UC_ARM_REG_LR,0x080ff001)):
+  u.reg_write(reg,value)
+ u.emu_start(symbols['oem_channel_import_probe']|1,0x080ff000,count=5000000)
+ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+ result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'OEM import failed at C++ line {result}'
+u.mem_write(symbols['regression_fixture'],fixture)
+for mapping in ([(989,1)],[(990,65)],[(990,1),(990,1)]):
+ try:merge(dump,fixture,mapping)
+ except ValueError:pass
+ else:raise AssertionError('invalid OEM mapping accepted')
+dump[-17]|=1
+try:merge(dump,fixture,[(990,1)])
+except ValueError:pass
+else:raise AssertionError('unsupported OEM AM accepted')
+print('OEM channel import: host conversion to real ARM snapshot reader, split, tones, zone and TX inhibit PASS')
 for index in (0,8,12,16,20,24,40,44,48,len(fixture)-1):
  damaged=bytearray(fixture);damaged[index]^=128
  try:backup.inspect_backup(damaged)
