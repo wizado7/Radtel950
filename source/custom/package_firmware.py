@@ -10,6 +10,8 @@ import tempfile
 import zipfile
 
 DOCUMENTS = ('README.md', 'LICENSE')
+ARTIFACT_SUFFIXES = ('.BTF', '.bin', '.elf', '.map', '.IMAGE-CHECK.txt',
+                     '.SHA256SUMS.txt', '.SOURCE.zip', '.zip')
 
 
 def main():
@@ -28,10 +30,13 @@ def main():
     output = a.output.resolve()
     if re.match(r'acceptance', output.name, re.I):
         p.error('use the shared firmware directory, without a per-version acceptance folder')
-    version = re.search(r'#define RT950_CUSTOM_VERSION "([0-9]+[.][0-9]+)"',
-                        (custom / 'firmware_version.hpp').read_text(encoding='utf-8')).group(1)
+    match = re.search(r'^#define RT950_CUSTOM_VERSION "([0-9]+\.[0-9]+(?:\.[0-9]+)?)"\s*$',
+                      (custom / 'firmware_version.hpp').read_text(encoding='utf-8'), re.MULTILINE)
+    if not match or len(match[1]) > 15:
+        p.error('firmware version must be X.Y or X.Y.Z and fit in 15 characters')
+    version = match[1]
     name = 'RT950_Custom_UI_v' + version
-    if not a.refresh and any(output.glob(name + '.*')):
+    if not a.refresh and any((output / (name + suffix)).exists() for suffix in ARTIFACT_SUFFIXES):
         p.error('this version exists; --refresh replaces only its own files')
     if not a.image_only and not (a.logic_log and a.board_log and a.lcd_log):
         p.error('a complete kit requires --logic-log, --board-log and --lcd-log')

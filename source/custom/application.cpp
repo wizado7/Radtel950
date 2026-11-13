@@ -828,8 +828,19 @@ void Application::key(Key k) {
     const Page channel_return=channel_context_?Page::Channels:Page::ManageChannel;
     if(page_==Page::ChannelCommands) {
         if(k==Key::Back || k==Key::Menu){page_=Page::Channels;notify("");}
-        else if(k==Key::Up || k==Key::Down)channel_command_=uint8_t((channel_command_+(k==Key::Down?1u:2u))%3u);
+        else if(k==Key::Up || k==Key::Down)
+            channel_command_=uint8_t((channel_command_+(k==Key::Down?1u:ChannelCommandCount-1u))%ChannelCommandCount);
         else if(k==Key::Ok && channel_visible(channel_)) {
+            if(channel_command_==ChannelCommandCount-1u) {
+                const auto &memory=memories_[channel_];
+                const unsigned slot=config_.active;
+                vfo_hz_[slot]=memory.rx_hz;
+                vfo_tx_hz_[slot]=memory.tx_hz;
+                vfo_profiles_[slot]=memory.radio;
+                config_.vfo[slot].channel_mode=false;
+                sync_frequencies();
+                cancel_entry();page_=Page::Radio;notify("CHANNEL COPIED TO VFO");return;
+            }
             constexpr Key commands[]={Key::RenameChannel,Key::MoveChannel,Key::DeleteChannel};
             channel_action_=commands[channel_command_];
             if(channel_action_==Key::RenameChannel)open_name_editor(memories_[channel_].name);
@@ -866,14 +877,17 @@ void Application::key(Key k) {
     }
     if(page_==Page::Zones && k!=Key::Menu) {
         if(k==Key::Up || k==Key::Down)zone_selection_=(zone_selection_+(k==Key::Down?1:ZoneCount-1))%ZoneCount;
-        else if(k==Key::Back){page_=channel_action_==Key::MoveChannel?channel_return:Page::Settings;notify("");}
+        else if(k==Key::Back){page_=channel_action_==Key::MoveChannel?channel_return:
+            channel_context_?Page::Channels:Page::Settings;notify("");}
         else if(k==Key::Ok) {
             if(channel_action_==Key::RenameZone)open_name_editor(zone_names_[zone_selection_]);
             else if(channel_action_==Key::MoveChannel) {
                 memories_[channel_].zone=uint8_t(zone_selection_);reconcile_channels();
                 select_channel_for_list();page_=channel_return;notify("CHANNEL MOVED");
             } else {
-                active_zone_=zone_selection_;reconcile_channels();page_=Page::Settings;notify("ZONE SELECTED");
+                active_zone_=zone_selection_;reconcile_channels();
+                if(channel_context_)select_channel_for_list();
+                page_=channel_context_?Page::Channels:Page::Settings;notify("ZONE SELECTED");
             }
         }
         return;
@@ -1175,6 +1189,10 @@ void Application::key(Key k) {
     }
     if(page_==Page::Channels && !editor_digits_ && k==Key::Left && channel_visible(channel_)) {
         channel_context_=true;channel_command_=0;page_=Page::ChannelCommands;notify("");return;
+    }
+    if(page_==Page::Channels && !editor_digits_ && k==Key::NextSlot) {
+        channel_context_=true;channel_action_=Key::SelectZone;
+        zone_selection_=active_zone_;page_=Page::Zones;notify("");return;
     }
     if(page_==Page::Channels || page_==Page::StoreChannel || page_==Page::ManageChannel) {
         if(k==Key::Up || k==Key::Down) {

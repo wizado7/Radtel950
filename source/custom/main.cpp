@@ -29,6 +29,7 @@ extern "C" {
 #include "drivers/gpio.h"
 uint32_t get_tick(void);
 void delay_ms(uint32_t);
+extern uint8_t custom_reset_flags;
 }
 using namespace rt950;
 #ifdef RT950_MAIN_TX
@@ -38,7 +39,6 @@ static bool tail_hold;
 #endif
 extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
-    const uint8_t reset_flags=capture_reset_flags();
     McuTemperature mcu_temperature;
 #endif
     SCB->SCR &= ~6u; // shallow sleep; never inherit SLEEPDEEP/SLEEPONEXIT
@@ -111,7 +111,7 @@ extern "C" int main(void) {
     static SettingsImport<BackupUart> settings_import;
     InputStatus input;bool gps=app.config().gps_on,display_awake=true,wake_encoder=false;
 #ifdef RT950_MAIN_TX
-    input.power.reset_flags=reset_flags;
+    input.power.reset_flags=custom_reset_flags;
 #endif
 #ifdef RT950_BENCH_TX_HZ
     input.factory_ctcss_raw=factory.ctcss_raw;

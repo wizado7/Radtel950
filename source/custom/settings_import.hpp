@@ -86,16 +86,17 @@ private:
         if(storage::word(header_+8)!=1 || !((storage::word(header_+12)==7992 && storage::word(header_+16)==1) ||
            (storage::word(header_+12)==Application::PortableSize && storage::word(header_+16)==Application::PortableSchema)) || storage::word(header_+40) ||
            storage::word(header_+44)!=~storage::crc_bytes(0xffffffffu,header_,44))return false;
-        bool dot=false,ended=false,digit_before=false,digit_after=false;
+        unsigned dots=0;
+        bool ended=false,has_digit=false;
         for(unsigned i=0;i<16;++i) {
             const uint8_t c=header_[24+i];version_[i]=char(c);
             if(!c){ended=true;continue;}
             if(ended)return false;
-            if(c=='.' && !dot && digit_before){dot=true;continue;}
+            if(c=='.' && dots<2 && has_digit){++dots;has_digit=false;continue;}
             if(c<'0' || c>'9')return false;
-            if(dot)digit_after=true;else digit_before=true;
+            has_digit=true;
         }
-        return ended && dot && digit_after;
+        return ended && dots && has_digit;
     }
     bool validate() {
         if(storage::word(payload_)>1u ||

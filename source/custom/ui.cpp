@@ -500,14 +500,14 @@ void ui_boot_screen() {
  label(72,153,"by wizado",accent,bg);
 #ifdef RT950_BENCH_TX_HZ
 #if defined(RT950_MAIN_TX)
- label(38,202,"CUSTOM " RT950_CUSTOM_VERSION " - TEST BUILD",muted,bg);
+ label(48,202,"CUSTOM " RT950_CUSTOM_VERSION,muted,bg);
 #elif defined(RT950_BENCH_MATRIX)
  label(48,202,"RF ACCEPTANCE TX",muted,bg);
 #else
  label(48,202,"BENCH TX ONLY",muted,bg);
 #endif
 #else
- label(48,202,"CUSTOM FIRMWARE 0.43",muted,bg);
+ label(48,202,"CUSTOM " RT950_CUSTOM_VERSION,muted,bg);
 #endif
  label(72,224,"STARTING...",muted,bg);
 }
@@ -932,21 +932,25 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(force)label(10,266,"OK DELETE / BACK CANCEL",muted,bg);
  } else if(a.page()==Page::ChannelCommands) {
   if(force) {
+   const auto &memory=*a.memory(a.channel_selection());
    char title[18]="CH ";num(title+3,a.channel_selection()+1);
    unsigned end=0;while(title[end])++end;
    title[end++]=' ';
-   const char *name=a.memory(a.channel_selection())->name;
+   const char *name=memory.name;
    while(*name)title[end++]=*name++;
    title[end]=0;
    label(10,52,title,accent,bg);
+   char value[16];
+   freq(value,memory.rx_hz);stat(211,"Base RX MHz",value);
+   freq(value,memory.tx_hz);stat(245,"Base TX MHz",value);
+   label(10,280,memory.radio.tx_inhibit?"TX INHIBITED":"",muted,bg);
   }
-  constexpr const char *commands[]={"Rename channel","Move channel","Delete channel"};
-  for(unsigned i=0;i<3;++i) {
+  for(unsigned i=0;i<Application::ChannelCommandCount;++i) {
    const bool active=i==a.channel_command();
    if(!changed(i+1,active?"selected":"idle",force))continue;
-   const unsigned y=78+i*36;
+   const unsigned y=73+i*33;
    const uint16_t fill=active?selected:card;
-   rect(8,y,224,30,fill);label(16,y+10,commands[i],ink,fill);
+   rect(8,y,224,28,fill);label(16,y+10,Application::channel_commands[i],ink,fill);
   }
  } else if(a.page()==Page::ConfirmStore) {
   if(force) {
@@ -995,8 +999,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   const char *save_status=save_state_label(input.save_state);
   if(changed(9,a.zone_name(a.active_zone()),force)){rect(8,282,72,10,bg);label(10,283,a.zone_name(a.active_zone()),accent,bg);}
   if(changed(7,save_status,force)){rect(88,282,144,10,bg);label(88,283,save_status,muted,bg);}
-  if(force && a.page()==Page::Channels && count) {
-   rect(8,300,224,16,bg);label(10,304,"LEFT: CHANNEL ACTIONS",muted,bg);
+  if(force && a.page()==Page::Channels) {
+   rect(8,300,224,16,bg);
+   label(10,304,count?"LEFT: ACTIONS / ABC: ZONES":"ABC: ZONES",muted,bg);
   }
  } else if(a.page()==Page::Battery) {
   char adc[16],errors[16];num(adc,board_battery_raw());num(errors,board_battery_errors());

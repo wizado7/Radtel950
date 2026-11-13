@@ -125,6 +125,13 @@ spec=importlib.util.spec_from_file_location('settings_backup',r/'settings_backup
 fixture_size=struct.unpack('<I',u.mem_read(symbols['backup_fixture_size'],4))[0]
 fixture=bytes(u.mem_read(symbols['regression_fixture'],fixture_size))
 assert backup.inspect_backup(fixture)['occupied_channels']==64
+expected_version=(r/'firmware_version.hpp').read_text(encoding='utf-8').split('"')[1]
+assert backup.inspect_backup(fixture)['firmware']==expected_version
+legacy_version=bytearray(fixture)
+legacy_version[24:40]=b'0.68'.ljust(16,b'\0')
+import zlib
+struct.pack_into('<I',legacy_version,44,zlib.crc32(legacy_version[:44]))
+assert backup.inspect_backup(legacy_version)['firmware']=='0.68'
 for index in (0,8,12,16,20,24,40,44,48,len(fixture)-1):
  damaged=bytearray(fixture);damaged[index]^=128
  try:backup.inspect_backup(damaged)
@@ -1112,7 +1119,7 @@ if a.stock:
  print('ARM APRS ADC1: TIM2/CH2, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
  result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
  assert result==0,f'MCU diagnostics failed at C++ line {result}'
- print('ARM MCU diagnostics: CRM flags, ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
+ print('ARM MCU diagnostics: ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
 
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)

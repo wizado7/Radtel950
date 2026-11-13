@@ -197,6 +197,8 @@ public:
     }
     Key channel_action() const {return channel_action_;}
     unsigned channel_command() const {return channel_command_;}
+    static constexpr const char *channel_commands[]={"Rename channel","Move channel","Delete channel","Copy to VFO"};
+    static constexpr unsigned ChannelCommandCount=sizeof channel_commands/sizeof channel_commands[0];
     const char *name_draft() const {return name_draft_;}
     unsigned name_cursor() const {return name_cursor_;}
     unsigned channel_selection() const { return channel_; }

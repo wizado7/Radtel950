@@ -3,13 +3,6 @@
 #include "drivers/adc.h"
 
 namespace rt950 {
-// AT32F403A CRM_CTRLSTS bits 31:26. The OEM loader runs before this code.
-inline uint8_t capture_reset_flags() {
-    const uint32_t status=CRM->CSR;
-    CRM->CSR=(status&1u)|(1u<<24); // Preserve LICKEN and clear the recorded flags.
-    return uint8_t(status>>26);
-}
-
 class McuTemperature final {
 public:
     static constexpr int Unavailable=-32768;

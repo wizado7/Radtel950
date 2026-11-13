@@ -37,6 +37,10 @@
 
 #include <stdint.h>
 #include "debug_uart.h"
+#ifdef RT950_CUSTOM
+#include "at32f403a.h"
+uint8_t custom_reset_flags;
+#endif
 
 /* Symbols defined by linker.ld */
 extern uint32_t _estack;
@@ -310,6 +314,13 @@ void Reset_Handler(void)
     while (dst < &_ebss) {
         *dst++ = 0;
     }
+
+#ifdef RT950_CUSTOM
+    /* Capture CRM_CTRLSTS at the application entry, before clock setup. */
+    const uint32_t reset_status = CRM->CSR;
+    custom_reset_flags = (uint8_t)(reset_status >> 26);
+    CRM->CSR = (reset_status & 1u) | (1u << 24);
+#endif
 
     /* Enable FPU (CP10 + CP11 full access) before any float operations */
     *(volatile uint32_t *)0xE000ED88UL |= (0xFUL << 20);

@@ -32,7 +32,7 @@ def parse_header(header):
     if b'\0' not in version_bytes:
         raise ValueError('unterminated firmware version')
     version, padding = version_bytes.split(b'\0', 1)
-    if any(padding) or not re.fullmatch(rb'[0-9]+\.[0-9]+', version):
+    if any(padding) or not re.fullmatch(rb'[0-9]+\.[0-9]+(?:\.[0-9]+)?', version):
         raise ValueError('invalid firmware version')
     return size, payload_crc, version.decode('ascii')
 

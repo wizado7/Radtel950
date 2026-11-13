@@ -86,6 +86,17 @@ class Machine:
         return self.u.reg_read(UC_ARM_REG_R0)
     def function(self,name):return self.call(symbols[name])
 
+startup=Machine(raw)
+startup.u.mem_write(0x40021024,struct.pack('<I',(1<<29)|(1<<28)|3))
+def stop_at_system_init(u,address,size,data):
+    u.emu_stop()
+startup.u.hook_add(UC_HOOK_CODE,stop_at_system_init,begin=symbols['SystemInit'],end=symbols['SystemInit'])
+startup.function('Reset_Handler')
+assert startup.u.reg_read(UC_ARM_REG_PC)==symbols['SystemInit']
+assert bytes(startup.u.mem_read(symbols['custom_reset_flags'],1))==b'\x0c'
+assert struct.unpack('<I',startup.u.mem_read(0x40021024,4))[0]==((1<<24)|1)
+print('ARM reset telemetry: real Reset_Handler captures combined CRM flags before SystemInit PASS')
+
 m=Machine(raw)
 for size in (256,512,1024,65535):
     m.u.mem_write(0x1ffff7e0,struct.pack('<H',size))
@@ -821,9 +832,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.67','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.68.2','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.67','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.68.2','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1165,13 +1176,15 @@ menu_draw();assert 'TX' in menu_ui.texts and '145.00000' in menu_ui.texts and 'S
 menu_ui.u.mem_write(tx_slot_address,b'\xff')
 menu_draw();assert '145.60000' in menu_ui.texts and 'SPLIT' in menu_ui.texts
 print('ARM TX slot UI: split indication, keyed frequency and return to RX PASS')
-menu_key('Channels');menu_draw();assert 'LEFT: CHANNEL ACTIONS' in menu_ui.texts
+menu_key('Channels');menu_draw();assert 'LEFT: ACTIONS / ABC: ZONES' in menu_ui.texts
+menu_key('NextSlot');menu_draw();assert 'Select zone' in menu_ui.texts
+menu_key('Back')
 menu_key('Left');menu_draw()
-assert all(label in menu_ui.texts for label in ('Rename channel','Move channel','Delete channel'))
+assert all(label in menu_ui.texts for label in ('Rename channel','Move channel','Delete channel','Copy to VFO','Base RX MHz','Base TX MHz'))
 menu_key('Back');menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
 menu_key('Channels');menu_key('Left');menu_draw()
-assert all(label in menu_ui.texts for label in ('Имя канала','Перенести канал','Удалить канал'))
-print('ARM channel actions UI: selected channel and three commands RU/EN PASS')
+assert all(label in menu_ui.texts for label in ('Имя канала','Перенести канал','Удалить канал','Копировать в VFO','База RX','База TX'))
+print('ARM channel actions UI: zone shortcut, VFO copy and base frequency preview RU/EN PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)

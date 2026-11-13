@@ -1122,11 +1122,19 @@ extern "C" int regression_tests() {
   CHECK(actions.page()==Page::Zones);
   actions.key(Key::Down);actions.key(Key::Ok);
   CHECK(actions.page()==Page::Channels && actions.memory(1)->zone==1 && !actions.channel_visible(1));
-  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Ok);
+  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Up);actions.key(Key::Ok);
   CHECK(actions.page()==Page::ConfirmDelete && actions.memory(0)->occupied);
   actions.key(Key::Back);CHECK(actions.page()==Page::Channels && actions.memory(0)->occupied);
-  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Ok);actions.key(Key::Ok);
+  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Up);actions.key(Key::Ok);actions.key(Key::Ok);
   CHECK(actions.page()==Page::Channels && !actions.memory(0)->occupied && actions.memory(1)->occupied);
+  actions.key(Key::NextSlot);actions.key(Key::Down);actions.key(Key::Back);
+  CHECK(actions.page()==Page::Channels && actions.active_zone()==0);
+  actions.key(Key::NextSlot);actions.key(Key::Down);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Channels && actions.active_zone()==1 && actions.channel_selection()==1);
+  actions.key(Key::Left);actions.key(Key::Up);actions.key(Key::Ok);
+  CHECK(actions.page()==Page::Radio && !actions.config().vfo[0].channel_mode &&
+        actions.config().vfo[0].rx_hz==446018750 && !actions.config().vfo[0].tx_hz);
+  CHECK(actions.set_frequency(145500000) && actions.memory(1)->rx_hz==446018750);
  }
  CHECK(zones.active_zone()==0 && zones.channel_visible(0));
  zones.key(Key::RenameChannel);zones.key(Key::Ok);zones.digit(7);zones.key(Key::Back);
@@ -2126,8 +2134,6 @@ extern "C" int power_diagnostics_tests() {
 
 extern "C" int mcu_diagnostics_probe() {
  McuTemperature sensor;
- CRM->CSR=(1u<<29)|(1u<<28)|3u;
- CHECK(capture_reset_flags()==12 && CRM->CSR==((1u<<24)|1u));
  ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA;
  CRM->APB2EN=CRM_APB2EN_ADC1EN|CRM_APB2EN_ADC2EN;
  sensor.poll(true,0);
