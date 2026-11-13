@@ -880,9 +880,9 @@ extern "C" int regression_tests() {
   shortcuts.observe_voice_slot(1,frequency);
   CHECK(shortcuts.recent_voice_slot()==1 && shortcuts.config().active==0);
   shortcuts.digit(4);shortcuts.key(Key::Right);
-  CHECK(shortcuts.config().active==0 && shortcuts.editing());
+  CHECK(shortcuts.config().active==0 && shortcuts.editing() && !shortcuts.voice_tx_page());
   shortcuts.key(Key::Back);shortcuts.key(Key::Right);
-  CHECK(shortcuts.config().active==1);
+  CHECK(shortcuts.config().active==1 && shortcuts.voice_tx_page());
   shortcuts.set_frequency(145500000);CHECK(shortcuts.recent_voice_slot()==-1);
   shortcuts.observe_voice_slot(2,shortcuts.config().vfo[2].rx_hz);
   shortcuts.tick(5099);CHECK(shortcuts.recent_voice_slot()==2);

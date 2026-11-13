@@ -174,7 +174,7 @@ public:
     bool scan_eligible(unsigned i) const;
     bool scan_page() const {return page_==Page::ChannelScan || page_==Page::VfoScan;}
     bool voice_tx_page(bool probe=false) const {
-        return page_==Page::Radio || page_==Page::Aprs || page_==Page::AprsMessages ||
+        return (page_==Page::Radio && !editing()) || page_==Page::Aprs || page_==Page::AprsMessages ||
             scan_page() || (page_==Page::PowerCalibration && probe);
     }
     uint32_t scan_vfo_frequency() const {return vfo_hz_[config_.active];}

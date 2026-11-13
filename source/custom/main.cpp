@@ -362,13 +362,14 @@ extern "C" int main(void) {
         const bool was_transmitting=ptt.state()==voice::Ptt::State::Transmitting ||
             ptt.state()==voice::Ptt::State::Ending;
 #endif
-        if(!pressed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready)
+        if(!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready)
             ptt.poll(transmitter,request,now,pressed);
 #ifdef RT950_MAIN_TX
         if(!pressed && was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
             release_notice_since=now;
 #endif
         transmitting=ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
+        input.voice_tx_slot=transmitting?ptt.target_slot():0xff;
         tx_owns_radio=transmitting || ptt.state()==voice::Ptt::State::Preparing;
 #ifdef RT950_MAIN_TX
         constexpr const char *tx_labels[]={"TX SLOT A","TX SLOT B","TX SLOT C"};
@@ -389,6 +390,9 @@ extern "C" int main(void) {
         if(!factory_valid)calibration_error=factory_errors[unsigned(factory_status)];
 #endif
         input.bench_ptt=ptt.state()==voice::Ptt::State::Ending?"TX ENDING":!pressed?"":transmitting?tx_on:tx_owns_radio?"TX PREPARING":
+#ifdef RT950_MAIN_TX
+            page==Page::Radio && app.editing()?"TX: FINISH FREQ INPUT":
+#endif
             profile.tx_inhibit?"TX INHIBITED":
             !slot.tx_hz?"TX FREQ UNSET":
             !calibration_valid?calibration_error:

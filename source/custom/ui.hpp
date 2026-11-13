@@ -16,6 +16,7 @@ struct InputStatus {
 #endif
     uint8_t sampled=255,last=255,encoder_ab=0;
     uint8_t ptt_mask=0;
+    uint8_t voice_tx_slot=0xff;
     bool monitor_active=false;
     const char *power_status="";
     uint8_t factory_ctcss_raw=0xff,factory_ctcss_level=0xff;

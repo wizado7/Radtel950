@@ -554,12 +554,14 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   const auto &c=a.config();
   const int heard=a.recent_voice_slot();
   for(unsigned i=0;i<3;++i) {
-   char hz[12];freq(hz,c.vfo[i].rx_hz);
+   const bool sending=input.voice_tx_slot==i;
+   char hz[12];freq(hz,sending?c.vfo[i].tx_hz:c.vfo[i].rx_hz);
    char key[30];copy(key,hz);key[10]=0; // append mode/channel to the cache signature
    const bool receiving=input.voice.ready && input.voice.receiving && input.voice.slot==i &&
        input.voice.frequency==c.vfo[i].rx_hz && !input.ptt_mask;
    const bool recent=heard==int(i);
-   unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=receiving?'R':recent?'L':'-';num(key+n,c.vfo[i].memory_channel);
+   const bool split=c.vfo[i].tx_hz && c.vfo[i].rx_hz!=c.vfo[i].tx_hz;
+   unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=split?'S':c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=sending?'T':receiving?'R':recent?'L':'-';num(key+n,c.vfo[i].memory_channel);
    const bool redraw=changed(i+1,key,force) || cache.active!=c.active;
    if(!redraw)continue;
    const unsigned y=52+i*70;const bool active=c.active==i;
@@ -568,10 +570,11 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    char slot[2]={char('A'+i),0};label(18,y+9,slot,active?accent:muted,fill);
    label(44,y+9,c.vfo[i].channel_mode?"CH":"VFO",muted,fill);
    if(c.vfo[i].channel_mode) {char channel[12];num(channel,c.vfo[i].memory_channel+1);label(76,y+9,channel,muted,fill);label(104,y+9,a.memory(c.vfo[i].memory_channel)->name,muted,fill);}
-   label(174,y+9,receiving?"RX":active?"ACTIVE":recent?"LAST RX":"STANDBY",(receiving || active)?accent:muted,fill);
+   label(174,y+9,sending?"TX":receiving?"RX":active?"ACTIVE":recent?"LAST RX":"STANDBY",(sending || receiving || active)?accent:muted,fill);
    lcd_draw_string_2x(18,uint16_t(y+29),hz,ink,fill);label(178,y+43,"MHz",muted,fill);
    if(c.vfo[i].rx_hz && !c.vfo[i].tx_hz)label(170,y+29,"NO TX",muted,fill);
    else if(a.reverse_active(i))label(170,y+29,"REV",accent,fill);
+   else if(split && !sending)label(170,y+29,"SPLIT",muted,fill);
   }
   cache.active=c.active;
 #ifdef RT950_BENCH_TX_HZ

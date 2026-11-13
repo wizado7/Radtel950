@@ -49,6 +49,7 @@ constexpr Text catalog[]={
     {"TX FREQ UNSET","ЧАСТОТА TX НЕ ЗАДАНА"},
     {"TX tail suppression","Подавление хвоста TX"},
     {"TX ENDING","ЗАВЕРШЕНИЕ TX"},
+    {"TX: FINISH FREQ INPUT","TX: ЗАВЕРШИТЕ ВВОД ЧАСТОТЫ"},
     {"TX END NOT PERMITTED","КОНЕЦ TX: НЕТ ДОПУСКА"},
     {"TX END PROFILE CHANGED","КОНЕЦ TX: СМЕНА ПРОФИЛЯ"},
     {"TX END TIME LIMIT","КОНЕЦ TX: ЛИМИТ ВРЕМЕНИ"},

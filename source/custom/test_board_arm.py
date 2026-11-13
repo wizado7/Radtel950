@@ -821,9 +821,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.65','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.66','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.65','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.66','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1149,6 +1149,22 @@ assert 'RX SLOT SELECTED' in menu_ui.texts
 menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back');menu_draw()
 assert 'ВЛЕВО: СЛОТЫ ОБХОДА' in menu_ui.texts
 print('ARM Watch shortcuts UI: home entry, recent slot and explicit selection PASS')
+
+tx_fields=subprocess.check_output([args.prefix+'gdb','-batch',str(build/'rt950-custom-ui.elf'),
+    '-ex','p/x (unsigned long)&((rt950::InputStatus*)0)->voice_tx_slot',
+    '-ex','p/x (unsigned long)&((rt950::Application*)0)->config_.vfo[0].tx_hz'],text=True,stderr=subprocess.DEVNULL)
+tx_slot_offset,tx_frequency_offset=[int(value,16) for value in re.findall(r'\$\d+ = (0x[0-9a-f]+)',tx_fields)]
+tx_slot_address=0x20015000+tx_slot_offset
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,1);menu_ui.function(ctor)
+menu_frequency(145600000)
+menu_ui.u.mem_write(menu_app+tx_frequency_offset,struct.pack('<I',145000000))
+menu_ui.u.mem_write(tx_slot_address,b'\xff')
+menu_draw();assert 'SPLIT' in menu_ui.texts and '145.60000' in menu_ui.texts
+menu_ui.u.mem_write(tx_slot_address,b'\x00')
+menu_draw();assert 'TX' in menu_ui.texts and '145.00000' in menu_ui.texts and 'SPLIT' not in menu_ui.texts
+menu_ui.u.mem_write(tx_slot_address,b'\xff')
+menu_draw();assert '145.60000' in menu_ui.texts and 'SPLIT' in menu_ui.texts
+print('ARM TX slot UI: split indication, keyed frequency and return to RX PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)
