@@ -64,6 +64,10 @@ void Application::apply_defaults(bool all) {
 void Application::user_key(unsigned which,bool held) {
  if(which>1 || keypad_locked_ || editing() || (which==0 && side_ptt_enabled()))return;
  const auto action=key_actions_[which*2u+unsigned(held)];
+ if((page_==Page::ChannelScan && action==KeyAction::ScanChannels) ||
+    (page_==Page::VfoScan && action==KeyAction::ScanVfo)) {
+  key(Key::Back);return;
+ }
  if(page_!=Page::Radio && page_!=Page::FmProbe) {
   if(which==1 && !held)key(Key::Back);
   return;
@@ -954,6 +958,11 @@ void Application::key(Key k) {
         scan_channel(MemoryCount);scan_reverse_=false;scan_step_=false;notify("");return;
     }
     if(scan_page() && k!=Key::Back && k!=Key::Menu) {
+        if(k==Key::Left && page_==Page::ChannelScan && scan_eligible(scan_channel_)) {
+            scan_excluded_[scan_channel_/32]|=1u<<(scan_channel_%32);
+            scan_channel(MemoryCount);scan_step_=true;
+            notify("CHANNEL EXCLUDED");return;
+        }
         if(k==Key::Up || k==Key::Down)scan_reverse_=k==Key::Down;
         if(k==Key::Right || k==Key::Up || k==Key::Down){scan_paused_=false;scan_step_=true;}
         if(k==Key::Ok && scan_frequency_) {

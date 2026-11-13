@@ -821,9 +821,9 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.63','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+assert all(text in menu_ui.texts for text in ('О прошивке','0.64','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.63','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware','0.64','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1122,6 +1122,13 @@ menu_key('Back');menu_frequency(145600000);menu_key('TxFrequency');menu_key('Lef
 assert 'LEFT: TX = RX / RIGHT: CLEAR' in menu_ui.texts and '14560000' in menu_ui.texts
 menu_key('Right');menu_draw();assert '0' in menu_ui.texts
 print('ARM quick actions UI: scrolled PF list and TX draft shortcuts PASS')
+
+menu_key('ChannelScan');menu_draw()
+assert 'NO CHANNELS TO SCAN' in menu_ui.texts
+menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+menu_key('ChannelScan');menu_draw()
+assert 'НЕТ КАНАЛОВ ДЛЯ ОБХОДА' in menu_ui.texts
+print('ARM channel scan UI: empty scan status RU/EN and LCD bounds PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)

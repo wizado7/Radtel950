@@ -312,6 +312,21 @@ extern "C" int regression_tests() {
   CHECK(scan.poll(scan_app,20000,true,true,false)==1);
   scan_app.key(Key::Right);
   CHECK(scan.poll(scan_app,20001,true,true,true)==2);
+  scan_app.scan_channel(2);
+  scan_app.key(Key::Left);
+  CHECK(!scan_app.scan_eligible(2) && scan_app.channel_visible(2) && !scan_app.scan_frequency());
+  CHECK(scan.poll(scan_app,20002,true,true,true)==3);
+  scan_app.key(Key::Back);
+  scan_app.key(Key::Channels);scan_app.digit(3);scan_app.key(Key::Ok);
+  CHECK(scan_app.config().vfo[0].memory_channel==2);
+  scan_app.key(Key::Channels);scan_app.key(Key::Right);
+  CHECK(scan_app.scan_eligible(2));
+  Application last(false);
+  CHECK(last.set_frequency(446081250) && last.store(0));
+  last.key(Key::ChannelScan);scan.poll(last,20003,false,false,false);
+  CHECK(scan.poll(last,20004,true,false,false)==0);
+  last.scan_channel(0);last.key(Key::Left);
+  CHECK(scan.poll(last,20005,true,true,true)==voice::ChannelScan::None && !scan.frequency());
   Application vfo_scan;
   CHECK(vfo_scan.set_frequency(145500000));
   CHECK(vfo_scan.recall(0));
@@ -2667,8 +2682,10 @@ extern "C" int user_key_tests() {
  const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==2);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
- dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);home();
- dispatch_key(app,129);CHECK(app.page()==Page::VfoScan);home();
+ dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
+ dispatch_key(app,0);CHECK(app.page()==Page::Radio);
+ dispatch_key(app,129);CHECK(app.page()==Page::VfoScan);
+ dispatch_key(app,129);CHECK(app.page()==Page::Radio);
  const auto scan_size=app.save_compact_snapshot(packed,sizeof packed);
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);

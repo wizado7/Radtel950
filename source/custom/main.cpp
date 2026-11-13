@@ -452,6 +452,7 @@ extern "C" int main(void) {
         const unsigned scanned=channel_scan.poll(app,now,app.scan_page() && voice_enabled,
             scan_sample,scan_open,!scanning);
         app.scan_target(scanned,channel_scan.frequency());
+        const bool scan_has_target=scanning && channel_scan.frequency()!=0;
 #endif
         if(voice_enabled && !tx_owns_radio) {
             voice_rx.enable(true);
@@ -460,13 +461,13 @@ extern "C" int main(void) {
             if(monitor)voice_watch.poll(voice_rx,app.config(),now,
                 (voice_rx.status().ready || voice_rx.status().frequency) && !voice_rx.status().fault,true);
 #ifdef RT950_MAIN_TX
-            const auto *scan_memory=scanning?app.memory(scanned):nullptr;
-            const auto &rx_profile=scan_memory?scan_memory->radio:scanning?app.scan_vfo_profile():
+            const auto *scan_memory=scan_has_target?app.memory(scanned):nullptr;
+            const auto &rx_profile=scan_memory?scan_memory->radio:scan_has_target?app.scan_vfo_profile():
                 app.radio_profile(voice_watch.slot());
             const Tone rx_tone=aprs_listen?Tone{}:rx_profile.rx_tone;
             voice_rx.set_profile(rx_tone,rx_tone.kind==ToneKind::Ctcss?factory.ctcss_level:
                 rx_tone.kind==ToneKind::Dcs?factory.dcs_level:0,now,aprs_listen || rx_profile.narrow,rx_profile.squelch);
-            if(scanning) {
+            if(scan_has_target) {
                 voice_watch.poll(voice_rx,config,now,false,false);
                 if(channel_scan.frequency() && (voice_rx.status().frequency!=channel_scan.frequency() ||
                    scanned!=previous_channel))
@@ -506,7 +507,7 @@ extern "C" int main(void) {
                         if(received.export_allowed && !received.ble.enqueue(frame,size,received.now))
                             ++received.status.aprs_export_dropped;
                     },&receive);
-            } else if(!scanning)
+            } else if(!scan_has_target)
 #endif
             voice_watch.poll(voice_rx,app.config(),now,(rx.ready || rx.frequency) && !rx.fault,
                              input.ptt_mask!=0 || monitor);
@@ -549,9 +550,9 @@ extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
         const bool voice_listening=voice_enabled && !tx_owns_radio && !aprs_listen && input.voice.ready;
-        const bool watching=voice_listening && !monitor && !scanning && app.enabled(Option::Watch);
+        const bool watching=voice_listening && !monitor && !scan_has_target && app.enabled(Option::Watch);
         input.power.workload.observe(now,
-            (voice_listening && !watching && !scanning?1u<<Load::SingleRx:0u) |
+            (voice_listening && !watching && !scan_has_target?1u<<Load::SingleRx:0u) |
             (watching?1u<<Load::WatchRx:0u) | (gps?1u<<Load::Gps:0u) |
             (config.ble_on && !switch_off?1u<<Load::Ble:0u) |
             (packet_rx.running()?1u<<Load::AprsRx:0u) | (transmitting?1u<<Load::Tx:0u));

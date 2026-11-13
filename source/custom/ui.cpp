@@ -831,8 +831,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  } else if(a.scan_page()) {
   const bool vfo_scan=a.page()==Page::VfoScan;
   const auto *memory=a.memory(a.scan_channel());
-  const char *scan_status=a.scan_frequency()?(a.scan_paused()?"SCAN PAUSED":input.voice.receiving?"SCAN SIGNAL":"SCANNING"):
-      input.ptt_mask?"SCAN PAUSED":vfo_scan?"SET FREQUENCY FIRST":"NO SAVED CHANNELS";
+  const char *scan_status=input.ptt_mask?"SCAN PAUSED":a.scan_frequency()?
+      (a.scan_paused()?"SCAN PAUSED":input.voice.receiving?"SCAN SIGNAL":"SCANNING"):
+      vfo_scan?"SET FREQUENCY FIRST":"NO CHANNELS TO SCAN";
 #ifdef RT950_MAIN_TX
   if(input.bench_ptt[0])scan_status=input.bench_ptt;
 #endif
@@ -841,7 +842,13 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   }
   if(!vfo_scan) {
    if(changed(2,a.zone_name(a.active_zone()),force))stat(84,"ZONE",a.zone_name(a.active_zone()));
-   if(changed(3,memory?memory->name:"---",force))stat(116,"CHANNEL",memory?memory->name:"---");
+   char channel[20]="---";
+   if(memory) {
+    num(channel,a.scan_channel()+1);
+    unsigned end=0;while(channel[end])++end;
+    channel[end++]=' ';copy(channel+end,memory->name);
+   }
+   if(changed(3,channel,force))stat(116,"CHANNEL",channel);
   }
   char value[16];freq(value,a.scan_frequency());
   if(changed(4,value,force))stat(148,"MHz",value);
@@ -849,6 +856,8 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(6,direction,force))stat(180,"DIRECTION",direction);
   const char *hint=a.scan_paused()?(vfo_scan?"OK: USE FREQ   >: RESUME":"OK: USE CHANNEL   >: RESUME"):"OK PAUSE / ARROWS STEP";
   if(changed(5,hint,force)){rect(8,228,224,17,bg);label(10,232,hint,muted,bg);}
+  const char *extra=a.feedback()[0]?a.feedback():!vfo_scan && a.scan_frequency()?"LEFT: EXCLUDE CHANNEL":"";
+  if(changed(7,extra,force)){rect(8,248,224,17,bg);label(10,252,extra,muted,bg);}
  } else if(a.page()==Page::VoiceRx) {
   const auto &rx=input.voice;
   const char *rx_state=rx.fault?"RX BUS FAULT":!rx.ready?"RX STARTING":rx.receiving?"RX CARRIER":"RX LISTENING";
