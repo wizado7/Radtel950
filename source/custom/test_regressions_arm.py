@@ -76,6 +76,11 @@ u.emu_start(symbols['watch_profile_tests']|1,0x080ff000,count=2000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'Watch profile failed at C++ line {result}'
 print('ARM Watch profiles: selection callback, identical frequencies, empty slots, PTT and release PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['scan_resume_tests']|1,0x080ff000,count=2000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'scan resume failed at C++ line {result}'
+print('ARM scan resume: fresh dwell, stale sample ignored, pause, manual step and restart PASS')
 for suite,marker in [('broadcast_bank_tests','ARM broadcast banks:'),('about_page_tests','ARM about page:')]:
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=4000000)

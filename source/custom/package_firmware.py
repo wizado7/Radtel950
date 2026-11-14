@@ -9,7 +9,7 @@ import sys
 import tempfile
 import zipfile
 
-DOCUMENTS = ('README.md', 'LICENSE')
+DOCUMENTS = ('README.md', 'BUILDING.md', 'LICENSE')
 ARTIFACT_SUFFIXES = ('.BTF', '.bin', '.elf', '.map', '.IMAGE-CHECK.txt',
                      '.SHA256SUMS.txt', '.SOURCE.zip', '.zip')
 

@@ -8,8 +8,10 @@ public:
     static constexpr unsigned None=Application::MemoryCount;
 
     unsigned poll(Application &app,uint32_t now,bool enabled,bool sampled,bool open,bool suspended=false) {
-        if(!enabled){channel_=None;frequency_=0;started_=false;return channel_;}
-        if(suspended)return channel_;
+        if(!enabled){channel_=None;frequency_=0;started_=suspended_=false;return channel_;}
+        if(suspended){suspended_=true;return channel_;}
+        const bool resuming=suspended_;
+        suspended_=false;
         const bool vfo=app.page()==Page::VfoScan;
         const bool manual_step=app.take_scan_step();
         if(!started_ || vfo!=vfo_) {
@@ -18,6 +20,11 @@ public:
         }
         if(manual_step) {
             advance(app,now);return channel_;
+        }
+        if(resuming) {
+            // The shared receiver is settling again after owning another RX/TX target.
+            tuned_at_=now;holding_=false;
+            return channel_;
         }
         if(!frequency_ || app.scan_paused())return channel_;
         if(sampled && open) {
@@ -76,6 +83,6 @@ private:
     unsigned channel_=None;
     uint32_t frequency_=0;
     uint32_t tuned_at_=0,last_open_=0;
-    bool started_=false,holding_=false,vfo_=false;
+    bool started_=false,holding_=false,vfo_=false,suspended_=false;
 };
 }

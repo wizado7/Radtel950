@@ -101,6 +101,7 @@ extern "C" int main(void) {
     aprs::BleExport ble_export;
     aprs::BackgroundListen aprs_background(get_tick());
     voice::ChannelScan channel_scan;
+    bool scan_rx_owned=false;
     uint32_t last_gps_export=get_tick()-2000u;
     aprs::FrameTransmitter packet_frame;
     aprs::BeaconSession<decltype(packet_rf),aprs::DacBurst> beacon(packet_rf,packet_audio);
@@ -466,7 +467,7 @@ extern "C" int main(void) {
         }
 #ifdef RT950_MAIN_TX
         const bool scanning=app.scan_page() && voice_enabled && !ptt_down && !tx_owns_radio;
-        const bool scan_sample=channel_scan.frequency() &&
+        const bool scan_sample=scan_rx_owned && channel_scan.frequency() &&
             voice_rx.status().frequency==channel_scan.frequency() && voice_rx.has_sample();
         const unsigned previous_channel=app.scan_channel();
         const auto *previous_memory=app.memory(previous_channel);
@@ -503,7 +504,7 @@ extern "C" int main(void) {
             if(scan_has_target) {
                 const auto *memory=app.memory(scanned);
                 const auto &rx_profile=memory?memory->radio:app.scan_vfo_profile();
-                if(voice_rx.status().frequency!=channel_scan.frequency() || scanned!=previous_channel)
+                if(!scan_rx_owned || voice_rx.status().frequency!=channel_scan.frequency() || scanned!=previous_channel)
                     voice_rx.tune_profile(channel_scan.frequency(),rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
                         now,rx_profile.narrow,rx_profile.squelch);
             }
@@ -553,6 +554,7 @@ extern "C" int main(void) {
 #endif
         }
 #ifdef RT950_MAIN_TX
+        scan_rx_owned=scan_has_target;
         input.aprs_receiving=packet_rx.running();
         input.aprs_windows=aprs_background.windows();
         input.aprs_cancelled=aprs_background.cancelled();

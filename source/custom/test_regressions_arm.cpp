@@ -2871,3 +2871,37 @@ extern "C" unsigned watch_profile_tests() {
  CHECK(!receiver.frequency && !watch.receiving());
  return 0;
 }
+
+extern "C" unsigned scan_resume_tests() {
+ Application app;
+ voice::ChannelScan scan;
+ app.key(Key::ChannelScan);
+ CHECK(scan.poll(app,0,true,false,false)==0);
+ CHECK(scan.poll(app,50,true,true,true)==0);
+ // A long PTT can expire the old dwell/hold and leave a matching RF frequency.
+ CHECK(scan.poll(app,100,true,true,false,true)==0);
+ CHECK(scan.poll(app,5000,true,true,false,true)==0);
+ CHECK(scan.poll(app,5001,true,true,true)==0);
+ CHECK(scan.poll(app,5150,true,true,false)==0);
+ CHECK(scan.poll(app,5151,true,true,false)==1);
+
+ app.scan_channel(1);app.key(Key::Ok);
+ CHECK(app.scan_paused());
+ CHECK(scan.poll(app,5200,true,false,false,true)==1);
+ CHECK(scan.poll(app,8500,true,false,false)==1 && app.scan_paused());
+ CHECK(scan.poll(app,8550,true,true,true)==1 && app.scan_paused());
+
+ CHECK(scan.poll(app,8600,true,false,false,true)==1);
+ app.key(Key::Right);
+ CHECK(scan.poll(app,8601,true,true,true)==2 && !app.scan_paused());
+ CHECK(scan.poll(app,8602,false,false,false)==voice::ChannelScan::None);
+
+ app.key(Key::ScanMode);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.scan_mode()==ScanMode::Time);
+ app.key(Key::ChannelScan);
+ CHECK(scan.poll(app,9000,true,false,false)==0);
+ CHECK(scan.poll(app,9100,true,true,false,true)==0);
+ CHECK(scan.poll(app,12000,true,true,true)==0);
+ CHECK(scan.poll(app,12150,true,true,false)==1);
+ return 0;
+}
