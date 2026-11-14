@@ -35,6 +35,8 @@ class BoardReceiver final {
 public:
     void enable(bool enabled);
     void tune(uint32_t hz,uint32_t now);
+    void tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql);
+
     void stop();
     void set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow=true,uint8_t sql=3);
     void use_sql_calibration(const SqlCalibration &calibration) {sql_calibration_=&calibration;}
@@ -51,8 +53,8 @@ private:
     uint8_t rx_chip_=0;
     bool active_=false,restart_=false,audio_=false;
     Tone tone_{};
-    uint8_t tone_level_=0,tone_matches_=0;
-    bool narrow_=true,carrier_=false,tone_ready_=true,tone_programmed_=false;
+    uint8_t tone_level_=0,tone_matches_=0,tone_programmed_=0;
+    bool narrow_=true,carrier_=false,tone_ready_=true;
     const SqlCalibration *sql_calibration_=nullptr;
     uint8_t sql_=3;
     bool sql_open_=false,speaker_=false;

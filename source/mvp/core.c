@@ -44,8 +44,15 @@ uint8_t rt_watch_tick(rt_watch *s,const rt_config *c,uint32_t now,
     }
     uint8_t mask=(c->watch_mode==RT_WATCH_ABC ? 7u:c->watch_mask) |
                  (uint8_t)(1u<<c->active);
+    for(unsigned i=0;i<3;++i)
+        if(!c->vfo[i].rx_hz)mask&=(uint8_t)~(1u<<i);
+    if(!mask)mask=(uint8_t)(1u<<c->active);
     if(!(mask & (1u<<s->tuned))) {
-        s->tuned=c->active;s->changed=now;s->holding=false;return s->tuned;
+        if(mask & (1u<<c->active))s->tuned=c->active;
+        else for(uint8_t slot=0;slot<3;++slot) {
+            if(mask & (1u<<slot)){s->tuned=slot;break;}
+        }
+        s->changed=now;s->holding=false;return s->tuned;
     }
     if(open) {s->holding=true;s->hold_until=now+c->hold_ms;return s->tuned;}
     if(s->holding) {

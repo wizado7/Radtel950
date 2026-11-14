@@ -636,6 +636,29 @@ assert voice.route_clear==[0x2000,1],voice.route_clear
 print('ARM voice board: startup, RX route only, carrier audio, PTT mute, shutdown PASS')
 
 voice=VoiceMachine()
+voice.reply_words=iter((0xa800,0x0203,120,0x0203,120))
+voice.function('board_init')
+voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
+voice_call('11set_profile')
+voice.u.mem_write(0x20017b00,bytes(8))
+voice_call('6enable',1)
+for now in range(46):voice_call('4poll',now,0)
+# AAPCS passes now, narrow and SQL in the stack slots of tune_profile.
+voice.u.mem_write(0x20017b00,struct.pack('<III',100,0,3))
+voice_call('12tune_profile',145500000,0,0)
+voice.u.mem_write(0x20017b00,bytes(12))
+voice_call('4poll',101,0)
+voice_call('4poll',131,0)
+assert voice.odr[GPIO[1]]&0x100
+voice.u.mem_write(0x20017b00,struct.pack('<II',0,9))
+voice_call('11set_profile',0,0,132)
+assert not voice.odr[GPIO[1]]&0x100
+voice.u.mem_write(0x20017b00,bytes(8))
+voice_call('4poll',132,0)
+assert not voice.odr[GPIO[1]]&0x100
+print('ARM Watch RF profile: combined tune, immediate SQL mute and fresh sample at the higher threshold PASS')
+
+voice=VoiceMachine()
 voice.reply_words=iter((0xa800,2,1,0,511,2,1))
 voice.function('board_init');voice.route_clear.clear()
 voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))

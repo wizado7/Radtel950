@@ -91,8 +91,17 @@ void BoardReceiver::tune(uint32_t hz,uint32_t now) {
 #endif
     due_=now+1u;restart_=true;
 }
+void BoardReceiver::tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql) {
+    tone_=tone;tone_level_=level;narrow_=narrow;sql_=sql;
+    tune(hz,now);
+}
 void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql) {
-    if(sql_!=sql && sql<=9){sql_=sql;sql_open_=false;}
+    const bool sql_changed=sql<=9 && sql_!=sql;
+    if(sql_changed) {
+        sql_=sql;sql_open_=false;tone_matches_=0;
+        status_.receiving=false;status_.sampled=false;
+        audio(false);next_sample_=now;
+    }
     if(tone.kind==tone_.kind && tone.index==tone_.index && level==tone_level_ && narrow==narrow_)return;
     tone_=tone;tone_level_=level;narrow_=narrow;
     if(status_.frequency)tune(status_.frequency,now);
@@ -145,10 +154,10 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
             tone_ready_=calibrated && (tone_.kind==ToneKind::Ctcss?
                 configure_ctcss(registers,ctcss_frequency(tone_),tone_level_,false):
                 configure_dcs(registers,dcs_code(tone_),tone_level_,dcs_inverted(tone_)));
-            tone_programmed_=true;
-        } else if(tone_programmed_) {
+            tone_programmed_|=uint8_t(1u<<rx_chip_);
+        } else if(tone_programmed_&(1u<<rx_chip_)) {
             tone_ready_=bus.write(rx_chip_,0x51,0);
-            tone_programmed_=false;
+            if(tone_ready_)tone_programmed_&=uint8_t(~(1u<<rx_chip_));
         }
 #endif
 #ifdef RT950_MAIN_TX

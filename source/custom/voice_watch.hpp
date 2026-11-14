@@ -11,6 +11,14 @@ class Watch final {
 public:
     template<class Receiver>
     void poll(Receiver &receiver,const rt_config &config,uint32_t now,bool enabled,bool ptt) {
+        poll(receiver,config,now,enabled,ptt,[&](uint8_t,uint32_t frequency) {
+            if(frequency)receiver.tune(frequency,now);
+            else receiver.stop();
+        });
+    }
+
+    template<class Receiver,class Select>
+    void poll(Receiver &receiver,const rt_config &config,uint32_t now,bool enabled,bool ptt,Select select) {
         if(!enabled || config.active>2) {
             if(running_)receiver.stop();
             running_=false;locked_=false;watch_={};return;
@@ -23,8 +31,7 @@ public:
         const uint8_t slot=rt_watch_tick(&watch_,&config,now,open,ptt);
         const uint32_t frequency=config.vfo[slot].rx_hz;
         if(!running_ || slot!=slot_ || frequency!=frequency_) {
-            if(frequency)receiver.tune(frequency,now);
-            else receiver.stop();
+            select(slot,frequency);
         }
         locked_=open && slot==slot_;
         running_=true;slot_=slot;frequency_=frequency;

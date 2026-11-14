@@ -480,43 +480,51 @@ extern "C" int main(void) {
 #endif
         if(voice_enabled && !tx_owns_radio) {
             voice_rx.enable(true);
-            // Select/settle the active slot before opening Monitor audio.
-            // This avoids briefly opening whichever slot Watch had visited.
-            if(monitor)voice_watch.poll(voice_rx,app.config(),now,
-                (voice_rx.status().ready || voice_rx.status().frequency) && !voice_rx.status().fault,true);
 #ifdef RT950_MAIN_TX
-            const auto *scan_memory=scan_has_target?app.memory(scanned):nullptr;
-            const auto &rx_profile=scan_memory?scan_memory->radio:scan_has_target?app.scan_vfo_profile():
-                app.radio_profile(voice_watch.slot());
-            const Tone rx_tone=aprs_listen || weather_open?Tone{}:rx_profile.rx_tone;
-            voice_rx.set_profile(rx_tone,rx_tone.kind==ToneKind::Ctcss?factory.ctcss_level:
-                rx_tone.kind==ToneKind::Dcs?factory.dcs_level:0,now,aprs_listen || rx_profile.narrow,rx_profile.squelch);
-            if(weather_open && voice_rx.status().frequency!=app.weather().frequency())
-                voice_rx.tune(app.weather().frequency(),now);
-            if(scan_has_target) {
-                voice_watch.poll(voice_rx,config,now,false,false);
-                if(channel_scan.frequency() && (voice_rx.status().frequency!=channel_scan.frequency() ||
-                   scanned!=previous_channel))
-                    voice_rx.tune(channel_scan.frequency(),now);
+            const bool voice_target=!weather_open && !scan_has_target && !aprs_listen;
+            const auto tone_level=[&](Tone tone) {
+                if(tone.kind==ToneKind::Ctcss)return factory.ctcss_level;
+                if(tone.kind==ToneKind::Dcs)return factory.dcs_level;
+                return uint8_t(0);
+            };
+            if(voice_target) {
+                const auto &current=app.radio_profile(voice_watch.slot());
+                voice_rx.set_profile(current.rx_tone,tone_level(current.rx_tone),
+                    now,current.narrow,current.squelch);
             }
+            // Switch the frequency and RX profile together, before polling audio.
+            voice_watch.poll(voice_rx,config,now,voice_target && !voice_rx.status().fault,
+                ptt_down || monitor,[&](uint8_t rx_slot,uint32_t hz) {
+                    const auto &rx_profile=app.radio_profile(rx_slot);
+                    if(hz)voice_rx.tune_profile(hz,rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
+                        now,rx_profile.narrow,rx_profile.squelch);
+                    else voice_rx.stop();
+                });
+            if(scan_has_target) {
+                const auto *memory=app.memory(scanned);
+                const auto &rx_profile=memory?memory->radio:app.scan_vfo_profile();
+                if(voice_rx.status().frequency!=channel_scan.frequency() || scanned!=previous_channel)
+                    voice_rx.tune_profile(channel_scan.frequency(),rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
+                        now,rx_profile.narrow,rx_profile.squelch);
+            }
+            if(weather_open && voice_rx.status().frequency!=app.weather().frequency())
+                voice_rx.tune_profile(app.weather().frequency(),{},0,now,true,3);
             if(aprs_listen) {
-                voice_watch.poll(voice_rx,config,now,false,false);
                 if(voice_rx.status().frequency!=config.aprs_rx_hz) {
                     packet_rx.stop();
-                    voice_rx.tune(config.aprs_rx_hz,now);
-                }
+                    voice_rx.tune_profile(config.aprs_rx_hz,{},0,now,true,3);
+                } else voice_rx.set_profile({},0,now,true,3);
             }
-#endif
-#ifdef RT950_MAIN_TX
             using WeatherAudio=voice::BoardReceiver::WeatherAudio;
             const auto wx_audio=!weather_open?WeatherAudio::Off:
                 app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;
             voice_rx.poll(now,ptt_down,monitor,aprs_listen,wx_audio);
 #else
+            voice_watch.poll(voice_rx,app.config(),now,!voice_rx.status().fault,input.ptt_mask!=0 || monitor);
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
 #endif
-            const auto &rx=voice_rx.status();
 #ifdef RT950_MAIN_TX
+            const auto &rx=voice_rx.status();
             if(aprs_listen) {
                 struct ReceiveContext {
                     InputStatus &status;
@@ -541,10 +549,8 @@ extern "C" int main(void) {
                 const bool searching=wx.scanning();
                 wx.poll(now,rx.frequency==wx.frequency() && rx.sampled,rx.receiving,rx.fault);
                 if(searching && wx.alerted())app.activity(now);
-            } else if(!scan_has_target)
+            }
 #endif
-            voice_watch.poll(voice_rx,app.config(),now,(rx.ready || rx.frequency) && !rx.fault,
-                             input.ptt_mask!=0 || monitor);
         }
 #ifdef RT950_MAIN_TX
         input.aprs_receiving=packet_rx.running();

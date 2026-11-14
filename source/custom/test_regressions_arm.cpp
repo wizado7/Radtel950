@@ -1598,7 +1598,9 @@ extern "C" uint32_t voice_board_sql_probe() {
   if(rx.status().receiving!=(i==1 || i==2))return 2+i;
  }
  rx.set_profile({},0,177,true,0);
- rx.poll(191,false);
+ if(rx.status().receiving || rx.has_sample() || rx.squelch_open(177))return 7;
+ rx.poll(177,false);
+ if(!rx.has_sample())return 8;
  return rx.status().receiving || rx.carrier()?6:0;
 }
 
@@ -1787,7 +1789,7 @@ extern "C" uint32_t voice_tail_probe(uint32_t kind,uint32_t level,uint32_t *trac
 }
 
 extern "C" int monitor_settings_tests() {
- Application app(false);
+ Application app;
  CHECK(!app.monitor_enabled() && !app.monitor_active());
  app.key(Key::Monitor);CHECK(app.page()==Page::Monitor && !app.monitor_draft());
  app.key(Key::Down);CHECK(app.monitor_draft() && !app.monitor_active());
@@ -2837,5 +2839,35 @@ extern "C" unsigned gps_timezone_tests() {
  for(unsigned i=0;i<110;++i)restored.key(Key::Down);
  restored.key(Key::Left);CHECK(restored.timezone_draft()==-720);
  restored.key(Key::Ok);CHECK(restored.timezone_minutes()==-720);
+ return 0;
+}
+
+extern "C" unsigned watch_profile_tests() {
+ rt_config config;
+ rt_defaults(&config);
+ config.vfo[0].rx_hz=145500000;
+ config.vfo[2].rx_hz=145500000; // Same frequency, different slot profile.
+ voice::Watch watch;
+ VoiceReceiver receiver;
+ unsigned tunes=0;
+ uint8_t profile_slot=255;
+ const auto tune=[&](uint8_t slot,uint32_t hz) {
+  profile_slot=slot;++tunes;
+  if(hz)receiver.tune(hz,0);
+  else receiver.stop();
+ };
+ watch.poll(receiver,config,0,true,false,tune);
+ CHECK(profile_slot==0 && tunes==1);
+ watch.poll(receiver,config,150,true,false,tune);
+ CHECK(profile_slot==2 && watch.slot()==2 && tunes==2);
+ watch.poll(receiver,config,151,true,true,tune);
+ CHECK(profile_slot==0 && tunes==3);
+ config.vfo[0].rx_hz=0;
+ watch.poll(receiver,config,152,true,true,tune);
+ CHECK(profile_slot==0 && !receiver.frequency);
+ watch.poll(receiver,config,153,true,false,tune);
+ CHECK(profile_slot==2 && receiver.frequency==145500000);
+ watch.poll(receiver,config,154,false,false,tune);
+ CHECK(!receiver.frequency && !watch.receiving());
  return 0;
 }
