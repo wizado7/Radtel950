@@ -68,6 +68,9 @@ void Application::user_key(unsigned which,bool held) {
     (page_==Page::VfoScan && action==KeyAction::ScanVfo)) {
   key(Key::Back);return;
  }
+ if(page_==Page::Weather && action==KeyAction::Weather) {
+  key(Key::Back);return;
+ }
  if(page_!=Page::Radio && page_!=Page::FmProbe) {
   if(which==1 && !held)key(Key::Back);
   return;
@@ -83,6 +86,7 @@ void Application::user_key(unsigned which,bool held) {
  case KeyAction::Channels:key(Key::Channels);break;
  case KeyAction::ScanChannels:key(Key::ChannelScan);break;
  case KeyAction::ScanVfo:key(Key::VfoScan);break;
+ case KeyAction::Weather:key(Key::Weather);break;
  default:break;
  }
 }
@@ -97,7 +101,7 @@ void Application::tick(uint32_t now) {
  switch(page_) {
  case Page::Radio:case Page::Gps:case Page::Aprs:case Page::AprsMessages:
  case Page::Debug:case Page::Battery:case Page::LcdTest:case Page::FlashInfo:
- case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:
+ case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:case Page::Weather:
      menu_page=false;break;
  default:break;
  }
@@ -401,6 +405,7 @@ constexpr MenuEntry radio_menu[]={
     {"FM presets",Key::FmPresets},{"AM presets",Key::AmPresets},
     {"FM tuning step",Key::FmStep},{"AM tuning step",Key::AmStep},
     {"Mic Gain",Key::MicGain},
+    {"NOAA",Key::Weather},{"NOAA Alert",Key::WeatherAlert},
     {"Monitor",Key::Monitor},
     {"Repeater",Key::Menu,Option::Count,MenuGroup::Repeater}
 };
@@ -471,6 +476,19 @@ void Application::key(Key k) {
         if(k==Key::Ok){key_actions_[binding_selection_]=KeyAction(binding_draft_);page_=Page::Settings;notify("SETTING APPLIED");}
         return;
     }
+    if(page_==Page::Weather) {
+        if(k==Key::Back || k==Key::Menu)page_=parent_;
+        if(k==Key::Up || k==Key::Down || k==Key::Left || k==Key::Right)
+            weather_.step(k==Key::Up || k==Key::Right,now_);
+        if(k==Key::Ok)weather_.confirm(now_);
+        return;
+    }
+    if(k==Key::Weather || k==Key::WeatherAlert) {
+        if((page_==Page::Radio && !editing()) || page_==Page::Settings) {
+            parent_=page_;page_=Page::Weather;weather_.begin(k==Key::WeatherAlert,now_);notify("");
+        }
+        return;
+    }
     if(k==Key::Import){page_=Page::Import;import_ready_=import_confirm_=import_request_=import_apply_=false;notify("");return;}
     if(page_==Page::Import) {
         if(k==Key::Back || k==Key::Menu || (k==Key::Ok && import_ready_ && !import_confirm_)) {
@@ -495,6 +513,29 @@ void Application::key(Key k) {
     if(page_==Page::Backup) {
         if(k==Key::Ok){backup_request_=true;notify("");}
         if(k==Key::Back || k==Key::Menu){backup_request_=false;page_=Page::Settings;notify("");}
+        return;
+    }
+    if(k==Key::Timezone) {
+        parent_=page_==Page::Settings?Page::Settings:Page::Radio;
+        page_=Page::Timezone;timezone_draft_=timezone_minutes_;notify("");
+        return;
+    }
+    if(page_==Page::Timezone) {
+        int delta=0;
+        switch(k) {
+        case Key::Up:delta=15;break;
+        case Key::Down:delta=-15;break;
+        case Key::Right:delta=30;break;
+        case Key::Left:delta=-30;break;
+        case Key::NextSlot:delta=60;break;
+        case Key::Ok:
+            timezone_minutes_=timezone_draft_;page_=parent_;notify("SETTING APPLIED");return;
+        case Key::Back:case Key::Menu:
+            page_=parent_;notify("");return;
+        default:return;
+        }
+        const int next=timezone_draft_+delta;
+        if(next>=-720 && next<=840)timezone_draft_=next;
         return;
     }
     if(k==Key::DistanceUnits) {
@@ -1039,9 +1080,9 @@ void Application::key(Key k) {
               k==Key::TxFrequency?Page::TxFrequency:Page::RepeaterOffset;
         editor_value_=0;editor_digits_=0;notify("");return;
     }
-    if(k==Key::Gps || k==Key::Aprs || k==Key::Debug || k==Key::Channels || k==Key::Battery || k==Key::Brightness || k==Key::ScreenTimer || k==Key::Timezone || k==Key::LcdTest) {
+    if(k==Key::Gps || k==Key::Aprs || k==Key::Debug || k==Key::Channels || k==Key::Battery || k==Key::Brightness || k==Key::ScreenTimer || k==Key::LcdTest) {
         parent_=page_==Page::Settings?Page::Settings:Page::Radio;
-        page_=k==Key::Gps?Page::Gps:k==Key::Aprs?Page::Aprs:k==Key::Debug?Page::Debug:k==Key::Channels?Page::Channels:k==Key::Battery?Page::Battery:k==Key::Brightness?Page::Brightness:k==Key::ScreenTimer?Page::ScreenTimer:k==Key::Timezone?Page::Timezone:Page::LcdTest;
+        page_=k==Key::Gps?Page::Gps:k==Key::Aprs?Page::Aprs:k==Key::Debug?Page::Debug:k==Key::Channels?Page::Channels:k==Key::Battery?Page::Battery:k==Key::Brightness?Page::Brightness:k==Key::ScreenTimer?Page::ScreenTimer:Page::LcdTest;
         if(k==Key::LcdTest)lcd_test_gray_=false;
         editor_value_=0;editor_digits_=0;
         if(k==Key::Channels)select_channel_for_list();
@@ -1068,7 +1109,7 @@ void Application::key(Key k) {
             notify("");return;
         }
         if(digits_ && page_==Page::Radio) {entry_khz_/=10;--digits_;invalid_=false;notify("");}
-        else {page_=(page_==Page::Gps || page_==Page::Aprs || page_==Page::AprsMessages || page_==Page::Debug || page_==Page::Channels || page_==Page::Battery || page_==Page::StoreChannel || page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::Timezone || page_==Page::LcdTest || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || page_==Page::WatchSlots || scan_page() || page_==Page::ScanMode || page_==Page::BeaconSymbol || page_==Page::ClearAprs || frequency_editor() || page_==Page::BeaconIdentity || page_==Page::CoordinateFormat || page_==Page::SpeedUnits || page_==Page::AltitudeUnits || page_==Page::LanguageSelect || page_==Page::VfoStep || page_==Page::MenuTimeout || page_==Page::RadioOptions || page_==Page::FlashInfo || page_==Page::FmProbe)?parent_:Page::Radio;invalid_=false;notify("");}
+        else {page_=(page_==Page::Gps || page_==Page::Aprs || page_==Page::AprsMessages || page_==Page::Debug || page_==Page::Channels || page_==Page::Battery || page_==Page::StoreChannel || page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::LcdTest || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || page_==Page::WatchSlots || scan_page() || page_==Page::ScanMode || page_==Page::BeaconSymbol || page_==Page::ClearAprs || frequency_editor() || page_==Page::BeaconIdentity || page_==Page::CoordinateFormat || page_==Page::SpeedUnits || page_==Page::AltitudeUnits || page_==Page::LanguageSelect || page_==Page::VfoStep || page_==Page::MenuTimeout || page_==Page::RadioOptions || page_==Page::FlashInfo || page_==Page::FmProbe)?parent_:Page::Radio;invalid_=false;notify("");}
         return;
     }
     if(page_==Page::TxFrequency && k==Key::Left) {
@@ -1157,11 +1198,10 @@ void Application::key(Key k) {
         if(k==Key::Up)brightness_=4;
         return;
     }
-    if(page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::Timezone) {
+    if(page_==Page::Brightness || page_==Page::ScreenTimer) {
         if(k==Key::Up || k==Key::Down) {
             int dir=k==Key::Up?1:-1;
             if(page_==Page::Brightness){int n=int(brightness_)+dir;if(n>=1 && n<=4)brightness_=unsigned(n);}
-            if(page_==Page::Timezone){int n=timezone_minutes_+dir*15;if(n>=-720 && n<=840)timezone_minutes_=n;}
         } else if(k==Key::Ok) {
             if(page_==Page::ScreenTimer && editor_digits_) {
                 if(editor_value_>3600){notify("USE 0 TO 3600 SECONDS");return;}

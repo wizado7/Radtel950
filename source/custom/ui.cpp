@@ -540,7 +540,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  }
  if(changed(12,a.keypad_locked()?"LOCK":"",force)){rect(88,5,88,16,card);if(a.keypad_locked())label(88,9,"LOCK",accent);}
  const bool presets=a.page()==Page::FmPresets || a.page()==Page::AmPresets;
- const char *footer=a.page()==Page::Import?"OK START / BACK CANCEL":a.page()==Page::Backup?"OK START / BACK CANCEL":a.page()==Page::Waypoint && a.waypoint_confirm()?"OK CONFIRM / BACK CANCEL":(a.page()==Page::Distance || a.page()==Page::FlashInfo)?"READ ONLY / BACK RETURN":presets?(a.broadcast_confirm()?"OK CONFIRM / BACK CANCEL":"LEFT SAVE / * DEL / OK PLAY"):a.page()==Page::About?"READ ONLY / BACK RETURN":a.page()==Page::PowerMeasured?"OK SAVE / * DEL / BACK EXIT":a.page()==Page::PowerCalibration?"RIGHT: RECORD / BACK EXIT":a.keypad_locked()?"HOLD # TO UNLOCK":a.page()==Page::VoiceRx?"READ ONLY / BACK RETURN":a.page()==Page::PowerStatus?"ARROWS PAGE / BACK RETURN":a.page()==Page::Debug?"BACK HOLD / LED 1 2 0":a.page()==Page::Gps?"HOLD VM GPS / BACK RETURN":a.page()==Page::Radio?(a.editing()?"HOLD OK MENU   * DELETE":a.config().vfo[a.config().active].channel_mode?"VM VFO   WHEEL CHANNEL":"OK MENU   ABC SLOT   VM CH"):"OK SELECT       BACK EXIT";
+ const char *footer=a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
+     a.weather().scanning()?"OK LISTEN / BACK EXIT":"OK SCAN / BACK EXIT"):
+     a.page()==Page::Import?"OK START / BACK CANCEL":a.page()==Page::Backup?"OK START / BACK CANCEL":a.page()==Page::Waypoint && a.waypoint_confirm()?"OK CONFIRM / BACK CANCEL":(a.page()==Page::Distance || a.page()==Page::FlashInfo)?"READ ONLY / BACK RETURN":presets?(a.broadcast_confirm()?"OK CONFIRM / BACK CANCEL":"LEFT SAVE / * DEL / OK PLAY"):a.page()==Page::About?"READ ONLY / BACK RETURN":a.page()==Page::PowerMeasured?"OK SAVE / * DEL / BACK EXIT":a.page()==Page::PowerCalibration?"RIGHT: RECORD / BACK EXIT":a.keypad_locked()?"HOLD # TO UNLOCK":a.page()==Page::VoiceRx?"READ ONLY / BACK RETURN":a.page()==Page::PowerStatus?"ARROWS PAGE / BACK RETURN":a.page()==Page::Debug?"BACK HOLD / LED 1 2 0":a.page()==Page::Gps?"HOLD VM GPS / BACK RETURN":a.page()==Page::Radio?(a.editing()?"HOLD OK MENU   * DELETE":a.config().vfo[a.config().active].channel_mode?"VM VFO   WHEEL CHANNEL":"OK MENU   ABC SLOT   VM CH"):"OK SELECT       BACK EXIT";
  if(changed(10,footer,force)){rect(8,300,224,16,bg);label(10,304,footer,muted,bg);}
  const char *state=gps_state(a,now);char line[30];
  if(a.page()==Page::Settings) {
@@ -886,6 +888,19 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   const char *hardware=!rx.sampled?"RX STARTING":voice::hardware_sql_open(rx.status)?"SQL OPEN":"SQL CLOSED";
   if(changed(7,hardware,force))stat(248,"RF SQL BIT",hardware);
   if(force)label(10,282,"READ ONLY / PTT DISABLED",muted,bg);
+ } else if(a.page()==Page::Weather) {
+  const auto &wx=a.weather();
+  const char *title=wx.scanning() || wx.alerted()?"NOAA Alert":"NOAA";
+  if(changed(1,title,force)){rect(8,52,224,18,bg);label(10,55,title,accent,bg);}
+  char channel[8]="WX-";num(channel+3,wx.channel()+1);
+  if(changed(2,channel,force))stat(80,"Channel",channel);
+  char value[16];freq(value,wx.frequency());
+  if(changed(3,value,force))stat(116,"MHz",value);
+  const auto &rx=input.voice;
+  const char *status=rx.fault?"RX BUS FAULT":wx.alerted()?"WX SIGNAL FOUND":
+      wx.scanning()?"WX ALERT SCANNING":!rx.sampled?"RX STARTING":
+      voice::hardware_sql_open(rx.status)?"RX CARRIER":"RX LISTENING";
+  if(changed(4,status,force))stat(152,"RX",status);
  } else if(a.page()==Page::FmProbe) {
   draw_fm_probe(a,input,force);
  } else if(a.page()==Page::FlashInfo) {
@@ -1112,9 +1127,20 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   char value[30];
   if(a.page()==Page::Brightness){num(value,a.brightness()*25u);unsigned j=0;while(value[j])++j;value[j++]='%';value[j]=0;}
   else if(a.page()==Page::ScreenTimer)num(value,a.editor_digits()?a.editor_value():a.screen_seconds());
-  else {int zone=a.timezone_minutes();copy(value,zone<0?"UTC -":"UTC +");if(zone<0)zone=-zone;value[5]=char('0'+zone/60/10);value[6]=char('0'+zone/60%10);value[7]=':';value[8]=char('0'+zone%60/10);value[9]=char('0'+zone%10);value[10]=0;}
+  else {int zone=a.timezone_draft();copy(value,zone<0?"UTC -":"UTC +");if(zone<0)zone=-zone;value[5]=char('0'+zone/60/10);value[6]=char('0'+zone/60%10);value[7]=':';value[8]=char('0'+zone%60/10);value[9]=char('0'+zone%10);value[10]=0;}
   if(changed(1,value,force)){panel(52,92);label(16,65,a.page()==Page::Brightness?"LCD BRIGHTNESS":a.page()==Page::ScreenTimer?"SCREEN TIMEOUT SECONDS":"GPS LOCAL TIMEZONE",accent);lcd_draw_string_2x(16,96,value,ink,card);}
-  if(force){panel(160,88);label(16,174,a.page()==Page::ScreenTimer?"TYPE SECONDS: 0 TO 3600":"UP / DOWN OR WHEEL",muted);label(16,196,a.page()==Page::ScreenTimer?"0 = ALWAYS ON, * DELETE":"OK SAVE, BACK RETURN",muted);label(16,218,"RADIO POWER STAYS ON",muted);}
+  if(force) {
+   panel(160,88);
+   if(a.page()==Page::Timezone) {
+    label(16,174,"UP/DOWN/WHEEL: 15 MIN",muted);
+    label(16,196,"LEFT/RIGHT: 30 MIN",muted);
+    label(16,218,"ABC: +1 HOUR",muted);
+   } else {
+    label(16,174,a.page()==Page::ScreenTimer?"TYPE SECONDS: 0 TO 3600":"UP / DOWN OR WHEEL",muted);
+    label(16,196,a.page()==Page::ScreenTimer?"0 = ALWAYS ON, * DELETE":"OK SAVE, BACK RETURN",muted);
+    label(16,218,"RADIO POWER STAYS ON",muted);
+   }
+  }
   copy(line,a.feedback());if(changed(8,line,force)){rect(8,266,224,20,bg);label(10,271,line,muted,bg);}
  } else if(a.page()==Page::Gps) {
   const auto *n=nav_get();const bool fix=nav_fix_fresh(now);

@@ -39,7 +39,8 @@ public:
     void set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow=true,uint8_t sql=3);
     void use_sql_calibration(const SqlCalibration &calibration) {sql_calibration_=&calibration;}
     bool squelch_open(uint32_t now);
-    void poll(uint32_t now,bool ptt,bool monitor=false,bool packet_audio=false);
+    enum class WeatherAudio : uint8_t {Off, Muted, Speaker};
+    void poll(uint32_t now,bool ptt,bool monitor=false,bool packet_audio=false,WeatherAudio weather=WeatherAudio::Off);
     bool carrier() const {return carrier_;}
     bool has_sample() const {return status_.sampled;}
     const VoiceStatus &status() const {return status_;}

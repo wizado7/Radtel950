@@ -5,14 +5,15 @@
 #include "gps_navigation.hpp"
 #include "radio_settings.hpp"
 #include "power_calibration.hpp"
+#include "weather_rx.hpp"
 extern "C" {
 #include "../mvp/core.h"
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold };
-enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands };
-enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Count };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert };
+enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather };
+enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
 enum class Option : uint8_t { Watch, Gps, AprsRx, Beacon, Ble, Export, SidePtt, SecondPtt, Tail, Count };
 enum class MenuGroup : uint8_t { Root, Radio, Channels, Gps, Aprs, Bluetooth, Display, System, Diagnostics, AprsRx, Beacon, Repeater, UserKeys, Count };
@@ -79,6 +80,7 @@ public:
     unsigned auto_lock_selection() const {return auto_lock_;}
     unsigned auto_lock_draft() const {return auto_lock_draft_;}
     int timezone_minutes() const { return timezone_minutes_; }
+    int timezone_draft() const { return timezone_draft_; }
     unsigned aprs_message_index() const {return aprs_message_;}
     unsigned beacon_symbol_index() const {return beacon_symbol_;}
     unsigned beacon_symbol_draft() const {return beacon_symbol_draft_;}
@@ -96,7 +98,7 @@ public:
     KeyAction key_action(unsigned which) const {return which<4?key_actions_[which]:KeyAction::None;}
     unsigned binding_selection() const {return binding_selection_;}
     unsigned binding_draft() const {return binding_draft_;}
-    static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO"};
+    static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
     static constexpr unsigned PortableSchema=2,PortableSize=8008;
@@ -144,6 +146,9 @@ public:
     }
     uint16_t broadcast_source() const {return broadcast_am()?sw_request_:fm_request_;}
     uint16_t fm_request() const {return sw_am_?sw_request_:fm_request_;}
+    WeatherRx &weather() {return weather_;}
+    const WeatherRx &weather() const {return weather_;}
+    void weather_ptt() {if(page_==Page::Weather)page_=Page::Radio;}
     bool sw_am() const {return sw_am_;}
     const char *fm_entry() const {return fm_entry_;}
     bool monitor_enabled() const {return monitor_enabled_;}
@@ -237,6 +242,7 @@ public:
     static bool valid_scan_bounds(uint32_t first,uint32_t last);
 private:
     rt_config config_{};
+    WeatherRx weather_{};
     RadioProfile vfo_profiles_[3]{};
     RadioSetting radio_setting_=RadioSetting::Squelch;
     unsigned radio_draft_=0;
@@ -312,7 +318,7 @@ private:
     bool keypad_locked_=false; // Runtime lock; reboot always starts unlocked.
     uint8_t auto_lock_=0,auto_lock_draft_=0; // Same duration list as menu timeout; default OFF.
     unsigned brightness_=4,screen_seconds_=60,editor_value_=0,editor_digits_=0;
-    int timezone_minutes_=180;
+    int timezone_minutes_=180,timezone_draft_=180;
     uint32_t last_activity_=0;
     RadioProfile &editable_radio_profile();
     uint32_t base_rx(unsigned slot) const;

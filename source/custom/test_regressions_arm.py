@@ -61,6 +61,16 @@ u.emu_start(symbols['auto_lock_tests']|1,0x080ff000,count=3000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'auto lock failed at C++ line {result}'
 print('ARM auto lock: idle boundary, unlock grace, activity/PTT, editor/status exclusion, menu timeout, wrap, OFF, migration and invalid snapshot PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['weather_tests']|1,0x080ff000,count=2000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'weather test failed at C++ line {result}'
+print('ARM NOAA: menu and PF entry/exit, wrap, missed carrier, alert latch, acknowledgement, fault and PTT return PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['gps_timezone_tests']|1,0x080ff000,count=2000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'GPS timezone failed at C++ line {result}'
+print('ARM GPS timezone: draft, cancel, timeout, 15/30/60-minute steps, boundaries and existing snapshot schema PASS')
 for suite,marker in [('broadcast_bank_tests','ARM broadcast banks:'),('about_page_tests','ARM about page:')]:
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=4000000)
@@ -267,6 +277,31 @@ if a.stock:
  stock=a.stock.read_bytes();assert hashlib.sha256(stock).hexdigest()=='025bc583802a96911836e274cdfdf3ce05d9919bc77451b7f7f1573fb5571907'
  oracle=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS);oracle.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_M4)
  oracle.mem_map(0x08000000,0x100000);oracle.mem_map(0x20000000,0x18000);oracle.mem_write(0x08003000,stock)
+ assert stock[0x2347c:0x23488]==bytes.fromhex('014951f820007047a40c0308')
+ for channel in range(10):
+  frequencies=[]
+  for machine,pc,scale in [(u,symbols['weather_frequency_probe'],1),(oracle,0x0802647c,10)]:
+   machine.reg_write(UC_ARM_REG_R0,channel)
+   machine.reg_write(UC_ARM_REG_LR,0x080ff001)
+   machine.emu_start(pc|1,0x080ff000,count=100)
+   assert machine.reg_read(UC_ARM_REG_PC)==0x080ff000
+   frequencies.append(machine.reg_read(UC_ARM_REG_R0)*scale)
+  assert frequencies[0]==frequencies[1],(channel,frequencies)
+ print('OEM 0.29 NOAA: all ten frequencies in original order match executed ARM lookup PASS')
+ gps_entries=((0x08036977,0x0801859c,0x0801f970),(0x08036998,0x080185a8,0x0801f9b4),(0x080369b5,0x080199fc,0x08021858),
+              (0x080369d6,0x0801922c,0x08020dd0),(0x080369f7,0x08018e88,0x08020aa8),
+              (0x08036a18,0x08018510,0x0801f8e0),(0x08036a39,0x08019924,0x08021804))
+ for entry,editor,save in gps_entries:
+  assert struct.unpack_from('<2I',stock,entry-0x08003000+(21 if entry<=0x08036998 else 25))==(editor|1,save|1)
+ assert stock[0x3d12:0x3d1c]==bytes.fromhex('97f84d0001280ad11e33')
+ for hour in range(24):
+  for offset in range(-12,15):
+   oracle.reg_write(UC_ARM_REG_R0,hour);oracle.reg_write(UC_ARM_REG_R1,offset+12)
+   oracle.reg_write(UC_ARM_REG_LR,0x080ff001)
+   oracle.emu_start(0x08008e79,0x080ff000,count=100)
+   assert oracle.reg_read(UC_ARM_REG_PC)==0x080ff000
+   assert oracle.reg_read(UC_ARM_REG_R0)==(hour+offset)%24
+ print('OEM 0.29 GPS: menu pointers, half-hour add instruction and 648 hour/zone rollovers PASS')
  rng=random.Random(950)
  for case in range(64):
   payload=bytes(rng.randrange(256) for _ in range(case*139//63))

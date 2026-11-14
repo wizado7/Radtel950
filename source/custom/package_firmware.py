@@ -23,6 +23,7 @@ def main():
     p.add_argument('--logic-log', type=Path)
     p.add_argument('--board-log', type=Path)
     p.add_argument('--lcd-log', type=Path)
+    p.add_argument('--acceptance-notes', type=Path, help='include manual acceptance instructions in the full kit')
     p.add_argument('--clean-rebuild', action='store_true')
     a = p.parse_args()
     custom = Path(__file__).resolve().parent
@@ -83,6 +84,8 @@ def main():
                 if destination=='LCD-ARM.txt' and not all(marker in text for marker in ('ARM LCD bus:', 'ARM LCD power:', 'ARM LCD window:', 'ARM LCD: UTF-8')):
                     p.error('LCD bus/power/oracle suite has not completed')
                 (kit / destination).write_text(text, encoding='utf-8')
+            if a.acceptance_notes:
+                shutil.copyfile(a.acceptance_notes, kit / 'ACCEPTANCE-RU.md')
             for document in DOCUMENTS:
                 shutil.copyfile(project / document, kit / document)
             source_zip = kit / (name + '.SOURCE.zip')

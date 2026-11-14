@@ -98,7 +98,7 @@ void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow
     if(status_.frequency)tune(status_.frequency,now);
 }
 
-void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio) {
+void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,WeatherAudio weather) {
     if(!active_ || status_.fault)return;
     if(!status_.ready) {
         constexpr unsigned prefix=sizeof rx_startup/sizeof rx_startup[0];
@@ -180,6 +180,11 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio) {
 #else
         status_.receiving=carrier_;
 #endif
+    }
+    if(weather!=WeatherAudio::Off) {
+        status_.receiving=status_.sampled && hardware_sql_open(status_.status);
+        audio(!ptt && weather==WeatherAudio::Speaker && status_.receiving,true);
+        return;
     }
     audio(!ptt && (status_.receiving || ((monitor || packet_audio || (sql_==0 && tone_.kind==ToneKind::Off)) && status_.sampled)),!packet_audio);
 }

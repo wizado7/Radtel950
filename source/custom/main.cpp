@@ -120,6 +120,9 @@ extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
     uint32_t release_notice_since=0;
 #endif
+#ifdef RT950_MAIN_TX
+    bool weather_previous=false;
+#endif
     app.activity(get_tick());
     custom_heartbeat=get_tick();custom_watchdog_armed=1;
     for(;;) {
@@ -171,6 +174,10 @@ extern "C" int main(void) {
         input.ptt_mask=board_ptt_mask();
         if(!app.side_ptt_enabled())input.ptt_mask&=3u;
         if(input.ptt_mask) {
+#ifdef RT950_MAIN_TX
+            if(input.ptt_mask&uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u)))
+                app.weather_ptt();
+#endif
             app.backup_ptt();settings_export.cancel();settings_import.cancel();
             app.activity(now);
             if(app.page()==Page::FmProbe && app.fm_audio())app.key(Key::Back);
@@ -191,6 +198,15 @@ extern "C" int main(void) {
         if(app.take_aprs_clear())input.aprs_stations.clear();
         const Page page=app.page();
         const bool fm_open=page==Page::FmProbe;
+#ifdef RT950_MAIN_TX
+        const bool weather_open=page==Page::Weather;
+        if(weather_open!=weather_previous) {
+            voice_watch.poll(voice_rx,app.config(),now,false,false);
+            if(voice_rx.status().fault)voice_rx.enable(false);
+            else voice_rx.stop();
+            weather_previous=weather_open;
+        }
+#endif
         const bool voice_enabled=!switch_off && !fm_open &&
             page!=Page::Debug && page!=Page::LcdTest && page!=Page::FlashInfo;
         input.monitor_active=app.monitor_active();
@@ -221,7 +237,7 @@ extern "C" int main(void) {
         // Capture the reason before a voice or APRS stop removes TX ownership.
         if(!power_tx_ok)input.power.trace.trip(supply_fault);
         app.power_battery(power_sample_ok?board_battery_mv():0);
-        const bool aprs_allowed=config.aprs_rx && voice_enabled && !ptt_down && !monitor &&
+        const bool aprs_allowed=config.aprs_rx && voice_enabled && !weather_open && !ptt_down && !monitor &&
             page!=Page::PowerCalibration && page!=Page::PowerMeasured &&
             ptt.state()==voice::Ptt::State::Idle && !beacon.active();
         const bool background=aprs_background.poll(now,aprs_allowed && page==Page::Radio,
@@ -472,9 +488,11 @@ extern "C" int main(void) {
             const auto *scan_memory=scan_has_target?app.memory(scanned):nullptr;
             const auto &rx_profile=scan_memory?scan_memory->radio:scan_has_target?app.scan_vfo_profile():
                 app.radio_profile(voice_watch.slot());
-            const Tone rx_tone=aprs_listen?Tone{}:rx_profile.rx_tone;
+            const Tone rx_tone=aprs_listen || weather_open?Tone{}:rx_profile.rx_tone;
             voice_rx.set_profile(rx_tone,rx_tone.kind==ToneKind::Ctcss?factory.ctcss_level:
                 rx_tone.kind==ToneKind::Dcs?factory.dcs_level:0,now,aprs_listen || rx_profile.narrow,rx_profile.squelch);
+            if(weather_open && voice_rx.status().frequency!=app.weather().frequency())
+                voice_rx.tune(app.weather().frequency(),now);
             if(scan_has_target) {
                 voice_watch.poll(voice_rx,config,now,false,false);
                 if(channel_scan.frequency() && (voice_rx.status().frequency!=channel_scan.frequency() ||
@@ -490,7 +508,10 @@ extern "C" int main(void) {
             }
 #endif
 #ifdef RT950_MAIN_TX
-            voice_rx.poll(now,ptt_down,monitor,aprs_listen);
+            using WeatherAudio=voice::BoardReceiver::WeatherAudio;
+            const auto wx_audio=!weather_open?WeatherAudio::Off:
+                app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;
+            voice_rx.poll(now,ptt_down,monitor,aprs_listen,wx_audio);
 #else
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
 #endif
@@ -515,6 +536,11 @@ extern "C" int main(void) {
                         if(received.export_allowed && !received.ble.enqueue(frame,size,received.now))
                             ++received.status.aprs_export_dropped;
                     },&receive);
+            } else if(weather_open) {
+                auto &wx=app.weather();
+                const bool searching=wx.scanning();
+                wx.poll(now,rx.frequency==wx.frequency() && rx.sampled,rx.receiving,rx.fault);
+                if(searching && wx.alerted())app.activity(now);
             } else if(!scan_has_target)
 #endif
             voice_watch.poll(voice_rx,app.config(),now,(rx.ready || rx.frequency) && !rx.fault,
@@ -561,7 +587,7 @@ extern "C" int main(void) {
         if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
-        const bool voice_listening=voice_enabled && !tx_owns_radio && !aprs_listen && input.voice.ready;
+        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && input.voice.ready;
         const bool watching=voice_listening && !monitor && !scan_has_target && app.enabled(Option::Watch);
         input.power.workload.observe(now,
             (voice_listening && !watching && !scan_has_target?1u<<Load::SingleRx:0u) |

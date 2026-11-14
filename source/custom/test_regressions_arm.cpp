@@ -2760,3 +2760,82 @@ extern "C" int user_key_tests() {
  app.key(Key::ResetSettings);app.key(Key::Down);app.key(Key::Ok);CHECK(app.key_action(0)==KeyAction::None && app.key_action(2)==KeyAction::Fm);
  return 0;
 }
+
+extern "C" uint32_t weather_frequency_probe(unsigned channel) {
+ return channel<WeatherRx::ChannelCount?weather_channels[channel]:0;
+}
+
+extern "C" unsigned weather_tests() {
+ Application app;
+ const auto start=app.config();
+ const auto same_slots=[&]{
+  if(app.config().active!=start.active || app.config().watch_mask!=start.watch_mask)return false;
+  for(unsigned i=0;i<3;++i)if(app.config().vfo[i].rx_hz!=start.vfo[i].rx_hz ||
+      app.config().vfo[i].tx_hz!=start.vfo[i].tx_hz)return false;
+  return true;
+ };
+ app.key(Key::Menu);app.key(Key::Ok);
+ for(unsigned i=0;i<4;++i)app.key(Key::Up);
+ CHECK(app.menu_entry(app.menu_selection()).action==Key::Weather);
+ app.key(Key::Ok);
+ CHECK(app.page()==Page::Weather && !app.voice_tx_page() && same_slots());
+ auto &wx=app.weather();
+ CHECK(wx.channel()==0 && !wx.scanning() && !wx.alerted());
+ app.key(Key::Down);CHECK(wx.channel()==9);
+ app.key(Key::Right);CHECK(wx.channel()==0);
+ app.key(Key::Back);CHECK(app.page()==Page::Settings && app.menu_group()==MenuGroup::Radio);
+ app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.page()==Page::Weather && wx.scanning());
+ wx.poll(399,true,false,false);CHECK(wx.channel()==0);
+ wx.poll(400,true,false,false);CHECK(wx.channel()==1);
+ wx.poll(440,false,true,false);CHECK(!wx.alerted());
+ wx.poll(470,true,true,false);
+ wx.poll(510,true,false,false);
+ wx.poll(525,true,true,false);
+ wx.poll(584,true,true,false);CHECK(!wx.alerted());
+ wx.poll(585,true,true,false);CHECK(wx.alerted() && wx.channel()==1);
+ wx.poll(800,true,false,false);CHECK(wx.alerted() && wx.channel()==1);
+ app.key(Key::Ok);CHECK(!wx.alerted() && !wx.scanning());
+ app.key(Key::Ok);CHECK(wx.scanning());
+ wx.poll(900,true,true,true);CHECK(wx.scanning() && !wx.alerted() && wx.channel()==1);
+ app.weather_ptt();CHECK(app.page()==Page::Radio && app.voice_tx_page() && same_slots());
+
+ app.key(Key::Pf1Hold);app.key(Key::Up);app.key(Key::Ok);app.key(Key::Back);
+ if(app.page()==Page::Settings)app.key(Key::Back);
+ CHECK(app.page()==Page::Radio && app.key_action(1)==KeyAction::Weather);
+ app.user_key(0,true);CHECK(app.page()==Page::Weather && !wx.scanning());
+ app.user_key(0,true);CHECK(app.page()==Page::Radio && same_slots());
+
+ wx.begin(true,0xffffff00u);
+ wx.poll(0x8fu,true,false,false);CHECK(wx.channel()==1);
+ wx.poll(0x90u,true,false,false);CHECK(wx.channel()==2);
+ return 0;
+}
+
+extern "C" unsigned gps_timezone_tests() {
+ Application app(false);
+ CHECK(app.timezone_minutes()==180);
+ app.key(Key::Timezone);
+ app.key(Key::Down);app.key(Key::Left);
+ CHECK(app.timezone_draft()==135 && app.timezone_minutes()==180);
+ app.key(Key::Back);
+ CHECK(app.page()==Page::Radio && app.timezone_minutes()==180);
+ app.key(Key::Timezone);app.key(Key::Right);
+ app.tick(30000);
+ CHECK(app.page()==Page::Radio && app.timezone_minutes()==180);
+ app.key(Key::Timezone);app.key(Key::NextSlot);app.key(Key::Right);app.key(Key::Up);
+ CHECK(app.timezone_draft()==285 && app.config().active==0);
+ app.key(Key::Ok);CHECK(app.timezone_minutes()==285);
+ uint8_t bytes[Application::SnapshotCapacity];
+ const auto size=app.save_portable_snapshot(bytes,sizeof bytes);
+ Application restored(false);
+ CHECK(size==8008 && restored.restore_portable_snapshot(bytes,size,2));
+ CHECK(restored.timezone_minutes()==285);
+ restored.key(Key::Timezone);
+ for(unsigned i=0;i<12;++i)restored.key(Key::NextSlot);
+ restored.key(Key::Up);CHECK(restored.timezone_draft()==840);
+ for(unsigned i=0;i<110;++i)restored.key(Key::Down);
+ restored.key(Key::Left);CHECK(restored.timezone_draft()==-720);
+ restored.key(Key::Ok);CHECK(restored.timezone_minutes()==-720);
+ return 0;
+}

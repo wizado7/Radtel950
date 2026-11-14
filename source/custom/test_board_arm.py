@@ -635,6 +635,33 @@ assert voice.odr[GPIO[1]]&3==3 and voice.odr[GPIO[4]]&0x7080==0x7080
 assert voice.route_clear==[0x2000,1],voice.route_clear
 print('ARM voice board: startup, RX route only, carrier audio, PTT mute, shutdown PASS')
 
+voice=VoiceMachine()
+voice.reply_words=iter((0xa800,2,1,0,511,2,1))
+voice.function('board_init');voice.route_clear.clear()
+voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
+voice_call('11set_profile')
+voice.u.mem_write(0x20017b00,bytes(8))
+voice_call('6enable',1)
+for now in range(46):voice_call('4poll',now,0)
+voice_call('4tune',162550000,200)
+voice.u.mem_write(0x20017b00,struct.pack('<II',0,1)) # packet audio off, WX muted
+voice_call('4poll',201,0)
+voice_call('4poll',231,0)
+assert voice.route_clear==[0x2000,0x1000],voice.route_clear
+assert not voice.odr[GPIO[1]]&0x100
+voice.u.mem_write(0x20017b00,struct.pack('<II',0,2)) # WX speaker
+voice_call('4poll',232,0)
+assert voice.odr[GPIO[1]]&0x100 and not voice.odr[GPIO[4]]&2
+voice_call('4poll',246,0)
+assert not voice.odr[GPIO[1]]&0x100 # high RSSI alone does not open WX audio
+voice_call('4poll',261,1)
+assert not voice.odr[GPIO[1]]&0x100 # PTT mutes despite open SQL
+voice_call('4poll',262,0)
+assert voice.odr[GPIO[1]]&0x100
+voice_call('6enable',0)
+assert not voice.odr[GPIO[1]]&0x100 and voice.odr[GPIO[4]]&0x7000==0x7000
+print('ARM NOAA RF: VHF route, muted scan, hardware SQL over RSSI, PTT mute and stop PASS')
+
 # Render the new menu page in both languages using real compiled UI calls.
 # Record primitive bounds before the LCD sink skips hardware operations.
 class MenuBounds(Foreground):
@@ -832,9 +859,10 @@ menu_key('Back');menu_key('Erase');menu_draw();assert 'УДАЛИТЬ СТАНЦ
 menu_key('Back');menu_key('Back');menu_key('AmPresets');menu_draw()
 assert 'Память AM' in menu_ui.texts and '7100' in menu_ui.texts
 menu_key('Back');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('О прошивке','0.68.4','ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
+firmware_version=(root/'firmware_version.hpp').read_text(encoding='utf-8').split('"')[1]
+assert all(text in menu_ui.texts for text in ('О прошивке',firmware_version,'ТЕСТОВАЯ / НЕ РЕЛИЗ','by wizado','ШТАТНЫЙ ЗАГРУЗЧИК СОХРАНЁН'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('About');menu_draw()
-assert all(text in menu_ui.texts for text in ('About firmware','0.68.4','TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
+assert all(text in menu_ui.texts for text in ('About firmware',firmware_version,'TEST BUILD / NOT RELEASE','C++17 / GPL-3.0-or-later'))
 print('ARM broadcast banks UI: eight FM/AM rows, explicit units, confirmations, empty states, RU/EN and LCD bounds PASS')
 print('ARM about UI: current version, acceptance status, author/license, flash, RU/EN and LCD bounds PASS')
 
@@ -1206,3 +1234,26 @@ portable_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
 assert flash_call(portable_dump,fresh,0x20015000,8192)==8008
 assert struct.unpack('<4I',bytes(fm.u.mem_read(0x20015000+7992,16)))==(0,5,2,0)
 print('ARM user keys autosave: binding-only edit triggers debounce, compact v2 commit and fresh MCU reload preserves all four assignments PASS')
+
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+menu_key('Weather');menu_draw()
+assert all(s in menu_ui.texts for s in ('NOAA','WX-1','162.55000','OK SCAN / BACK EXIT'))
+menu_key('Down');menu_draw()
+assert 'WX-10' in menu_ui.texts and '163.27500' in menu_ui.texts
+menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+menu_key('WeatherAlert');menu_draw()
+assert all(s in menu_ui.texts for s in ('Тревога NOAA','ПОИСК СИГНАЛА WX','OK СЛУШАТЬ / НАЗАД'))
+menu_key('Ok');menu_draw()
+assert 'Каналы NOAA' in menu_ui.texts and 'OK ПОИСК / НАЗАД' in menu_ui.texts
+print('ARM NOAA UI: channel numbers, tuning, alert mode and LCD bounds RU/EN PASS')
+
+menu_key('Back');menu_key('Timezone');menu_key('Left');menu_draw()
+assert all(s in menu_ui.texts for s in ('ЧАСОВОЙ ПОЯС GPS','UTC +02:30','ВЛЕВО/ВПРАВО: 30 МИН','ABC: +1 ЧАС','OK СОХР. / НАЗАД ОТМЕНА'))
+menu_key('Back');menu_key('LanguageSelect');menu_key('Up');menu_key('Ok')
+menu_key('Timezone');menu_draw()
+assert all(s in menu_ui.texts for s in ('GPS LOCAL TIMEZONE','UTC +03:00','LEFT/RIGHT: 30 MIN','ABC: +1 HOUR'))
+menu_key('NextSlot');menu_key('Right');menu_draw()
+assert 'UTC +04:30' in menu_ui.texts
+menu_key('Ok');menu_key('Timezone');menu_draw()
+assert 'UTC +04:30' in menu_ui.texts
+print('ARM GPS timezone UI: cancelled draft, 30/60-minute shortcuts, applied offset and LCD bounds RU/EN PASS')
