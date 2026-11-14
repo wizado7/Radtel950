@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "application.hpp"
+#include "voice_rx.hpp"
 
 namespace rt950::voice {
 class ChannelScan final {
@@ -38,7 +39,13 @@ public:
             const uint32_t limit=carrier?config.hold_ms:5000u;
             if((carrier && sampled && open) || uint32_t(now-last_open_)<limit)return channel_;
         }
-        if(uint32_t(now-tuned_at_)<(sampled?config.dwell_ms:250u))return channel_;
+        const auto *memory=app.memory(channel_);
+        const auto &profile=memory?memory->radio:app.scan_vfo_profile();
+        // Leave one extra sampling interval for loop scheduling before advancing.
+        constexpr uint32_t tone_dwell=RxRestartMs+RxSettleMs+RxToneSamples*RxSampleMs;
+        const uint32_t minimum=!sampled?250u:profile.rx_tone.kind==ToneKind::Off?0u:tone_dwell;
+        const uint32_t dwell=config.dwell_ms<minimum?minimum:config.dwell_ms;
+        if(uint32_t(now-tuned_at_)<dwell)return channel_;
         advance(app,now);
         return channel_;
     }

@@ -2905,3 +2905,43 @@ extern "C" unsigned scan_resume_tests() {
  CHECK(scan.poll(app,12150,true,true,false)==1);
  return 0;
 }
+
+extern "C" unsigned scan_tone_dwell_tests() {
+ Application app;
+ voice::ChannelScan scan;
+ // Older snapshots can contain 50 ms, below the current editor minimum.
+ uint8_t legacy[Application::SnapshotCapacity];
+ const auto size=app.save_snapshot(legacy,sizeof legacy);
+ CHECK(size!=0);
+ legacy[12*4]=50;
+ CHECK(app.restore_snapshot(legacy,size) && app.config().dwell_ms==50);
+ app.key(Key::Menu);app.key(Key::Ok);
+ for(unsigned i=0;i<8;++i)app.key(Key::Down);
+ app.key(Key::Ok);CHECK(app.radio_setting()==RadioSetting::RxCtcss);
+ app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.store(0) && app.memory(0)->radio.rx_tone.kind==ToneKind::Ctcss);
+ app.key(Key::ChannelScan);
+ CHECK(scan.poll(app,100,true,false,false)==0);
+ CHECK(scan.poll(app,150,true,true,false)==0);
+ CHECK(scan.poll(app,161,true,true,true)==0);
+ app.key(Key::Right);CHECK(scan.poll(app,162,true,true,true)==1);
+ CHECK(scan.poll(app,212,true,true,false)==2);
+
+ scan.poll(app,213,false,false,false);
+ CHECK(scan.poll(app,300,true,false,false)==0);
+ CHECK(scan.poll(app,375,true,true,false)==0);
+ CHECK(scan.poll(app,376,true,true,false)==1);
+ scan.poll(app,377,false,false,false);
+ CHECK(scan.poll(app,400,true,false,false)==0);
+ CHECK(scan.poll(app,649,true,false,false)==0);
+ CHECK(scan.poll(app,650,true,false,false)==1);
+ scan.poll(app,651,false,false,false);
+
+ app.key(Key::VfoScan);
+ scan.poll(app,700,true,false,false);
+ const auto first=scan.frequency();
+ CHECK(first!=0);
+ scan.poll(app,750,true,true,false);CHECK(scan.frequency()==first);
+ scan.poll(app,776,true,true,false);CHECK(scan.frequency()!=first);
+ return 0;
+}

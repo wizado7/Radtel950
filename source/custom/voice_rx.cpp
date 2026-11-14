@@ -89,7 +89,7 @@ void BoardReceiver::tune(uint32_t hz,uint32_t now) {
 #ifdef RT950_MAIN_TX
     bus.write(rx_chip_,0x43,fm_filter_word(cb || narrow_));
 #endif
-    due_=now+1u;restart_=true;
+    due_=now+RxRestartMs;restart_=true;
 }
 void BoardReceiver::tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql) {
     tone_=tone;tone_level_=level;narrow_=narrow;sql_=sql;
@@ -164,10 +164,10 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         if(rx_chip_==0 && !narrow_)bus.write(rx_chip_,0x30,fm_start_word(false));
 #endif
         bus.write(rx_chip_,0x30,0xbff1);
-        restart_=false;next_sample_=now+30u;
+        restart_=false;next_sample_=now+RxSettleMs;
     }
     if(int32_t(now-next_sample_)>=0) {
-        next_sample_=now+15u;
+        next_sample_=now+RxSampleMs;
         uint16_t rssi=0;
         bus.read(rx_chip_,0x0c,status_.status);
         bus.read(rx_chip_,0x67,rssi);
@@ -183,9 +183,9 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         const auto threshold=calibrated?sql_calibration_->thresholds(status_.frequency,sql_):fallback_sql(sql_);
         sql_open_=sql_==0 || status_.rssi>=(sql_open_?threshold.close:threshold.open);
         if(sql_open_ && tone_ready_ && rx_tone_detected(tone_,status_.status)) {
-            if(tone_matches_<3)++tone_matches_;
+            if(tone_matches_<RxToneSamples)++tone_matches_;
         } else tone_matches_=0;
-        status_.receiving=(sql_==0?carrier_:sql_open_) && (tone_.kind==ToneKind::Off || tone_matches_>=3);
+        status_.receiving=(sql_==0?carrier_:sql_open_) && (tone_.kind==ToneKind::Off || tone_matches_>=RxToneSamples);
 #else
         status_.receiving=carrier_;
 #endif
@@ -198,7 +198,7 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
     audio(!ptt && (status_.receiving || ((monitor || packet_audio || (sql_==0 && tone_.kind==ToneKind::Off)) && status_.sampled)),!packet_audio);
 }
 bool BoardReceiver::squelch_open(uint32_t now) {
-    return !restart_ && status_.receiving && int32_t(now-next_sample_)<15;
+    return !restart_ && status_.receiving && int32_t(now-next_sample_)<int32_t(RxSampleMs);
 }
 
 bool BoardUhfTx::acquire() {

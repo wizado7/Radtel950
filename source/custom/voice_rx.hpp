@@ -25,6 +25,12 @@ inline constexpr RegisterValue rx_finish[]={
 // OEM 0.29 0x0801D51C / 0x0801D548 test register 0x0C bit 1.
 constexpr bool hardware_sql_open(uint16_t status) {return (status&2u)!=0;}
 
+// RX timing starts after the frequency registers are written.
+inline constexpr uint32_t RxRestartMs=1;
+inline constexpr uint32_t RxSettleMs=30;
+inline constexpr uint32_t RxSampleMs=15;
+inline constexpr unsigned RxToneSamples=3;
+
 struct VoiceStatus {
     bool ready=false,fault=false,receiving=false,sampled=false;
     uint8_t slot=0;
