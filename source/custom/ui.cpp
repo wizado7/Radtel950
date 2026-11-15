@@ -202,8 +202,10 @@ void radio_options(const Application &a,bool force) {
   if(force) {
    label(10,53,radio_setting_label(setting),accent,bg);
    label(10,266,"* CURRENT SETTING",muted,bg);
-   label(10,282,"RF OFF",muted,bg);
   }
+  const char *hint=a.tone_searching()?"SCANNING / VM STOP":a.feedback()[0]?a.feedback():
+      a.tone_search_available()?"VM: SCAN RX TONE":"RF OFF";
+  if(changed(8,hint,force)){rect(8,280,224,14,bg);label(10,282,hint,muted,bg);}
   for(unsigned row=0;row<5 && first+row<radio_option_count(setting);++row) {
    const unsigned index=first+row,y=76+row*36;
    char key[16],value[8];num(key,index);

@@ -4,6 +4,7 @@
 #include "locale.hpp"
 #include "gps_navigation.hpp"
 #include "radio_settings.hpp"
+#include "tone_search.hpp"
 #include "power_calibration.hpp"
 #include "weather_rx.hpp"
 #include "fm_receiver.hpp"
@@ -160,6 +161,12 @@ public:
     bool fm_seek() const {return fm_seek_;}
     void fm_seek_result(uint16_t found);
     unsigned radio_draft() const {return radio_draft_;}
+    bool tone_search_available() const;
+    bool tone_searching() const {return page_==Page::RadioOptions && tone_search_.active();}
+    Tone tone_candidate() const {return tone_search_.candidate();}
+    bool take_tone_tune(uint32_t now) {return tone_search_.take_tune(now);}
+    void poll_tone_search(uint32_t now,bool sampled,bool matched,bool fault);
+    void tone_search_ptt();
     unsigned editor_value() const { return editor_value_; }
     unsigned watch_slots_draft() const {return watch_slots_draft_;}
     unsigned watch_slots_selection() const;
@@ -248,6 +255,7 @@ private:
     RadioProfile vfo_profiles_[3]{};
     RadioSetting radio_setting_=RadioSetting::Squelch;
     unsigned radio_draft_=0;
+    ToneSearch tone_search_{};
     Language language_=Language::English,language_draft_=Language::English;
     uint8_t vfo_step_[3]={4,4,4},vfo_step_draft_=4;
     bool altitude_feet_=false,altitude_draft_feet_=false;

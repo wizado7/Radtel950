@@ -96,6 +96,16 @@ u.emu_start(symbols['am_seek_tests']|1,0x080ff000,count=3000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
 print('ARM AM seek: all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['broadcast_player_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'broadcast player failed at C++ line {result}'
+print('ARM broadcast player: radio controls, FM snapshot migration and shortwave receiver PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['tone_search_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'tone search failed at C++ line {result}'
+print('ARM RX tone search: all DCS candidates, fresh samples, timeout, explicit save, snapshot, cancel and PTT PASS')
 for suite,marker in [('broadcast_bank_tests','ARM broadcast banks:'),('about_page_tests','ARM about page:')]:
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=4000000)

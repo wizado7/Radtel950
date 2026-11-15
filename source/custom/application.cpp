@@ -2,6 +2,7 @@
 #include "application.hpp"
 #include "fm_receiver.hpp"
 #include "voice_calibration.hpp"
+#include "voice_tx_values.hpp"
 namespace rt950 {
 namespace {
 constexpr char callsign_chars[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -106,7 +107,7 @@ void Application::tick(uint32_t now) {
  default:break;
  }
  const uint32_t timeout=uint32_t(menu_timeouts[menu_timeout_])*1000u;
- if(menu_page && timeout && uint32_t(now-last_activity_)>=timeout) {
+ if(menu_page && !tone_searching() && timeout && uint32_t(now-last_activity_)>=timeout) {
      page_=Page::Radio;parent_=Page::Settings;menu_group_=MenuGroup::Root;
      power_test_=false;editor_value_=0;editor_digits_=0;notify("");invalid_=false;
      // Start a fresh inactivity period after leaving an unattended editor.
@@ -248,6 +249,31 @@ const RadioProfile &Application::radio_profile(unsigned slot) const {
 RadioProfile &Application::editable_radio_profile() {
     const auto &v=config_.vfo[config_.active];
     return v.channel_mode?memories_[v.memory_channel].radio:vfo_profiles_[config_.active];
+}
+bool Application::tone_search_available() const {
+#ifdef RT950_MAIN_TX
+    const auto hz=config_.vfo[config_.active].rx_hz;
+    return (radio_setting_==RadioSetting::RxCtcss || radio_setting_==RadioSetting::RxDcs) &&
+        (voice::vhf_tx_frequency(hz) || voice::uhf_tx_frequency(hz)) && hz%10==0;
+#else
+    return false;
+#endif
+}
+void Application::poll_tone_search(uint32_t now,bool sampled,bool matched,bool fault) {
+    if(!tone_searching())return;
+    const auto result=tone_search_.poll(now,sampled,matched,fault);
+    if(result==ToneSearch::Result::Pending)return;
+    if(result==ToneSearch::Result::Found)radio_draft_=tone_candidate().index;
+    tone_search_.cancel();
+    activity(now);
+    notify(result==ToneSearch::Result::Found?"TONE FOUND / OK SAVE":
+        result==ToneSearch::Result::Exhausted?"NO TONE FOUND":"TONE SCAN UNAVAILABLE");
+}
+void Application::tone_search_ptt() {
+    if(!tone_searching())return;
+    tone_search_.cancel();
+    page_=Page::Radio;
+    notify("");
 }
 unsigned Application::watch_slots_selection() const {
     if(config_.watch_mode==RT_WATCH_SINGLE)return 0;
@@ -471,6 +497,12 @@ void Application::key(Key k) {
         return;
     }
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
+    if(tone_searching()) {
+        if(k==Key::Mode || k==Key::Back || k==Key::Menu) {
+            tone_search_.cancel();notify("");
+        }
+        return;
+    }
     if(k>=Key::Pf1Short && k<=Key::Pf2Hold) {
         binding_selection_=uint8_t(unsigned(k)-unsigned(Key::Pf1Short));
         binding_draft_=uint8_t(key_actions_[binding_selection_]);page_=Page::KeyBinding;notify("");return;
@@ -947,6 +979,10 @@ void Application::key(Key k) {
         return;
     }
     if(page_==Page::RadioOptions && k!=Key::Back && k!=Key::Menu) {
+        if(k==Key::Mode && tone_search_available()) {
+            tone_search_.begin(radio_setting_==RadioSetting::RxCtcss?ToneKind::Ctcss:ToneKind::Dcs);
+            notify("");return;
+        }
         const unsigned count=radio_option_count(radio_setting_);
         if(k==Key::Up || k==Key::Down)radio_draft_=(radio_draft_+(k==Key::Down?1:count-1))%count;
         if(radio_is_tone(radio_setting_) && (k==Key::Left || k==Key::Right))

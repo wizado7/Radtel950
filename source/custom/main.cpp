@@ -176,8 +176,10 @@ extern "C" int main(void) {
         if(!app.side_ptt_enabled())input.ptt_mask&=3u;
         if(input.ptt_mask) {
 #ifdef RT950_MAIN_TX
-            if(input.ptt_mask&uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u)))
+            if(input.ptt_mask&uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u))) {
                 app.weather_ptt();
+                app.tone_search_ptt();
+            }
 #endif
             app.backup_ptt();settings_export.cancel();settings_import.cancel();
             app.activity(now);
@@ -478,11 +480,12 @@ extern "C" int main(void) {
             scan_sample,scan_open,!scanning);
         app.scan_target(scanned,channel_scan.frequency());
         const bool scan_has_target=scanning && channel_scan.frequency()!=0;
+        const bool tone_search=app.tone_searching() && !tx_owns_radio;
 #endif
         if(voice_enabled && !tx_owns_radio) {
             voice_rx.enable(true);
 #ifdef RT950_MAIN_TX
-            const bool voice_target=!weather_open && !scan_has_target && !aprs_listen;
+            const bool voice_target=!weather_open && !scan_has_target && !aprs_listen && !tone_search;
             const auto tone_level=[&](Tone tone) {
                 if(tone.kind==ToneKind::Ctcss)return factory.ctcss_level;
                 if(tone.kind==ToneKind::Dcs)return factory.dcs_level;
@@ -501,6 +504,16 @@ extern "C" int main(void) {
                         now,rx_profile.narrow,rx_profile.squelch);
                     else voice_rx.stop();
                 });
+            bool tone_scan_fault=false;
+            if(tone_search) {
+                const auto tone=app.tone_candidate();
+                const auto level=tone_level(tone);
+                const auto &rx_profile=app.active_radio_profile();
+                tone_scan_fault=!level || level>127;
+                if(app.take_tone_tune(now) && !tone_scan_fault)
+                    voice_rx.tune_profile(config.vfo[config.active].rx_hz,tone,level,now,
+                        rx_profile.narrow,rx_profile.squelch);
+            }
             if(scan_has_target) {
                 const auto *memory=app.memory(scanned);
                 const auto &rx_profile=memory?memory->radio:app.scan_vfo_profile();
@@ -519,14 +532,16 @@ extern "C" int main(void) {
             using WeatherAudio=voice::BoardReceiver::WeatherAudio;
             const auto wx_audio=!weather_open?WeatherAudio::Off:
                 app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;
-            voice_rx.poll(now,ptt_down,monitor,aprs_listen,wx_audio);
+            voice_rx.poll(now,ptt_down || tone_search,monitor,aprs_listen,wx_audio);
 #else
             voice_watch.poll(voice_rx,app.config(),now,!voice_rx.status().fault,input.ptt_mask!=0 || monitor);
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
 #endif
 #ifdef RT950_MAIN_TX
             const auto &rx=voice_rx.status();
-            if(aprs_listen) {
+            if(tone_search) {
+                app.poll_tone_search(now,rx.sampled,voice_rx.squelch_open(now),rx.fault || tone_scan_fault);
+            } else if(aprs_listen) {
                 struct ReceiveContext {
                     InputStatus &status;
                     aprs::BleExport &ble;
@@ -582,7 +597,7 @@ extern "C" int main(void) {
         input.voice=voice_rx.status();
 #ifdef RT950_MAIN_TX
         // A packet carrier is not activity on the voice slot shown on the home screen.
-        if(aprs_listen)input.voice.receiving=false;
+        if(aprs_listen || tone_search)input.voice.receiving=false;
 #endif
         input.voice.slot=voice_watch.slot();
 #ifdef RT950_MAIN_TX
@@ -595,7 +610,7 @@ extern "C" int main(void) {
         if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
-        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && input.voice.ready;
+        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && input.voice.ready;
         const bool watching=voice_listening && !monitor && !scan_has_target && app.enabled(Option::Watch);
         input.power.workload.observe(now,
             (voice_listening && !watching && !scan_has_target?1u<<Load::SingleRx:0u) |

@@ -664,6 +664,23 @@ assert not voice.odr[GPIO[1]]&0x100
 print('ARM Watch RF profile: combined tune, immediate SQL mute and fresh sample at the higher threshold PASS')
 
 voice=VoiceMachine()
+voice.reply_words=iter((0xa800,)+(0x4000,170)*3+(0x8000,170)*3)
+voice.function('board_init')
+voice_call('6enable',1)
+for now in range(46):voice_call('4poll',now,0)
+voice.u.mem_write(0x20017b00,struct.pack('<III',100,1,3))
+voice_call('12tune_profile',145500000,2|(106<<8),32) # D023I
+voice.u.mem_write(0x20017b00,bytes(12))
+for now in (101,131,146,161,176,191):
+    voice_call('4poll',now,0)
+    assert not voice.odr[GPIO[1]]&0x100
+voice_call('4poll',206,1) # Scan takes the third match with audio muted.
+assert not voice.odr[GPIO[1]]&0x100
+voice_call('4poll',207,0)
+assert voice.odr[GPIO[1]]&0x100
+print('ARM RX tone search RF: wrong DCS polarity and two matches rejected, third match accepted while muted PASS')
+
+voice=VoiceMachine()
 voice.reply_words=iter((0xa800,2,1,0,511,2,1))
 voice.function('board_init');voice.route_clear.clear()
 voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
@@ -1307,3 +1324,19 @@ assert 'Right: cancel seek' in menu_ui.texts
 menu_key('Up');menu_draw()
 assert 'Right: seek' in menu_ui.texts
 print('ARM AM seek UI: start, cancel and manual tuning in both languages PASS')
+
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back')
+    menu_frequency(145500000)
+    menu_key('Menu');menu_key('Ok')
+    for _ in range(8):menu_key('Down')
+    menu_key('Ok');menu_draw()
+    hint='VM: ПОИСК СУБТОНА' if russian else 'VM: SCAN RX TONE'
+    assert hint in menu_ui.texts
+    menu_key('Mode');menu_draw()
+    assert ('ПОИСК / VM СТОП' if russian else 'SCANNING / VM STOP') in menu_ui.texts
+    menu_key('Back');menu_draw()
+    assert hint in menu_ui.texts
+print('ARM RX tone search UI: start and cancel in both languages PASS')

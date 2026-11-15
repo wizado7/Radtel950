@@ -408,49 +408,6 @@ extern "C" int regression_tests() {
  CHECK(!schedule.poll(56201,true,true,5000));
  CHECK(schedule.windows()==4 && schedule.cancelled()==2);
  using namespace rt950::storage;
- Application fm_app;
- dispatch_key(fm_app,1);
- CHECK(fm_app.page()==Page::FmProbe && fm_app.fm_audio());
- const unsigned fm_digits[]={9,9,5,0};
- for(unsigned digit:fm_digits)fm_app.digit(digit);
- fm_app.key(Key::Ok);
- CHECK(fm_app.fm_request()==9950);
- fm_app.key(Key::NextSlot);
- fm_app.key(Key::Up);
- CHECK(fm_app.fm_request()==9960);
- fm_app.key(Key::Left);
- CHECK(fm_app.fm_request()==9950);
- fm_app.key(Key::Right);
- CHECK(fm_app.fm_seek());
- fm_app.fm_seek_result(10350);
- CHECK(!fm_app.fm_seek() && fm_app.fm_request()==10350);
- dispatch_key(fm_app,1);
- CHECK(fm_app.page()==Page::Radio);
- fm_app.key(Key::FmProbe);
- CHECK(fm_app.page()==Page::FmProbe && !fm_app.fm_audio());
- auto &fm_snapshot=regression_fixture;
- const size_t fm_size=fm_app.save_snapshot(fm_snapshot,sizeof fm_snapshot);
- CHECK(fm_size>4);
- Application old_fm;
- CHECK(old_fm.restore_snapshot(fm_snapshot,fm_size-464));
- old_fm.key(Key::FmRadio);old_fm.key(Key::Left);
- CHECK(old_fm.fm_request()==10030);
- CHECK(old_fm.restore_snapshot(fm_snapshot,fm_size));
- old_fm.key(Key::FmRadio);old_fm.key(Key::Left);
- CHECK(old_fm.fm_request()==9950);
- Application sw;
- sw.key(Key::SwAm);
- CHECK(sw.page()==Page::FmProbe && sw.sw_am() && sw.fm_request()==7100);
- sw.key(Key::Up);CHECK(sw.fm_request()==7105);
- sw.key(Key::Back);sw.key(Key::FmRadio);
- CHECK(!sw.sw_am() && sw.fm_request()==10030);
- MockAm am_bus;
- fm::Probe am_probe;
- am_probe.begin(0,fm::Band::Shortwave);
- for(unsigned now=0;now<950;++now)am_probe.poll(am_bus,[](bool){},now);
- fm::Signal am_signal;
- CHECK(am_probe.frequency()==7100 && am_probe.part()==32 && am_probe.signal(950,am_signal));
- CHECK(am_signal.rssi==42 && am_signal.snr==18 && !am_signal.stereo);
  // Fixed AX.25 position vector with little-endian on-air FCS 0x5575.
  const uint8_t aprs_packet[]={0x82,0xa0,0xa4,0xa6,0x40,0x40,0x60,0x9c,0x60,0x86,0x82,0x98,
    0x98,0x61,3,0xf0,'!','5','5','4','5','.','0','0','N','/','0','3','7','3','7','.','0','0',
@@ -1181,7 +1138,7 @@ extern "C" int regression_tests() {
  CHECK(zones.config().vfo[0].rx_hz==446006250 && !zones.config().vfo[0].tx_hz);
  zones.key(Key::SelectZone);zones.key(Key::Up);zones.key(Key::Ok);
  CHECK(zones.active_zone()==0 && zones.channel_visible(1));
- auto &snapshot=fm_snapshot;
+ auto &snapshot=regression_fixture;
  Application saved;
  saved.set_frequency(435125000);
  saved.key(Key::RenameChannel);saved.key(Key::Ok);saved.digit(7);saved.key(Key::Ok);
@@ -2292,6 +2249,102 @@ extern "C" int broadcast_bank_tests() {
  app.key(Key::AmPresets);CHECK(app.broadcast_frequency(0)==2300 && !app.broadcast_confirm());
  app.key(Key::Back);app.key(Key::FmRadio);app.key(Key::Menu);app.key(Key::Back);
  CHECK(app.page()==Page::FmProbe && !app.sw_am());
+ return 0;
+}
+
+extern "C" int broadcast_player_tests() {
+ Application fm_app;
+ dispatch_key(fm_app,1);
+ CHECK(fm_app.page()==Page::FmProbe && fm_app.fm_audio());
+ const unsigned fm_digits[]={9,9,5,0};
+ for(unsigned digit:fm_digits)fm_app.digit(digit);
+ fm_app.key(Key::Ok);
+ CHECK(fm_app.fm_request()==9950);
+ fm_app.key(Key::NextSlot);
+ fm_app.key(Key::Up);
+ CHECK(fm_app.fm_request()==9960);
+ fm_app.key(Key::Left);
+ CHECK(fm_app.fm_request()==9950);
+ fm_app.key(Key::Right);
+ CHECK(fm_app.fm_seek());
+ fm_app.fm_seek_result(10350);
+ CHECK(!fm_app.fm_seek() && fm_app.fm_request()==10350);
+ dispatch_key(fm_app,1);
+ CHECK(fm_app.page()==Page::Radio);
+ fm_app.key(Key::FmProbe);
+ CHECK(fm_app.page()==Page::FmProbe && !fm_app.fm_audio());
+ auto &fm_snapshot=regression_fixture;
+ const size_t fm_size=fm_app.save_snapshot(fm_snapshot,sizeof fm_snapshot);
+ CHECK(fm_size>4);
+ Application old_fm;
+ CHECK(old_fm.restore_snapshot(fm_snapshot,fm_size-464));
+ old_fm.key(Key::FmRadio);old_fm.key(Key::Left);
+ CHECK(old_fm.fm_request()==10030);
+ CHECK(old_fm.restore_snapshot(fm_snapshot,fm_size));
+ old_fm.key(Key::FmRadio);old_fm.key(Key::Left);
+ CHECK(old_fm.fm_request()==9950);
+ Application sw;
+ sw.key(Key::SwAm);
+ CHECK(sw.page()==Page::FmProbe && sw.sw_am() && sw.fm_request()==7100);
+ sw.key(Key::Up);CHECK(sw.fm_request()==7105);
+ sw.key(Key::Back);sw.key(Key::FmRadio);
+ CHECK(!sw.sw_am() && sw.fm_request()==10030);
+ MockAm am_bus;
+ fm::Probe am_probe;
+ am_probe.begin(0,fm::Band::Shortwave);
+ for(unsigned now=0;now<950;++now)am_probe.poll(am_bus,[](bool){},now);
+ fm::Signal am_signal;
+ CHECK(am_probe.frequency()==7100 && am_probe.part()==32 && am_probe.signal(950,am_signal));
+ CHECK(am_signal.rssi==42 && am_signal.snr==18 && !am_signal.stereo);
+ return 0;
+}
+
+extern "C" int tone_search_tests() {
+ ToneSearch search;
+ search.begin(ToneKind::Dcs);
+ uint32_t now=0xffffff00u;
+ for(unsigned i=1;i<=210;++i) {
+     CHECK(search.candidate().index==i);
+     CHECK(search.poll(now,true,true,false)==ToneSearch::Result::Pending); // Old candidate.
+     CHECK(search.take_tune(now) && !search.take_tune(now));
+     CHECK(search.poll(now+399,true,false,false)==ToneSearch::Result::Pending);
+     CHECK(search.poll(now+400,true,false,false)==
+           (i==210?ToneSearch::Result::Exhausted:ToneSearch::Result::Pending));
+     now+=400;
+ }
+ search.begin(ToneKind::Ctcss);
+ CHECK(search.take_tune(now));
+ CHECK(search.poll(now+149,false,true,false)==ToneSearch::Result::Pending);
+ CHECK(search.poll(now+150,false,true,false)==ToneSearch::Result::Unavailable);
+ CHECK(search.poll(now,true,true,true)==ToneSearch::Result::Unavailable);
+
+ Application app(false);
+ CHECK(app.set_frequency(145500000));
+ app.key(Key::Menu);app.key(Key::Ok);
+ for(unsigned i=0;i<8;++i)app.key(Key::Down);
+ app.key(Key::Ok);
+ CHECK(app.radio_setting()==RadioSetting::RxCtcss && app.tone_search_available());
+ dispatch_key(app,2);
+ CHECK(app.tone_searching() && app.take_tone_tune(0));
+ app.tick(31000);
+ CHECK(app.page()==Page::RadioOptions);
+ app.poll_tone_search(31000,true,false,false);
+ CHECK(app.tone_candidate().index==2 && app.take_tone_tune(31000));
+ app.poll_tone_search(31076,true,true,false);
+ CHECK(!app.tone_searching() && app.radio_draft()==2);
+ CHECK(app.active_radio_profile().rx_tone.kind==ToneKind::Off);
+ app.key(Key::Ok);
+ CHECK(app.active_radio_profile().rx_tone.kind==ToneKind::Ctcss &&
+       app.active_radio_profile().rx_tone.index==2 && app.active_radio_profile().tx_tone.kind==ToneKind::Off);
+ uint8_t snapshot[Application::SnapshotCapacity];
+ const auto size=app.save_snapshot(snapshot,sizeof snapshot);
+ Application restored(false);
+ CHECK(size && restored.restore_snapshot(snapshot,size) && restored.active_radio_profile().rx_tone.index==2);
+ app.key(Key::Ok);app.key(Key::Mode);app.key(Key::Back);
+ CHECK(!app.tone_searching() && app.page()==Page::RadioOptions && app.radio_draft()==2);
+ app.key(Key::Mode);app.tone_search_ptt();
+ CHECK(!app.tone_searching() && app.page()==Page::Radio && app.voice_tx_page());
+ CHECK(app.active_radio_profile().rx_tone.index==2);
  return 0;
 }
 
