@@ -1395,3 +1395,16 @@ for russian in (False,True):
     menu_key('Back');menu_key('Erase');menu_key('Ok');menu_draw()
     assert ('СООБЩЕНИЯ APRS ОЧИЩЕНЫ' if russian else 'APRS MESSAGES CLEARED') in menu_ui.texts
 print('ARM spectrum, beacon source and APRS clear UI: bilingual labels, cursor and confirmation PASS')
+
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back')
+    menu_key('Waypoint');menu_key('Right');menu_draw()
+    assert ('Ввод координат GPS' if russian else 'Enter GPS coordinates') in menu_ui.texts
+    assert 'N 00.000000' in menu_ui.texts and 'E 000.000000' in menu_ui.texts
+    menu_key('NextSlot');menu_key('Down');menu_key('NextSlot');menu_draw()
+    assert 'S 00.000000' in menu_ui.texts and 'W 000.000000' in menu_ui.texts
+    menu_key('Back');menu_key('Back');menu_key('Pf1Hold');menu_key('Up');menu_draw()
+    assert ('Обзор спектра RX' if russian else 'RX spectrum') in menu_ui.texts
+print('ARM manual GPS and spectrum PF UI: coordinate fields, hemispheres and binding in both languages PASS')

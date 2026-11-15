@@ -2870,7 +2870,7 @@ extern "C" unsigned weather_tests() {
  wx.poll(900,true,true,true);CHECK(wx.scanning() && !wx.alerted() && wx.channel()==1);
  app.weather_ptt();CHECK(app.page()==Page::Radio && app.voice_tx_page() && same_slots());
 
- app.key(Key::Pf1Hold);app.key(Key::Up);app.key(Key::Ok);app.key(Key::Back);
+ app.key(Key::Pf1Hold);app.key(Key::Up);app.key(Key::Up);app.key(Key::Ok);app.key(Key::Back);
  if(app.page()==Page::Settings)app.key(Key::Back);
  CHECK(app.page()==Page::Radio && app.key_action(1)==KeyAction::Weather);
  app.user_key(0,true);CHECK(app.page()==Page::Weather && !wx.scanning());
@@ -3230,6 +3230,62 @@ extern "C" int spectrum_tests() {
  app.key(Key::Back);CHECK(app.page()==Page::Radio);
  CHECK(app.set_frequency(446081250));
  app.key(Key::Spectrum);CHECK(sweep.count()==21 && sweep.frequency(10)==446081250);
+ app.key(Key::NextSlot);CHECK(app.page()==Page::Spectrum);
+ for(unsigned i=0;i<11;++i) {
+     const auto hz=sweep.take_tune(0);CHECK(hz);
+     sweep.observe(31,hz,true,120);
+ }
+ app.key(Key::NextSlot);
+ CHECK(app.page()==Page::Radio && app.config().vfo[0].rx_hz==446081250 &&
+       app.config().vfo[0].tx_hz==0 && app.active_radio_profile().tx_inhibit);
+ return 0;
+}
+
+extern "C" int manual_waypoint_tests() {
+ Application app(false);nav_reset();
+ CHECK(app.set_option(Option::Gps,false));
+ app.key(Key::Waypoint);app.key(Key::Right);
+ CHECK(app.page()==Page::EditWaypoint && !app.voice_tx_page());
+ app.key(Key::NextSlot);
+ for(char digit:"12345678098765432")if(digit)app.digit(unsigned(digit-'0'));
+ app.key(Key::Ok);
+ CHECK(app.page()==Page::Waypoint && app.waypoint().valid &&
+       app.waypoint().latitude==-12345678 && app.waypoint().longitude==98765432);
+ app.key(Key::Right);app.key(Key::Erase);
+ for(char digit:"90000001")if(digit)app.digit(unsigned(digit-'0'));
+ app.key(Key::Ok);CHECK(app.page()==Page::EditWaypoint && app.waypoint().latitude==-12345678);
+ app.key(Key::Back);CHECK(app.page()==Page::Waypoint && app.waypoint().longitude==98765432);
+ uint8_t data[Application::SnapshotCapacity];
+ const size_t size=app.save_compact_snapshot(data,sizeof data);
+ Application restored(false);CHECK(size && restored.restore_snapshot(data,size));
+ CHECK(restored.waypoint().valid && restored.waypoint().latitude==-12345678 &&
+       restored.waypoint().longitude==98765432);
+ aprs::FrameTransmitter tx;
+ CHECK(aprs::encode_beacon(tx,"N0CALL",0,restored.waypoint(),'>'));
+ restored.key(Key::BeaconIdentity);restored.key(Key::Up);restored.key(Key::Ok);
+ CHECK(restored.set_aprs_frequency(144800000));
+ restored.key(Key::BeaconSource);restored.key(Key::Down);restored.key(Key::Ok);
+ CHECK(restored.beacon_saved_point() && restored.set_option(Option::Beacon,true));
+ restored.key(Key::Waypoint);restored.key(Key::Right);restored.digit(2);restored.key(Key::Ok);
+ CHECK(restored.waypoint().latitude==-22345678 && !restored.beacon_saved_point() &&
+       !restored.enabled(Option::Beacon));
+ return 0;
+}
+
+extern "C" int spectrum_binding_tests() {
+ Application app(false);
+ CHECK(app.set_frequency(145500000));
+ app.key(Key::Pf1Hold);app.key(Key::Up);app.key(Key::Ok);
+ for(unsigned i=0;i<4 && app.page()!=Page::Radio;++i)app.key(Key::Back);
+ CHECK(app.key_action(1)==KeyAction::Spectrum && app.page()==Page::Radio);
+ dispatch_key(app,128);CHECK(app.page()==Page::Spectrum);
+ dispatch_key(app,128);CHECK(app.page()==Page::Radio);
+ CHECK(app.set_option(Option::SidePtt,true));
+ dispatch_key(app,128);CHECK(app.page()==Page::Radio);
+ uint8_t data[Application::SnapshotCapacity];
+ const size_t size=app.save_portable_snapshot(data,sizeof data);
+ Application restored(false);CHECK(size && restored.restore_portable_snapshot(data,size,2));
+ CHECK(restored.key_action(1)==KeyAction::Spectrum);
  return 0;
 }
 

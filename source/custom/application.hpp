@@ -15,8 +15,8 @@ extern "C" {
 
 namespace rt950 {
 enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource };
-enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages };
-enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Count };
+enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint };
+enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Spectrum, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
 enum class Option : uint8_t { Watch, Gps, AprsRx, Beacon, Ble, Export, SidePtt, SecondPtt, Tail, Count };
 enum class MenuGroup : uint8_t { Root, Radio, Channels, Gps, Aprs, Bluetooth, Display, System, Diagnostics, AprsRx, Beacon, Repeater, UserKeys, Count };
@@ -109,7 +109,7 @@ public:
     KeyAction key_action(unsigned which) const {return which<4?key_actions_[which]:KeyAction::None;}
     unsigned binding_selection() const {return binding_selection_;}
     unsigned binding_draft() const {return binding_draft_;}
-    static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA"};
+    static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA","RX spectrum"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
     static constexpr unsigned PortableSchema=2,PortableSize=8008;
@@ -124,6 +124,10 @@ public:
     const GeoPoint &waypoint() const {return waypoint_;}
     bool waypoint_clear() const {return waypoint_clear_;}
     bool waypoint_confirm() const {return waypoint_confirm_;}
+    unsigned waypoint_edit_cursor() const {return waypoint_edit_cursor_;}
+    uint32_t waypoint_edit_value(unsigned row) const {return waypoint_edit_value_[row];}
+    bool waypoint_edit_negative(unsigned row) const {return waypoint_edit_negative_[row];}
+    static constexpr unsigned WaypointLatitudeDigits=8,WaypointDigits=17;
     bool decimal_coordinates() const {return decimal_coordinates_;}
     bool decimal_draft() const {return coordinate_draft_==1;}
     bool dms_coordinates() const {return dms_coordinates_;}
@@ -308,6 +312,9 @@ private:
     DistanceUnit distance_unit_=DistanceUnit::Kilometres,distance_draft_=DistanceUnit::Kilometres;
     GeoPoint waypoint_{};
     bool waypoint_clear_=false,waypoint_confirm_=false;
+    uint32_t waypoint_edit_value_[2]{};
+    bool waypoint_edit_negative_[2]{};
+    uint8_t waypoint_edit_cursor_=0;
     KeyAction key_actions_[4]={KeyAction::None,KeyAction::None,KeyAction::Fm,KeyAction::None};
     uint8_t binding_selection_=0,binding_draft_=0;
     bool backup_request_=false;
@@ -359,6 +366,8 @@ private:
     void reconcile_channels();
     void select_channel_for_list();
     void open_name_editor(const char *name);
+    void change_waypoint(GeoPoint point);
+    void write_waypoint_digit(unsigned digit);
     void step(int direction);
     void cancel_entry();
     template<class Archive,class App> static void snapshot_fields(Archive &,App &);

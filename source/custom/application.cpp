@@ -69,7 +69,8 @@ void Application::user_key(unsigned which,bool held) {
     (page_==Page::VfoScan && action==KeyAction::ScanVfo)) {
   key(Key::Back);return;
  }
- if(page_==Page::Weather && action==KeyAction::Weather) {
+ if((page_==Page::Weather && action==KeyAction::Weather) ||
+    (page_==Page::Spectrum && action==KeyAction::Spectrum)) {
   key(Key::Back);return;
  }
  if(page_!=Page::Radio && page_!=Page::FmProbe) {
@@ -91,6 +92,7 @@ void Application::user_key(unsigned which,bool held) {
  case KeyAction::ScanChannels:key(Key::ChannelScan);break;
  case KeyAction::ScanVfo:key(Key::VfoScan);break;
  case KeyAction::Weather:key(Key::Weather);break;
+ case KeyAction::Spectrum:key(Key::Spectrum);break;
  default:break;
  }
 }
@@ -340,10 +342,25 @@ int Application::recent_voice_slot() const {
        config_.vfo[last_voice_slot_].rx_hz!=last_voice_hz_)return -1;
     return last_voice_slot_;
 }
+void Application::change_waypoint(GeoPoint point) {
+    waypoint_=point;
+    if(beacon_saved_point_){beacon_saved_point_=false;config_.beacon_on=false;}
+}
+void Application::write_waypoint_digit(unsigned digit) {
+    static constexpr uint32_t powers[]={1,10,100,1000,10000,100000,1000000,10000000,100000000};
+    const unsigned row=waypoint_edit_cursor_>=WaypointLatitudeDigits;
+    const unsigned end=row?WaypointDigits:WaypointLatitudeDigits;
+    const auto scale=powers[end-1u-waypoint_edit_cursor_];
+    auto &value=waypoint_edit_value_[row];
+    value=value-value/scale%10u*scale+digit*scale;
+    if(waypoint_edit_cursor_+1u<WaypointDigits)++waypoint_edit_cursor_;
+    notify("");
+}
 void Application::digit(unsigned d) {
     last_activity_=now_;
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
     if(d>9)return;
+    if(page_==Page::EditWaypoint) {write_waypoint_digit(d);return;}
     if(page_==Page::Radio && config_.vfo[config_.active].channel_mode)key(Key::Channels);
     if(page_==Page::Channels || page_==Page::StoreChannel) {
         if(editor_digits_==2){editor_digits_=0;editor_value_=0;}
@@ -595,6 +612,26 @@ void Application::key(Key k) {
         if(k==Key::Ok){distance_unit_=distance_draft_;page_=Page::Settings;notify("SETTING APPLIED");}
         return;
     }
+    if(page_==Page::EditWaypoint) {
+        const unsigned row=waypoint_edit_cursor_>=WaypointLatitudeDigits;
+        switch(k) {
+        case Key::Left:if(waypoint_edit_cursor_)--waypoint_edit_cursor_;break;
+        case Key::Right:if(waypoint_edit_cursor_+1u<WaypointDigits)++waypoint_edit_cursor_;break;
+        case Key::Up:waypoint_edit_cursor_=0;break;
+        case Key::Down:waypoint_edit_cursor_=WaypointLatitudeDigits;break;
+        case Key::NextSlot:waypoint_edit_negative_[row]=!waypoint_edit_negative_[row];break;
+        case Key::Erase:waypoint_edit_value_[row]=0;break;
+        case Key::Back:case Key::Menu:page_=Page::Waypoint;break;
+        case Key::Ok: {
+            const GeoPoint point{int32_t(waypoint_edit_value_[0])*(waypoint_edit_negative_[0]?-1:1),
+                int32_t(waypoint_edit_value_[1])*(waypoint_edit_negative_[1]?-1:1),true};
+            if(!geo_valid(point)){notify("COORDINATES OUT OF RANGE");return;}
+            change_waypoint(point);page_=Page::Waypoint;notify("GPS POINT SAVED");return;
+        }
+        default:return;
+        }
+        notify("");return;
+    }
     if(k==Key::Waypoint) {
         page_=Page::Waypoint;waypoint_clear_=false;waypoint_confirm_=false;notify("");return;
     }
@@ -604,6 +641,14 @@ void Application::key(Key k) {
             notify("");return;
         }
         if(!waypoint_confirm_ && (k==Key::Up || k==Key::Down))waypoint_clear_=!waypoint_clear_;
+        if(k==Key::Right && !waypoint_confirm_) {
+            const int32_t coordinates[]={waypoint_.latitude,waypoint_.longitude};
+            for(unsigned i=0;i<2;++i) {
+                waypoint_edit_negative_[i]=coordinates[i]<0;
+                waypoint_edit_value_[i]=uint32_t(coordinates[i]<0?-coordinates[i]:coordinates[i]);
+            }
+            waypoint_edit_cursor_=0;page_=Page::EditWaypoint;notify("");return;
+        }
         if(k==Key::Ok) {
             if(waypoint_clear_ && !waypoint_.valid){notify("NO SAVED GPS POINT");return;}
             GeoPoint current{};
@@ -611,8 +656,7 @@ void Application::key(Key k) {
                 waypoint_confirm_=false;notify("FRESH GPS FIX REQUIRED");return;
             }
             if(!waypoint_confirm_){waypoint_confirm_=true;notify("");return;}
-            waypoint_=waypoint_clear_?GeoPoint{}:current;waypoint_confirm_=false;
-            if(beacon_saved_point_){beacon_saved_point_=false;config_.beacon_on=false;}
+            change_waypoint(waypoint_clear_?GeoPoint{}:current);waypoint_confirm_=false;
             notify(waypoint_clear_?"GPS POINT CLEARED":"GPS POINT SAVED");
         }
         return;
@@ -1122,7 +1166,22 @@ void Application::key(Key k) {
     }
     if(k==Key::Spectrum || page_==Page::Spectrum) {
         if(page_==Page::Spectrum && (k==Key::Back || k==Key::Menu)){page_=parent_;return;}
-        if(k==Key::Left || k==Key::Right)spectrum_.select(k==Key::Right);
+        if(page_==Page::Spectrum && k==Key::NextSlot) {
+            const unsigned point=spectrum_.selected();
+            if(spectrum_.sample(point)==Spectrum::Unmeasured){notify("SELECT A MEASURED FREQUENCY");return;}
+            const auto hz=spectrum_.frequency(point);
+            const auto &rx=active_radio_profile();
+            auto &profile=vfo_profiles_[config_.active];
+            profile.narrow=rx.narrow;profile.squelch=rx.squelch;
+            profile.rx_tone={};profile.reverse=false;profile.shift=Shift::None;profile.offset_hz=0;
+            profile.tx_inhibit=true;
+            vfo_tx_hz_[config_.active]=0;
+            vfo_hz_[config_.active]=hz;
+            config_.vfo[config_.active].channel_mode=false;
+            sync_frequencies();
+            page_=Page::Radio;notify("FREQUENCY APPLIED");return;
+        }
+        if(k==Key::Left || k==Key::Right){spectrum_.select(k==Key::Right);notify("");}
         if(k!=Key::Spectrum && k!=Key::Ok)return;
         const uint32_t center=config_.vfo[config_.active].rx_hz;
         const bool vhf=voice::vhf_tx_frequency(center);

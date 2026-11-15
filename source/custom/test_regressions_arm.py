@@ -100,7 +100,9 @@ for suite,description in (
  ('aprs_personal_tests','APRS personal inbox: callsign/SSID, unread per entry, duplicates, identity changes and navigation'),
  ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, invalid and stale data, six-digit field and AX.25 round trip'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
- ('spectrum_tests','RX spectrum: bounded grid, stale sample rejection, wrap-safe timeout, cursor, rescan and PTT'),
+ ('spectrum_tests','RX spectrum: bounded grid, stale samples, timeout, PTT and measured frequency copied RX-only'),
+ ('manual_waypoint_tests','manual GPS point: decimal input, hemisphere, range, cancel, snapshot and beacon revocation'),
+ ('spectrum_binding_tests','spectrum PF binding: open/close, PTT C priority and portable storage'),
  ('aprs_saved_point_tests','APRS saved position: explicit source, no GPS dependency, coordinate rounding, AX.25 and startup defaults'),
  ('aprs_clear_messages_tests','APRS clear messages: cancel, confirm, clear unread and receive again'),
  ('monitor_hold_tests','momentary monitor: hold threshold, contact bounce, release, latched monitor and PF1/PTT interlock')):
@@ -295,7 +297,7 @@ assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
 assert backup.inspect_backup(fixture)['snapshot_schema']==2
 scan_backup=bytearray(fixture)
-struct.pack_into('<4I',scan_backup,48+7992,8,9,2,0)
+struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
 assert backup.inspect_backup(scan_backup)['snapshot_schema']==2

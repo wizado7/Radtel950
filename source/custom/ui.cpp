@@ -320,6 +320,7 @@ void draw_navigation(const Application &a,uint32_t now,bool force) {
     const unsigned y=164+40*i;const uint16_t fill=selected_row?selected:card;
     rect(8,y,224,30,fill);label(16,y+11,actions[i],ink,fill);
    }
+   if(redraw || force)label(10,250,"RIGHT: ENTER COORDINATES",muted,bg);
   }
   if(changed(8,a.feedback(),force)){rect(8,268,224,20,bg);label(10,273,a.feedback(),muted,bg);}
   return;
@@ -724,6 +725,42 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   draw_reset(a,force);
  } else if(a.page()==Page::Backup) {
   draw_backup(input,force);
+ } else if(a.page()==Page::EditWaypoint) {
+  if(force) {
+   label(10,52,"Enter GPS coordinates",accent,bg);
+   label(10,232,"ABC: CHANGE HEMISPHERE",muted,bg);
+   label(10,250,"UP / DOWN: CHOOSE ROW",muted,bg);
+  }
+  const unsigned active=a.waypoint_edit_cursor();
+  for(unsigned row=0;row<2;++row) {
+   const unsigned degrees=2+row,digits=degrees+6;
+   const unsigned first=row?Application::WaypointLatitudeDigits:0;
+   const bool focused=active>=first && active<first+digits;
+   char field[16]{};
+   const char *hemispheres=row?"EW":"NS";
+   field[0]=hemispheres[a.waypoint_edit_negative(row)];
+   field[1]=' ';
+   uint32_t value=a.waypoint_edit_value(row);
+   for(unsigned i=digits;i>0;--i) {
+    const unsigned digit=i-1;
+    field[2+digit+(digit>=degrees)]=char('0'+value%10u);
+    value/=10u;
+   }
+   field[2+degrees]='.';
+   const unsigned length=digits+3;
+   field[length]=focused?char('A'+active-first):'-';
+   if(!changed(row+1,field,force))continue;
+   field[length]=0;
+   const unsigned y=88+row*64;
+   panel(y,52);
+   label(16,y+5,row?"LONGITUDE":"LATITUDE",muted,card);
+   lcd_draw_string_2x(16,y+21,field,ink,card);
+   if(focused) {
+    const unsigned digit=active-first;
+    rect(16+16*(2+digit+(digit>=degrees)),y+40,14,2,accent);
+   }
+  }
+  if(changed(8,a.feedback(),force)){rect(8,270,224,18,bg);label(10,273,a.feedback(),muted,bg);}
  } else if(a.page()==Page::Waypoint || a.page()==Page::Distance) {
   draw_navigation(a,now,force);
  } else if(a.page()==Page::FmStep || a.page()==Page::AmStep) {
@@ -937,6 +974,8 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   const auto reading=sweep.sample(selected_point);
   if(reading==Spectrum::Unmeasured)copy(value,"---");else num(value,reading);
   if(changed(4,value,force))stat(254,"RSSI RAW",value);
+  const char *hint=a.feedback()[0]?a.feedback():reading==Spectrum::Unmeasured?"":"ABC: USE FREQUENCY (RX)";
+  if(changed(5,hint,force)){rect(8,282,224,11,bg);label(10,283,hint,muted,bg);}
  } else if(a.page()==Page::VoiceRx) {
   const auto &rx=input.voice;
   const char *rx_state=rx.fault?"RX BUS FAULT":!rx.ready?"RX STARTING":rx.receiving?"RX CARRIER":"RX LISTENING";
