@@ -199,7 +199,7 @@ struct MockAm {
  uint8_t command=0;
  unsigned properties=0,seek_commands=0;
  uint16_t low=2300,high=30000,frequency=7100;
- uint8_t tune_flags=0,status_arg=0;
+ uint8_t tune_flags=0,status_arg=0,seek_arg=0;
  bool seek_stalled=false;
  uint8_t spacing=5;
  bool write(uint8_t address,const uint8_t *data,size_t size) {
@@ -218,8 +218,8 @@ struct MockAm {
   if(command==0x40)return properties==6 && size==6 && data[1]==0x40 &&
       (uint16_t(data[2])<<8|data[3])==frequency && !data[4] && data[5]==1;
   if(command==0x41) {
-   ++seek_commands;
-   return size==(low==2300?6u:2u) && data[1]==12 &&
+   ++seek_commands;seek_arg=data[1];
+   return size==(low==2300?6u:2u) && (seek_arg==12 || seek_arg==4) &&
        (size==2 || (!data[2] && !data[3] && !data[4] && data[5]==1));
   }
   if(command==0x42 && size==2){status_arg=data[1];return status_arg==1 || status_arg==3;}
@@ -3069,7 +3069,7 @@ extern "C" unsigned am_seek_tests() {
   CHECK(rx.seek(105));bus.frequency=plan.high;bus.tune_flags=1;
   run(105,205);
   uint16_t found=0;
-  CHECK(rx.take_seek_result(found) && found==plan.high && bus.seek_commands==1 && bus.status_arg==1);
+  CHECK(rx.take_seek_result(found) && found==plan.high && bus.seek_commands==1 && bus.seek_arg==12 && bus.status_arg==1);
   app.fm_seek_result(found);CHECK(app.fm_request()==plan.high && !app.fm_seek());
 
   for(unsigned response=0;response<4;++response) {
@@ -3090,6 +3090,76 @@ extern "C" unsigned am_seek_tests() {
   CHECK(rx.seek(695));bus.seek_stalled=true;run(695,745);
   run(180695,180725);
   CHECK(bus.status_arg==3 && !rx.seeking() && rx.take_seek_result(found) && !found);
+  app.key(Key::Left);CHECK(app.fm_seek() && !app.fm_seek_up());
+  bus.seek_stalled=false;bus.frequency=plan.low;
+  CHECK(app.fm_request()==plan.low && rx.tune(plan.low,180730,bands[i]));run(180730,180830);
+  CHECK(rx.seek(180835,app.fm_seek_up()));
+  bus.frequency=plan.high;bus.tune_flags=1;run(180835,180935);
+  CHECK(rx.take_seek_result(found) && found==plan.high && bus.seek_arg==4);
+  app.fm_seek_result(found);CHECK(app.fm_request()==plan.high && !app.fm_seek());
+  app.key(Key::Left);app.key(Key::Right);CHECK(!app.fm_seek());
  }
+ return 0;
+}
+
+extern "C" int aprs_personal_tests() {
+ aprs::RecentMessages messages;
+ messages.select_identity("N0CALL",15);
+ uint8_t frame[32]={'A'<<1,'P'<<1,'R'<<1,'S'<<1,' '<<1,' '<<1,0x60,
+     'W'<<1,'1'<<1,'A'<<1,'B'<<1,'C'<<1,' '<<1,0x61,0x03,0xf0,':'};
+ auto receive=[&](const char *destination,char body) {
+     unsigned i=0;
+     for(;destination[i];++i)frame[17+i]=uint8_t(destination[i]);
+     for(;i<9;++i)frame[17+i]=' ';
+     frame[26]=':';frame[27]=uint8_t(body);
+     messages.record(frame,28);
+ };
+ receive("n0call-15",'A');
+ receive("n0call-15",'A');
+ CHECK(messages.count()==1 && messages.count(true)==1);
+ receive("N0CALL-1",'B');receive("N0CALL",'C');receive("N0CALL-14",'D');
+ CHECK(messages.count()==3 && messages.count(true)==1 && messages.at(0,true)->body[0]=='A');
+ messages.select_identity("N0CALL",15);CHECK(messages.count(true)==1);
+ messages.select_identity("N0CALL",0);CHECK(messages.count(true)==0 && messages.count()==3);
+ receive("N0CALL-00",'E');receive("N0CALL-01",'F');receive("N0CALL-1",'G');
+ CHECK(messages.count(true)==0);
+ receive("N0CALL-0",'H');receive("N0CALL",'I');
+ CHECK(messages.count(true)==2 && messages.at(0,true)->body[0]=='I' && messages.at(1,true)->body[0]=='H');
+ messages.select_identity("",0);receive("N0CALL",'J');CHECK(!messages.count(true));
+ Application app(false);
+ app.key(Key::AprsMessages);app.aprs_message_counts(3,2);
+ app.key(Key::Mode);CHECK(app.aprs_personal() && !app.aprs_message_index());
+ app.key(Key::Up);CHECK(app.aprs_message_index()==1);
+ app.key(Key::Up);CHECK(!app.aprs_message_index());
+ app.key(Key::Down);CHECK(app.aprs_message_index()==1);
+ app.aprs_message_counts(3,0);CHECK(!app.aprs_message_index());
+ app.key(Key::Mode);CHECK(!app.aprs_personal());
+ app.key(Key::Up);CHECK(app.aprs_message_index()==2);
+ return 0;
+}
+
+extern "C" int monitor_hold_tests() {
+ Application app(false);
+ app.key(Key::Pf1Hold);app.key(Key::Down);app.key(Key::Ok);
+ for(unsigned i=0;i<4 && app.page()!=Page::Radio;++i)app.key(Key::Back);
+ CHECK(app.key_action(1)==KeyAction::Monitor && app.page()==Page::Radio);
+ Controls controls;
+ auto poll=[&](uint8_t raw,uint32_t now) {
+     const auto code=controls.poll(raw,now);
+     app.update_monitor_hold(controls.accepted());
+     if(code!=255)dispatch_key(app,code);
+ };
+ poll(0,0);poll(0,30);poll(0,729);
+ CHECK(!app.monitor_active());
+ poll(0,730);CHECK(app.monitor_active() && !app.monitor_enabled());
+ poll(255,740);poll(0,750);poll(0,779);CHECK(app.monitor_active());
+ poll(255,800);poll(255,829);CHECK(app.monitor_active());
+ poll(255,830);CHECK(!app.monitor_active() && !app.monitor_enabled());
+ app.key(Key::Monitor);app.key(Key::Down);app.key(Key::Ok);
+ poll(0,900);poll(0,930);poll(0,1630);
+ poll(255,1640);poll(255,1670);CHECK(app.monitor_active() && app.monitor_enabled());
+ app.key(Key::Monitor);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.set_option(Option::SidePtt,true));
+ poll(0,1700);poll(0,1730);poll(0,2430);CHECK(!app.monitor_active());
  return 0;
 }

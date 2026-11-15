@@ -283,7 +283,7 @@ void draw_fm_probe(const Application &app,const InputStatus &input,bool force) {
   if(app.fm_audio()) {
    const char *entry=*app.feedback()?app.feedback():*app.fm_entry()?app.fm_entry():app.sw_am()?"OK: enter frequency kHz":"OK: 10030 = 100.30";
    if(changed(8,entry,force)){rect(8,270,224,16,bg);label(10,271,entry,ink,bg);}
-   const char *hint=app.sw_am()?(app.fm_seek()?"Right: cancel seek":"Right: seek"):
+   const char *hint=app.sw_am()?(app.fm_seek()?"Arrows: cancel seek":"Left / right: seek"):
        "Right: seek   ABC: save";
    if(changed(9,hint,force)){rect(8,286,224,8,bg);label(10,286,hint,muted,bg);}
   } else if(force)label(10,271,"FM TEST / AUDIO OFF",muted,bg);
@@ -647,9 +647,10 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   copy(line,a.feedback()[0]?a.feedback():repeater?a.tx_status():"ARROWS CHOOSE / OK SELECT");
   if(changed(8,line,force)){rect(8,266,224,20,bg);label(10,271,line,muted,bg);}
  } else if(a.page()==Page::AprsMessages) {
-  const unsigned count=input.aprs_messages.count();
+  const bool personal=a.aprs_personal();
+  const unsigned count=input.aprs_messages.count(personal);
   const unsigned index=count?a.aprs_message_index()%count:0;
-  const auto *message=input.aprs_messages.at(index);
+  const auto *message=input.aprs_messages.at(index,personal);
   char from[30]{},to[30]{};
   if(message) {
    copy(from,message->source);
@@ -657,7 +658,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    if(message->ssid){from[end++]='-';num(from+end,message->ssid);}
    copy(to,message->destination);
   }
-  char page[]={char(count?'1'+index:'0'),'/','3',0};
+  char page[]={char(count?'1'+index:'0'),'/',char('0'+count),0};
   if(force)label(16,54,"APRS messages",accent,bg);
   if(changed(1,page,force))stat(76,"MESSAGE",page);
   if(changed(2,from,force))stat(108,"FROM",from[0]?from:"---");
@@ -672,6 +673,11 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    }
   }
   if(force)label(16,240,"ARROWS SELECT MESSAGE",muted,bg);
+  const char *filter=personal?"V/M: TO ME":"V/M: ALL MESSAGES";
+  if(changed(7,filter,force)){rect(8,255,224,15,bg);label(16,258,filter,accent,bg);}
+  const char *info=personal && !a.beacon_identity().callsign[0]?"SET CALLSIGN / SSID":
+      !message?"NO MESSAGES":"";
+  if(changed(8,info,force)){rect(8,273,224,16,bg);label(16,276,info,muted,bg);}
  } else if(a.page()==Page::ClearAprs) {
   if(force){panel(52,46);label(16,63,"Clear APRS list",accent);label(16,79,"OK: CLEAR  BACK: CANCEL");}
  } else if(a.page()==Page::BeaconSymbol) {

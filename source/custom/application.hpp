@@ -84,6 +84,8 @@ public:
     int timezone_minutes() const { return timezone_minutes_; }
     int timezone_draft() const { return timezone_draft_; }
     unsigned aprs_message_index() const {return aprs_message_;}
+    bool aprs_personal() const {return aprs_personal_;}
+    void aprs_message_counts(unsigned all,unsigned personal);
     unsigned beacon_symbol_index() const {return beacon_symbol_;}
     unsigned beacon_symbol_draft() const {return beacon_symbol_draft_;}
     bool take_aprs_clear() {const bool pending=aprs_clear_;aprs_clear_=false;return pending;}
@@ -156,9 +158,15 @@ public:
     const char *fm_entry() const {return fm_entry_;}
     bool monitor_enabled() const {return monitor_enabled_;}
     bool monitor_draft() const {return monitor_draft_;}
-    bool monitor_active() const {return monitor_enabled_ && page_==Page::Radio && !editing();}
+    bool monitor_active() const {
+        return (monitor_enabled_ || monitor_held_<2) && page_==Page::Radio && !editing();
+    }
+    void update_monitor_hold(uint8_t accepted) {
+        if(accepted!=monitor_held_ || (monitor_held_==0 && side_ptt_enabled()))monitor_held_=255;
+    }
     bool fm_audio() const {return fm_audio_;}
     bool fm_seek() const {return fm_seek_;}
+    bool fm_seek_up() const {return !fm_seek_down_;}
     void fm_seek_result(uint16_t found);
     unsigned radio_draft() const {return radio_draft_;}
     bool tone_search_available() const;
@@ -282,7 +290,8 @@ private:
     uint8_t menu_timeout_=2,menu_timeout_draft_=2;
     uint8_t beacon_symbol_=0,beacon_symbol_draft_=0;
     bool aprs_clear_=false,tx_tail_=true;
-    uint8_t aprs_message_=0;
+    uint8_t aprs_message_=0,aprs_all_count_=0,aprs_personal_count_=0;
+    bool aprs_personal_=false;
     BeaconIdentity beacon_identity_{},identity_draft_{};
     unsigned identity_cursor_=0;
     bool decimal_coordinates_=false,dms_coordinates_=false;
@@ -308,7 +317,8 @@ private:
     char fm_entry_[6]{};
     uint8_t fm_digits_=0;
     bool monitor_enabled_=false,monitor_draft_=false;
-    bool fm_audio_=false,fm_seek_=false;
+    uint8_t monitor_held_=255;
+    bool fm_audio_=false,fm_seek_=false,fm_seek_down_=false;
     fm::Band broadcast_band_=fm::Band::Fm;
     Page parent_=Page::Settings;
     const char *notice_="";

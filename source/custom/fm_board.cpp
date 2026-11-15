@@ -41,7 +41,7 @@ void BoardProbe::mute() {
     audio_enabled_=false;audio_step_=0;
 }
 
-void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now) {
+void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now,bool seek_up) {
     if(!active_)return;
     if(!seek) {
         seek_steps_=0;seek_finished_=false;
@@ -63,7 +63,7 @@ void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now) {
             seek_finished_=true;seek_result_=found;
             return;
         }
-        if(seek && probe_.frequency()==frequency && probe_.seek(now)) {
+        if(seek && probe_.frequency()==frequency && probe_.seek(now,seek_up)) {
             mute();
             return;
         }

@@ -6,6 +6,7 @@ class Controls final {
 public:
     // Returns a debounced press/repeat code, or 255. Time is milliseconds.
     uint8_t poll(uint8_t raw,uint32_t now);
+    uint8_t accepted() const {return accepted_;}
 private:
     uint8_t candidate_=255,accepted_=255;
     uint32_t changed_=0,repeated_=0;

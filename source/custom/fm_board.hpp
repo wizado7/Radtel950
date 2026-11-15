@@ -5,7 +5,7 @@ namespace rt950::fm {
 class BoardProbe final {
 public:
     void poll(bool open,uint32_t now,Band band=Band::Fm);
-    void listen(uint16_t frequency,bool seek,bool audio,uint32_t now);
+    void listen(uint16_t frequency,bool seek,bool audio,uint32_t now,bool seek_up);
     bool seek_finished() const {return seek_finished_;}
     uint16_t seek_result() const {return seek_result_;}
     bool audio_enabled() const {return audio_enabled_;}

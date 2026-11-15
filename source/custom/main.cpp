@@ -157,6 +157,7 @@ extern "C" int main(void) {
         if(uint32_t(now-last_input)>=10u) {
             board_gps_poll(now);
             last_input=now;input.sampled=board_scan_key();const uint8_t code=keys.poll(input.sampled,now);
+            app.update_monitor_hold(keys.accepted());
             if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
             keys_awake=wake_keys.poll(input.sampled,now);
             if(code!=255) {
@@ -254,6 +255,7 @@ extern "C" int main(void) {
             !aprs_listen && !ptt_down && !beacon.active() && !switch_off,now);
         input.power.mcu_degrees=mcu_temperature.reading(now);
         const auto &identity=app.beacon_identity();
+        input.aprs_messages.select_identity(identity.callsign,identity.ssid);
         const uint32_t packet_hz=config.aprs_hz;
         const bool fix=config.gps_on && nav_fix_fresh(now);
         const bool packet_calibrated=packet_hz%10==0 && (voice::vhf_tx_frequency(packet_hz)?
@@ -458,7 +460,7 @@ extern "C" int main(void) {
         }
         fm_probe.poll(fm_open,now,app.broadcast_band());
         if(app.page()==Page::FmProbe) {
-            fm_probe.listen(app.fm_request(),app.fm_seek(),app.fm_audio(),now);
+            fm_probe.listen(app.fm_request(),app.fm_seek(),app.fm_audio(),now,app.fm_seek_up());
             if(app.fm_seek() && fm_probe.seek_finished())app.fm_seek_result(fm_probe.seek_result());
             input.fm_audio_enabled=fm_probe.audio_enabled();
             input.fm_audio_error=fm_probe.audio_error();
@@ -570,6 +572,7 @@ extern "C" int main(void) {
         }
 #ifdef RT950_MAIN_TX
         scan_rx_owned=scan_has_target;
+        app.aprs_message_counts(input.aprs_messages.count(),input.aprs_messages.count(true));
         input.aprs_receiving=packet_rx.running();
         input.aprs_windows=aprs_background.windows();
         input.aprs_cancelled=aprs_background.cancelled();

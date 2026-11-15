@@ -78,7 +78,10 @@ void Application::user_key(unsigned which,bool held) {
  }
  if(page_==Page::FmProbe && action!=KeyAction::Fm)return;
  switch(action) {
- case KeyAction::Monitor:monitor_enabled_=!monitor_enabled_;notify(monitor_enabled_?"MONITOR ON":"MONITOR OFF");break;
+ case KeyAction::Monitor:
+    if(held)monitor_held_=uint8_t(which);
+    else {monitor_enabled_=!monitor_enabled_;notify(monitor_enabled_?"MONITOR ON":"MONITOR OFF");}
+    break;
  case KeyAction::Fm:key(Key::FmRadio);break;
  case KeyAction::NextSlot:key(Key::NextSlot);break;
  case KeyAction::Mode:key(Key::Mode);break;
@@ -92,6 +95,11 @@ void Application::user_key(unsigned which,bool held) {
  }
 }
 void Application::notify(const char *message) {notice_=message;notice_since_=now_;}
+void Application::aprs_message_counts(unsigned all,unsigned personal) {
+    aprs_all_count_=uint8_t(all);aprs_personal_count_=uint8_t(personal);
+    const unsigned count=aprs_personal_?personal:all;
+    if(aprs_message_>=count)aprs_message_=0;
+}
 void Application::tick(uint32_t now) {
  now_=now;
  if(screen_seconds_ && uint32_t(now-last_activity_)>=screen_seconds_*1000u)screen_awake_=false;
@@ -823,8 +831,10 @@ void Application::key(Key k) {
         parent_=Page::Settings;page_=Page::AprsMessages;aprs_message_=0;notify("");return;
     }
     if(page_==Page::AprsMessages) {
-        if(k==Key::Down)aprs_message_=uint8_t((aprs_message_+1u)%3u);
-        if(k==Key::Up)aprs_message_=uint8_t((aprs_message_+2u)%3u);
+        if(k==Key::Mode){aprs_personal_=!aprs_personal_;aprs_message_=0;return;}
+        const unsigned count=aprs_personal_?aprs_personal_count_:aprs_all_count_;
+        if(count && (k==Key::Down || k==Key::Up))
+            aprs_message_=uint8_t((aprs_message_+(k==Key::Down?1:count-1))%count);
     }
     if(k==Key::ClearAprs) {
         parent_=Page::Settings;page_=Page::ClearAprs;notify("");return;
@@ -879,7 +889,8 @@ void Application::key(Key k) {
                 const int next=int(sw_request_)+(k==Key::Up?step:-step);
                 sw_request_=uint16_t(next>plan.high?plan.low:next<plan.low?plan.high:next);
                 fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;notify("");
-            } else if(k==Key::Right) {
+            } else if(k==Key::Right || k==Key::Left) {
+                fm_seek_down_=k==Key::Left;
                 fm_seek_=!fm_seek_;fm_digits_=0;fm_entry_[0]=0;notify("");
             }
             return;

@@ -353,11 +353,10 @@ assert m.odr[GPIO[2]]&0x6000==0,'standby must not assert RX/TX LEDs'
 print('ARM main integration: digit input -> OK commit -> A/B/C -> OK menu -> Back -> shutdown PASS (LCD/tick simulated)')
 
 messages=Foreground()
-messages.sequence=[6,8,8,8,6,8,6] # Settings -> APRS -> Messages
+messages.sequence=[6,8,8,8,6,8,6,2] # Settings -> APRS -> Messages -> V/M
 messages.call(symbols['main'],budget=17000000)
-assert 'APRS messages' in messages.texts and '0/3' in messages.texts
-assert '1/3' not in messages.texts
-print('ARM APRS messages UI: empty inbox displays 0/3 PASS')
+assert all(s in messages.texts for s in ('APRS messages','0/0','V/M: ALL MESSAGES','V/M: TO ME'))
+print('ARM APRS messages UI: empty inbox displays 0/0 and physical V/M toggles views PASS')
 
 
 if args.bench:
@@ -1314,15 +1313,15 @@ menu_key('Back');menu_key('MediumwaveAm');menu_draw()
 assert 'Средние волны AM' in menu_ui.texts
 print('ARM LW/MW UI: band labels in both languages and LCD bounds PASS')
 
+menu_key('Left');menu_draw()
+assert 'Стрелки: отмена поиска' in menu_ui.texts
 menu_key('Right');menu_draw()
-assert 'Вправо: отмена поиска' in menu_ui.texts
-menu_key('Right');menu_draw()
-assert 'Вправо: поиск' in menu_ui.texts
+assert 'Влево / вправо: поиск' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Up');menu_key('Ok')
 menu_key('SwAm');menu_key('Right');menu_draw()
-assert 'Right: cancel seek' in menu_ui.texts
+assert 'Arrows: cancel seek' in menu_ui.texts
 menu_key('Up');menu_draw()
-assert 'Right: seek' in menu_ui.texts
+assert 'Left / right: seek' in menu_ui.texts
 print('ARM AM seek UI: start, cancel and manual tuning in both languages PASS')
 
 for russian in (False,True):
@@ -1340,3 +1339,14 @@ for russian in (False,True):
     menu_key('Back');menu_draw()
     assert hint in menu_ui.texts
 print('ARM RX tone search UI: start and cancel in both languages PASS')
+
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+    menu_key('AprsMessages');menu_draw()
+    assert ('V/M: ВСЕ СООБЩЕНИЯ' if russian else 'V/M: ALL MESSAGES') in menu_ui.texts
+    menu_key('Mode');menu_draw()
+    expected=('V/M: МНЕ','ЗАДАЙТЕ ПОЗЫВНОЙ / SSID') if russian else ('V/M: TO ME','SET CALLSIGN / SSID')
+    assert all(s in menu_ui.texts for s in expected)
+print('ARM APRS personal inbox UI: view toggle and missing identity in both languages PASS')

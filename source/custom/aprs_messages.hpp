@@ -10,8 +10,26 @@ public:
         char source[7]{},destination[10]{},body[68]{},id[6]{};
         uint8_t ssid=0;
     };
-    unsigned count() const {return size_;}
-    const Entry *at(unsigned index) const {return index<size_?&entries_[index]:nullptr;}
+    unsigned count(bool personal=false) const {return list(personal).size;}
+    const Entry *at(unsigned index,bool personal=false) const {
+        const auto &messages=list(personal);
+        return index<messages.size?&messages.entries[index]:nullptr;
+    }
+    void select_identity(const char *callsign,uint8_t ssid) {
+        char address[10]{};
+        unsigned length=0;
+        while(length<6 && callsign[length]) {
+            address[length]=callsign[length];++length;
+        }
+        if(length && ssid) {
+            address[length++]='-';
+            if(ssid>=10)address[length++]='1';
+            address[length]=char('0'+ssid%10);
+        }
+        if(equal(address,address_))return;
+        for(unsigned i=0;i<sizeof address;++i)address_[i]=address[i];
+        personal_.size=0;
+    }
 
     void record(const uint8_t *frame,size_t size) {
         size_t at=0;
@@ -47,23 +65,42 @@ public:
             entry.source[i]=char(frame[7+i]>>1);
         entry.ssid=(frame[13]>>1)&15u;
 
-        // Repeated transmissions should not evict other messages.
-        for(unsigned i=0;i<size_;++i) {
-            const auto &old=entries_[i];
-            if(old.ssid==entry.ssid && equal(old.source,entry.source) &&
-               equal(old.destination,entry.destination) && equal(old.id,entry.id) &&
-               equal(old.body,entry.body))return;
-        }
-        if(size_<Capacity)++size_;
-        for(unsigned i=size_-1;i>0;--i)entries_[i]=entries_[i-1];
-        entries_[0]=entry;
+        all_.push(entry);
+        if(address_[0] && addressed_to_me(entry.destination))personal_.push(entry);
     }
 private:
     static bool equal(const char *a,const char *b) {
         while(*a && *a==*b){++a;++b;}
         return *a==*b;
     }
-    Entry entries_[Capacity]{};
-    unsigned size_=0;
+    static char uppercase(char ch) {return ch>='a' && ch<='z'?char(ch-'a'+'A'):ch;}
+    bool addressed_to_me(const char *destination) const {
+        unsigned i=0;
+        bool explicit_ssid=false;
+        while(address_[i] && uppercase(destination[i])==uppercase(address_[i])) {
+            explicit_ssid|=address_[i]=='-';
+            ++i;
+        }
+        return !address_[i] && (!destination[i] ||
+            (!explicit_ssid && destination[i]=='-' && destination[i+1]=='0' && !destination[i+2]));
+    }
+    struct List {
+        Entry entries[Capacity]{};
+        unsigned size=0;
+        void push(const Entry &entry) {
+            for(unsigned i=0;i<size;++i) {
+                const auto &old=entries[i];
+                if(old.ssid==entry.ssid && equal(old.source,entry.source) &&
+                   equal(old.destination,entry.destination) && equal(old.id,entry.id) &&
+                   equal(old.body,entry.body))return;
+            }
+            if(size<Capacity)++size;
+            for(unsigned i=size-1;i>0;--i)entries[i]=entries[i-1];
+            entries[0]=entry;
+        }
+    };
+    const List &list(bool personal) const {return personal?personal_:all_;}
+    List all_{},personal_{};
+    char address_[10]{};
 };
 }

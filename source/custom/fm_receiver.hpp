@@ -62,10 +62,10 @@ public:
         failure_=Failure::None;state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
         return true;
     }
-    bool seek(uint32_t now) {
+    bool seek(uint32_t now,bool up=true) {
         if(band_==Band::Fm || state_!=State::Tuned)return false;
         requested_=tuned_;tuned_=0;signal_={};signal_ready_=false;
-        seek_done_=false;operation_=Operation::Seek;
+        seek_done_=false;seek_up_=up;operation_=Operation::Seek;
         state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
         return true;
     }
@@ -105,8 +105,8 @@ public:
             break;
         case Phase::SendTune: {
             if(operation_==Operation::Seek) {
-                // OEM 0.29 sends 41 0C. AN332 also specifies ANTCAP=1 for SW.
-                const uint8_t command[]={0x41,0x0c,0,0,0,1};
+                // OEM 0.29 sends 41 0C. AN332 specifies SEEKUP at bit 3 and ANTCAP=1 for SW.
+                const uint8_t command[]={0x41,uint8_t(seek_up_?0x0c:0x04),0,0,0,1};
                 if(!bus.write(Address,command,band_==Band::Shortwave?6:2)){
                     fail(Failure::Bus);break;
                 }
@@ -194,6 +194,6 @@ private:
     enum class Operation : uint8_t { Tune, Seek, Cancel };
     Operation operation_=Operation::Tune;
     Band band_=Band::Fm;
-    bool signal_ready_=false,seek_done_=false,report_cancel_=false;
+    bool signal_ready_=false,seek_done_=false,report_cancel_=false,seek_up_=true;
 };
 }

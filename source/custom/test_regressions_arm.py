@@ -95,7 +95,15 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['am_seek_tests']|1,0x080ff000,count=3000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
-print('ARM AM seek: all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
+print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
+for suite,description in (
+ ('aprs_personal_tests','APRS personal inbox: callsign/SSID, duplicates, isolation, identity changes and navigation'),
+ ('monitor_hold_tests','momentary monitor: hold threshold, contact bounce, release, latched monitor and PF1/PTT interlock')):
+ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+ u.emu_start(symbols[suite]|1,0x080ff000,count=3000000)
+ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+ result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'{suite} failed at C++ line {result}'
+ print('ARM '+description+' PASS')
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['broadcast_player_tests']|1,0x080ff000,count=3000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
