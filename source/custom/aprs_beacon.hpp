@@ -2,6 +2,7 @@
 #pragma once
 #include "aprs_tx.hpp"
 #include "gps_view.hpp"
+#include "gps_navigation.hpp"
 #include "voice_ptt.hpp"
 
 namespace rt950::aprs {
@@ -41,6 +42,29 @@ inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ss
             frame[size++]=uint8_t('0'+feet/divisor%10);
     }
     return out.encode(frame,size,32);
+}
+
+inline void beacon_coordinate(int32_t microdegrees,unsigned digits,char *text) {
+    const unsigned magnitude=unsigned(microdegrees<0?-microdegrees:microdegrees);
+    const unsigned hundredths=(magnitude*6u+500u)/1000u;
+    unsigned degrees=hundredths/6000u;
+    const unsigned minutes=hundredths%6000u;
+    text[digits]=char('0'+minutes/1000u);
+    text[digits+1]=char('0'+minutes/100u%10u);
+    text[digits+2]='.';
+    text[digits+3]=char('0'+minutes/10u%10u);
+    text[digits+4]=char('0'+minutes%10u);
+    text[digits+5]=0;
+    while(digits){text[--digits]=char('0'+degrees%10u);degrees/=10u;}
+}
+
+inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ssid,
+                          const GeoPoint &point,char symbol) {
+    if(!point.valid || !geo_valid(point))return false;
+    char lat[8],lon[9];
+    beacon_coordinate(point.latitude,2,lat);beacon_coordinate(point.longitude,3,lon);
+    return encode_beacon(out,call,ssid,lat,point.latitude<0?'S':'N',
+        lon,point.longitude<0?'W':'E',symbol);
 }
 
 // RF and DAC are separate so this state machine can be tested without MMIO.

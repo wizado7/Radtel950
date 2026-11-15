@@ -24,6 +24,7 @@ public:
     void read_personal(unsigned index) {
         if(index<personal_.size)personal_.entries[index].unread=false;
     }
+    void clear() {all_.size=0;personal_.size=0;}
     void select_identity(const char *callsign,uint8_t ssid) {
         char address[10]{};
         unsigned length=0;

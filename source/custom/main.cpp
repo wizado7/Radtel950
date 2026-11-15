@@ -180,6 +180,7 @@ extern "C" int main(void) {
             if(input.ptt_mask&uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u))) {
                 app.weather_ptt();
                 app.tone_search_ptt();
+                app.spectrum_ptt();
             }
 #endif
             app.backup_ptt();settings_export.cancel();settings_import.cancel();
@@ -200,10 +201,12 @@ extern "C" int main(void) {
         }
         input.save_state=autosave.state();
         if(app.take_aprs_clear())input.aprs_stations.clear();
+        if(app.take_aprs_messages_clear())input.aprs_messages.clear();
         const Page page=app.page();
         const bool fm_open=page==Page::FmProbe;
 #ifdef RT950_MAIN_TX
         const bool weather_open=page==Page::Weather;
+        const bool spectrum_open=page==Page::Spectrum;
         if(weather_open!=weather_previous) {
             voice_watch.poll(voice_rx,app.config(),now,false,false);
             if(voice_rx.status().fault)voice_rx.enable(false);
@@ -257,21 +260,25 @@ extern "C" int main(void) {
         const auto &identity=app.beacon_identity();
         input.aprs_messages.select_identity(identity.callsign,identity.ssid);
         const uint32_t packet_hz=config.aprs_hz;
-        const bool fix=config.gps_on && nav_fix_fresh(now);
+        const bool saved_position=app.beacon_saved_point();
+        const bool position_ready=saved_position?app.waypoint().valid:config.gps_on && nav_fix_fresh(now);
         const bool packet_calibrated=packet_hz%10==0 && (voice::vhf_tx_frequency(packet_hz)?
             vhf_valid && vhf.bias(packet_hz,voice::factory_power_selector(TxPower::Low)):
             factory_valid && voice::uhf_tx_frequency(packet_hz));
         const bool beacon_allowed=page==Page::Radio && voice_enabled && !ptt_down && !monitor && power_tx_ok &&
-            packet_calibrated && config.beacon_on && fix && identity.callsign[0];
+            packet_calibrated && config.beacon_on && position_ready && identity.callsign[0];
         if(beacon.active() && (beacon_tx_hz!=packet_hz || !beacon_allowed))beacon.stop(now);
         if(!beacon.active() && beacon_allowed && !aprs_listen && !voice_rx.carrier() &&
            voice_rx.status().ready && ptt.state()==voice::Ptt::State::Idle &&
            uint32_t(now-last_beacon)>=config.beacon_seconds*1000u) {
             last_beacon=now;
             const auto &nav=*nav_get();
-            if(aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
-                                   nav.lat,nav.ns[0],nav.lon,nav.ew[0],
-                                   beacon_symbols[app.beacon_symbol_index()].code,aprs::beacon_altitude(nav,now))) {
+            const char symbol=beacon_symbols[app.beacon_symbol_index()].code;
+            const bool encoded=saved_position?
+                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol):
+                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
+                    nav.lat,nav.ns[0],nav.lon,nav.ew[0],symbol,aprs::beacon_altitude(nav,now));
+            if(encoded) {
                 voice_watch.poll(voice_rx,config,now,false,false);
                 beacon_tx_hz=packet_hz;
                 beacon.start(packet_hz,now);
@@ -487,7 +494,7 @@ extern "C" int main(void) {
         if(voice_enabled && !tx_owns_radio) {
             voice_rx.enable(true);
 #ifdef RT950_MAIN_TX
-            const bool voice_target=!weather_open && !scan_has_target && !aprs_listen && !tone_search;
+            const bool voice_target=!weather_open && !scan_has_target && !aprs_listen && !tone_search && !spectrum_open;
             const auto tone_level=[&](Tone tone) {
                 if(tone.kind==ToneKind::Ctcss)return factory.ctcss_level;
                 if(tone.kind==ToneKind::Dcs)return factory.dcs_level;
@@ -523,6 +530,10 @@ extern "C" int main(void) {
                     voice_rx.tune_profile(channel_scan.frequency(),rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
                         now,rx_profile.narrow,rx_profile.squelch);
             }
+            if(spectrum_open) {
+                if(const auto hz=app.spectrum().take_tune(now))
+                    voice_rx.tune_profile(hz,{},0,now,app.active_radio_profile().narrow,0);
+            }
             if(weather_open && voice_rx.status().frequency!=app.weather().frequency())
                 voice_rx.tune_profile(app.weather().frequency(),{},0,now,true,3);
             if(aprs_listen) {
@@ -534,14 +545,16 @@ extern "C" int main(void) {
             using WeatherAudio=voice::BoardReceiver::WeatherAudio;
             const auto wx_audio=!weather_open?WeatherAudio::Off:
                 app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;
-            voice_rx.poll(now,ptt_down || tone_search,monitor,aprs_listen,wx_audio);
+            voice_rx.poll(now,ptt_down || tone_search || spectrum_open,monitor,aprs_listen,wx_audio);
 #else
             voice_watch.poll(voice_rx,app.config(),now,!voice_rx.status().fault,input.ptt_mask!=0 || monitor);
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
 #endif
 #ifdef RT950_MAIN_TX
             const auto &rx=voice_rx.status();
-            if(tone_search) {
+            if(spectrum_open) {
+                app.spectrum().observe(now,rx.frequency,rx.sampled && !rx.fault,rx.rssi);
+            } else if(tone_search) {
                 app.poll_tone_search(now,rx.sampled,voice_rx.squelch_open(now),rx.fault || tone_scan_fault);
             } else if(aprs_listen) {
                 struct ReceiveContext {
@@ -600,7 +613,7 @@ extern "C" int main(void) {
         input.voice=voice_rx.status();
 #ifdef RT950_MAIN_TX
         // A packet carrier is not activity on the voice slot shown on the home screen.
-        if(aprs_listen || tone_search)input.voice.receiving=false;
+        if(aprs_listen || tone_search || spectrum_open)input.voice.receiving=false;
 #endif
         input.voice.slot=voice_watch.slot();
 #ifdef RT950_MAIN_TX
@@ -613,7 +626,7 @@ extern "C" int main(void) {
         if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
-        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && input.voice.ready;
+        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && !spectrum_open && input.voice.ready;
         const bool watching=voice_listening && !monitor && !scan_has_target && app.enabled(Option::Watch);
         input.power.workload.observe(now,
             (voice_listening && !watching && !scan_has_target?1u<<Load::SingleRx:0u) |

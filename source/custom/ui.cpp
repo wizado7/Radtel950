@@ -550,7 +550,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(mail)label(136,9,"APRS*",accent);
  }
  const bool presets=a.page()==Page::FmPresets || a.page()==Page::AmPresets;
- const char *footer=a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
+ const char *footer=a.page()==Page::Spectrum?"ARROWS CURSOR / OK RESCAN":
+     a.page()==Page::AprsMessages?"* CLEAR MESSAGES / BACK":
+     a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
      a.weather().scanning()?"OK LISTEN / BACK EXIT":"OK SCAN / BACK EXIT"):
      a.page()==Page::Import?"OK START / BACK CANCEL":a.page()==Page::Backup?"OK START / BACK CANCEL":a.page()==Page::Waypoint && a.waypoint_confirm()?"OK CONFIRM / BACK CANCEL":(a.page()==Page::Distance || a.page()==Page::FlashInfo)?"READ ONLY / BACK RETURN":presets?(a.broadcast_confirm()?"OK CONFIRM / BACK CANCEL":"LEFT SAVE / * DEL / OK PLAY"):a.page()==Page::About?"READ ONLY / BACK RETURN":a.page()==Page::PowerMeasured?"OK SAVE / * DEL / BACK EXIT":a.page()==Page::PowerCalibration?"RIGHT: RECORD / BACK EXIT":a.keypad_locked()?"HOLD # TO UNLOCK":a.page()==Page::VoiceRx?"READ ONLY / BACK RETURN":a.page()==Page::PowerStatus?"ARROWS PAGE / BACK RETURN":a.page()==Page::Debug?"BACK HOLD / LED 1 2 0":a.page()==Page::Gps?"HOLD VM GPS / BACK RETURN":a.page()==Page::Radio?(a.editing()?"HOLD OK MENU   * DELETE":a.config().vfo[a.config().active].channel_mode?"VM VFO   WHEEL CHANNEL":"OK MENU   ABC SLOT   VM CH"):"OK SELECT       BACK EXIT";
  if(changed(10,footer,force)){rect(8,300,224,16,bg);label(10,304,footer,muted,bg);}
@@ -681,9 +683,26 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(force)label(16,240,"ARROWS SELECT MESSAGE",muted,bg);
   const char *filter=personal?"V/M: TO ME":"V/M: ALL MESSAGES";
   if(changed(7,filter,force)){rect(8,255,224,15,bg);label(16,258,filter,accent,bg);}
-  const char *info=personal && !a.beacon_identity().callsign[0]?"SET CALLSIGN / SSID":
+  const char *info=a.feedback()[0]?a.feedback():personal && !a.beacon_identity().callsign[0]?"SET CALLSIGN / SSID":
       !message?"NO MESSAGES":"";
   if(changed(8,info,force)){rect(8,273,224,16,bg);label(16,276,info,muted,bg);}
+ } else if(a.page()==Page::ClearAprsMessages) {
+  if(force){panel(52,46);label(16,63,"Clear APRS messages?",accent);label(16,79,"OK: CLEAR  BACK: CANCEL");}
+ } else if(a.page()==Page::BeaconSource) {
+  if(force)label(10,53,"Beacon position source",accent,bg);
+  for(unsigned i=0;i<2;++i) {
+   const bool marked=i==unsigned(a.beacon_source_draft()),applied=i==unsigned(a.beacon_saved_point());
+   const char key[]={marked?'S':'-',applied?'A':'-',0};
+   if(!changed(i+1,key,force))continue;
+   const unsigned y=76+i*36;
+   const uint16_t fill=marked?selected:card;
+   rect(8,y,224,30,fill);
+   label(17,y+11,i?"Saved GPS point":"Live GPS position",ink,fill);
+   if(applied)label(212,y+11,"*",accent,fill);
+  }
+  if(force)label(10,156,"FOR THIS SESSION",muted,bg);
+  const char *help=a.feedback()[0]?a.feedback():"CHANGE DISABLES BEACON";
+  if(changed(8,help,force)){rect(8,266,224,20,bg);label(10,271,help,muted,bg);}
  } else if(a.page()==Page::ClearAprs) {
   if(force){panel(52,46);label(16,63,"Clear APRS list",accent);label(16,79,"OK: CLEAR  BACK: CANCEL");}
  } else if(a.page()==Page::BeaconSymbol) {
@@ -891,6 +910,33 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(5,hint,force)){rect(8,228,224,17,bg);label(10,232,hint,muted,bg);}
   const char *extra=a.feedback()[0]?a.feedback():!vfo_scan && a.scan_frequency()?"LEFT: EXCLUDE CHANNEL":"";
   if(changed(7,extra,force)){rect(8,248,224,17,bg);label(10,252,extra,muted,bg);}
+ } else if(a.page()==Page::Spectrum) {
+  const auto &sweep=a.spectrum();
+  const auto selected_point=sweep.selected();
+  if(force)label(10,54,"RX spectrum",accent,bg);
+  const char *status=sweep.sweeping()?"SWEEPING":"SWEEP COMPLETE";
+  if(changed(1,status,force)){rect(8,74,224,14,bg);label(10,77,status,muted,bg);}
+  char graph[Spectrum::Count+2]{};
+  for(unsigned i=0;i<sweep.count();++i) {
+   const auto rssi=sweep.sample(i);
+   graph[i]=rssi==Spectrum::Unmeasured?'!':char(34+unsigned(rssi)*28u/511u);
+  }
+  graph[sweep.count()]=char('A'+selected_point);
+  if(changed(2,graph,force)) {
+   panel(96,120);
+   for(unsigned i=0;i<sweep.count();++i) {
+    const unsigned x=14+i*10;
+    const uint16_t color=i==selected_point?accent:muted;
+    const unsigned height=graph[i]=='!'?0:1u+4u*unsigned(graph[i]-34);
+    if(height)rect(x,210-height,7,height,color);
+    rect(x,211,7,2,color);
+   }
+  }
+  char value[16];freq(value,sweep.frequency(selected_point));
+  if(changed(3,value,force))stat(222,"MHz",value);
+  const auto reading=sweep.sample(selected_point);
+  if(reading==Spectrum::Unmeasured)copy(value,"---");else num(value,reading);
+  if(changed(4,value,force))stat(254,"RSSI RAW",value);
  } else if(a.page()==Page::VoiceRx) {
   const auto &rx=input.voice;
   const char *rx_state=rx.fault?"RX BUS FAULT":!rx.ready?"RX STARTING":rx.receiving?"RX CARRIER":"RX LISTENING";

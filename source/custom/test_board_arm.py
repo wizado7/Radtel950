@@ -1377,3 +1377,21 @@ for russian in (False,True):
     assert ('Вправо: поиск ABC: память' if russian else 'Right: seek   ABC: save') in menu_ui.texts
     menu_key('Back')
 print('ARM FM native seek UI: start and cancel in both languages PASS')
+
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back')
+    menu_frequency(145500000)
+    menu_key('Spectrum');menu_draw()
+    assert ('Обзор спектра RX' if russian else 'RX spectrum') in menu_ui.texts and '145.50000' in menu_ui.texts
+    menu_key('Right');menu_draw()
+    assert '145.51250' in menu_ui.texts
+    menu_key('Back');menu_key('BeaconSource');menu_key('Down');menu_key('Ok');menu_draw()
+    assert ('Сохранённая GPS-точка' if russian else 'Saved GPS point') in menu_ui.texts
+    assert ('GPS-ТОЧКА НЕ ЗАДАНА' if russian else 'NO SAVED GPS POINT') in menu_ui.texts
+    menu_key('Back');menu_key('AprsMessages');menu_key('Erase');menu_draw()
+    assert ('Очистить сообщения APRS?' if russian else 'Clear APRS messages?') in menu_ui.texts
+    menu_key('Back');menu_key('Erase');menu_key('Ok');menu_draw()
+    assert ('СООБЩЕНИЯ APRS ОЧИЩЕНЫ' if russian else 'APRS MESSAGES CLEARED') in menu_ui.texts
+print('ARM spectrum, beacon source and APRS clear UI: bilingual labels, cursor and confirmation PASS')

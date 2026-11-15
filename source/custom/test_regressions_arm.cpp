@@ -3202,6 +3202,92 @@ extern "C" int fm_native_seek_tests() {
  return 0;
 }
 
+extern "C" int spectrum_tests() {
+ Application app(false);
+ app.key(Key::Spectrum);CHECK(app.page()==Page::Radio);
+ CHECK(app.set_frequency(136000000));
+ app.key(Key::Spectrum);CHECK(app.page()==Page::Spectrum && !app.voice_tx_page());
+ auto &sweep=app.spectrum();
+ CHECK(sweep.count()==11 && sweep.selected()==0 && sweep.frequency(0)==136000000);
+ CHECK(sweep.take_tune(0xffffff80u)==136000000);
+ sweep.observe(1,136000010,true,511); // Other owner's sample.
+ CHECK(!sweep.take_tune(2) && sweep.sample(0)==Spectrum::Unmeasured);
+ sweep.observe(122,0,false,0); // 250 ms with tick rollover.
+ CHECK(sweep.take_tune(123)==sweep.frequency(1));
+ sweep.observe(150,sweep.frequency(1),true,234);
+ CHECK(sweep.sample(1)==234);
+ for(unsigned i=2;i<sweep.count();++i) {
+     CHECK(sweep.take_tune(1000)==sweep.frequency(i));
+     sweep.observe(1050,sweep.frequency(i),true,0);
+ }
+ CHECK(!sweep.sweeping() && sweep.sample(10)==0 && !sweep.take_tune(5000));
+ app.key(Key::Right);CHECK(sweep.selected()==1);
+ app.key(Key::Ok);CHECK(sweep.sweeping() && sweep.selected()==0 && sweep.sample(1)==Spectrum::Unmeasured);
+ app.spectrum_ptt();CHECK(app.page()==Page::Radio && app.config().vfo[0].rx_hz==136000000);
+ CHECK(app.set_frequency(470000000));
+ app.key(Key::Spectrum);CHECK(sweep.count()==11 && sweep.selected()==10 && sweep.frequency(10)==470000000);
+ app.key(Key::Right);CHECK(sweep.selected()==10);
+ app.key(Key::Back);CHECK(app.page()==Page::Radio);
+ CHECK(app.set_frequency(446081250));
+ app.key(Key::Spectrum);CHECK(sweep.count()==21 && sweep.frequency(10)==446081250);
+ return 0;
+}
+
+extern "C" int aprs_saved_point_tests() {
+ Application app(false);nav_reset();
+ app.key(Key::BeaconSource);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.page()==Page::BeaconSource && !app.beacon_saved_point());
+ app.key(Key::Back);app.key(Key::BeaconIdentity);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.beacon_identity().callsign[0] && app.set_aprs_frequency(144800000));
+ CHECK(app.set_option(Option::Gps,true) && app.set_option(Option::Beacon,true));
+ nmea("GPRMC,120000.00,A,5545.123456,S,03759.999999,W,1.00,90.0,071126,,,A",1000);
+ app.tick(1000);app.key(Key::Waypoint);app.key(Key::Ok);app.key(Key::Ok);
+ CHECK(app.waypoint().valid);
+ app.key(Key::Back);app.key(Key::BeaconSource);app.key(Key::Down);app.key(Key::Back);
+ CHECK(!app.beacon_saved_point() && app.enabled(Option::Beacon));
+ app.key(Key::BeaconSource);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.beacon_saved_point() && !app.enabled(Option::Beacon));
+ CHECK(app.set_option(Option::Gps,false) && app.set_option(Option::Beacon,true));
+ aprs::FrameTransmitter tx;
+ CHECK(aprs::encode_beacon(tx,app.beacon_identity().callsign,0,app.waypoint(),'>'));
+ AprsCapture capture;
+ aprs::FrameReceiver rx;
+ bool previous=false;
+ for(size_t i=0;i<tx.size();++i) {
+     const bool current=tx.level(i);rx.bit(current==previous,capture_aprs,&capture);previous=current;
+ }
+ const char expected[]="!5545.12S/03800.00W>";
+ CHECK(capture.count==1 && capture.length==39);
+ for(unsigned i=0;expected[i];++i)CHECK(capture.kiss[18+i]==uint8_t(expected[i]));
+ CHECK(!aprs::encode_beacon(tx,app.beacon_identity().callsign,0,GeoPoint{90000001,0,true},'>'));
+ uint8_t data[Application::SnapshotCapacity];const auto size=app.save_compact_snapshot(data,sizeof data);
+ Application restored(false);CHECK(size && restored.restore_snapshot(data,size));
+ CHECK(restored.waypoint().valid && !restored.beacon_saved_point() && !restored.enabled(Option::Beacon));
+ app.key(Key::Waypoint);app.key(Key::Down);app.key(Key::Ok);app.key(Key::Ok);
+ CHECK(!app.waypoint().valid && !app.beacon_saved_point() && !app.enabled(Option::Beacon));
+ return 0;
+}
+
+extern "C" int aprs_clear_messages_tests() {
+ Application app(false);
+ app.key(Key::AprsMessages);app.key(Key::Erase);
+ CHECK(app.page()==Page::ClearAprsMessages && app.voice_tx_page());
+ app.key(Key::Back);
+ CHECK(app.page()==Page::AprsMessages && !app.take_aprs_messages_clear());
+ app.key(Key::Erase);app.key(Key::Ok);
+ CHECK(app.page()==Page::AprsMessages && app.take_aprs_messages_clear());
+ CHECK(!app.take_aprs_messages_clear() && !app.take_aprs_clear());
+ aprs::RecentMessages messages;
+ messages.select_identity("N0CALL",0);
+ const uint8_t frame[]={'A'<<1,'P'<<1,'R'<<1,'S'<<1,64,64,0x60,
+     'W'<<1,'1'<<1,'A'<<1,'B'<<1,'C'<<1,64,0x61,0x03,0xf0,
+     ':','N','0','C','A','L','L',' ',' ',' ',':','H'};
+ messages.record(frame,sizeof frame);CHECK(messages.personal_unread());
+ messages.clear();CHECK(!messages.count() && !messages.count(true) && !messages.personal_unread());
+ messages.record(frame,sizeof frame);CHECK(messages.count()==1 && messages.count(true)==1 && messages.personal_unread());
+ return 0;
+}
+
 extern "C" int monitor_hold_tests() {
  Application app(false);
  app.key(Key::Pf1Hold);app.key(Key::Down);app.key(Key::Ok);

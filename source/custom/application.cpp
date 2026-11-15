@@ -110,7 +110,7 @@ void Application::tick(uint32_t now) {
  switch(page_) {
  case Page::Radio:case Page::Gps:case Page::Aprs:case Page::AprsMessages:
  case Page::Debug:case Page::Battery:case Page::LcdTest:case Page::FlashInfo:
- case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:case Page::Weather:
+ case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:case Page::Weather:case Page::Spectrum:
      menu_page=false;break;
  default:break;
  }
@@ -307,13 +307,14 @@ bool Application::enabled(Option o) const {
 bool Application::set_option(Option o,bool on) {
     if(on && o==Option::Beacon &&
        !frequency_valid(config_.aprs_hz)) return false;
-    if(on && o==Option::Beacon && (!config_.gps_on || !beacon_identity_.callsign[0])) return false;
+    if(on && o==Option::Beacon && (!beacon_identity_.callsign[0] ||
+       !(beacon_saved_point_?waypoint_.valid:config_.gps_on)))return false;
     if(on && o==Option::Export && !config_.ble_on) return false;
     switch(o) {
     case Option::SidePtt:aux_ptt_=uint8_t((aux_ptt_&2u)|(on?1u:0u));break;
     case Option::SecondPtt:aux_ptt_=uint8_t((aux_ptt_&1u)|(on?2u:0u));break;
     case Option::Watch:config_.watch_mode=!on?RT_WATCH_SINGLE:config_.watch_mask==7?RT_WATCH_ABC:RT_WATCH_MASK;break;
-    case Option::Gps:config_.gps_on=on;if(!on) config_.beacon_on=false;break;
+    case Option::Gps:config_.gps_on=on;if(!on && !beacon_saved_point_)config_.beacon_on=false;break;
     case Option::AprsRx:config_.aprs_rx=on;break;
     case Option::Tail:tx_tail_=on;break;
     case Option::Beacon:config_.beacon_on=on;break;
@@ -462,6 +463,7 @@ constexpr MenuEntry channel_menu[]={
 #ifdef RT950_MAIN_TX
     {"Scan zone channels",Key::ChannelScan},{"Scan mode",Key::ScanMode},{"Scan VFO",Key::VfoScan},
     {"VFO scan lower limit",Key::ScanStart},{"VFO scan upper limit",Key::ScanEnd},
+    {"RX spectrum",Key::Spectrum},
 #endif
 };
 constexpr MenuEntry gps_menu[]={{"GPS status",Key::Gps},{"GPS receiver",Key::Menu,Option::Gps},{"Time zone",Key::Timezone},{"Coordinate format",Key::CoordinateFormat},{"Speed units",Key::SpeedUnits},{"Altitude units",Key::AltitudeUnits},{"Distance units",Key::DistanceUnits},{"Saved GPS point",Key::Waypoint},{"Distance to point",Key::Distance}};
@@ -475,7 +477,7 @@ constexpr MenuEntry aprs_menu[]={
     {"APRS phone export",Key::Menu,Option::Export}
 };
 constexpr MenuEntry aprs_rx_menu[]={{"APRS receive",Key::Menu,Option::AprsRx},{"RX frequency",Key::AprsRxFrequency},{"Background scan interval",Key::AprsScanInterval},{"Clear APRS list",Key::ClearAprs}};
-constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol}};
+constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource}};
 constexpr MenuEntry ble_menu[]={{"Bluetooth",Key::Menu,Option::Ble},{"BLE export",Key::Menu,Option::Export}};
 constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery}};
 constexpr MenuEntry system_menu[]={{"CPU power save",Key::Mode},{"Language",Key::LanguageSelect},{"Menu timeout",Key::MenuTimeout},{"About firmware",Key::About},{"Export settings",Key::Backup},{"Auto keypad lock",Key::AutoLock},{"Reset settings",Key::ResetSettings},{"Reset all user data",Key::ResetAll},{"Import settings",Key::Import},{"User keys",Key::Menu,Option::Count,MenuGroup::UserKeys},{"Lock keypad",Key::KeypadLock}};
@@ -610,6 +612,7 @@ void Application::key(Key k) {
             }
             if(!waypoint_confirm_){waypoint_confirm_=true;notify("");return;}
             waypoint_=waypoint_clear_?GeoPoint{}:current;waypoint_confirm_=false;
+            if(beacon_saved_point_){beacon_saved_point_=false;config_.beacon_on=false;}
             notify(waypoint_clear_?"GPS POINT CLEARED":"GPS POINT SAVED");
         }
         return;
@@ -831,10 +834,36 @@ void Application::key(Key k) {
         parent_=Page::Settings;page_=Page::AprsMessages;aprs_message_=0;notify("");return;
     }
     if(page_==Page::AprsMessages) {
+        if(k==Key::Erase){page_=Page::ClearAprsMessages;notify("");return;}
         if(k==Key::Mode){aprs_personal_=!aprs_personal_;aprs_message_=0;return;}
         const unsigned count=aprs_personal_?aprs_personal_count_:aprs_all_count_;
         if(count && (k==Key::Down || k==Key::Up))
             aprs_message_=uint8_t((aprs_message_+(k==Key::Down?1:count-1))%count);
+    }
+    if(page_==Page::ClearAprsMessages) {
+        if(k==Key::Back || k==Key::Menu)page_=Page::AprsMessages;
+        if(k==Key::Ok) {
+            aprs_messages_clear_=true;aprs_message_=0;
+            page_=Page::AprsMessages;notify("APRS MESSAGES CLEARED");
+        }
+        return;
+    }
+    if(k==Key::BeaconSource) {
+        parent_=Page::Settings;page_=Page::BeaconSource;
+        beacon_source_draft_=beacon_saved_point_;notify("");return;
+    }
+    if(page_==Page::BeaconSource) {
+        if(k==Key::Up || k==Key::Down)beacon_source_draft_=!beacon_source_draft_;
+        if(k==Key::Back || k==Key::Menu){page_=parent_;notify("");}
+        if(k==Key::Ok) {
+            if(beacon_source_draft_ && !waypoint_.valid){notify("NO SAVED GPS POINT");return;}
+            if(beacon_saved_point_!=beacon_source_draft_) {
+                config_.beacon_on=false;beacon_saved_point_=beacon_source_draft_;
+                notify("SOURCE SET / BEACON OFF");
+            } else notify("SETTING APPLIED");
+            page_=parent_;
+        }
+        return;
     }
     if(k==Key::ClearAprs) {
         parent_=Page::Settings;page_=Page::ClearAprs;notify("");return;
@@ -1090,6 +1119,19 @@ void Application::key(Key k) {
             scan_mode_draft_=static_cast<ScanMode>((unsigned(scan_mode_draft_)+(k==Key::Down?1:2))%3);
         if(k==Key::Ok){scan_mode_=scan_mode_draft_;page_=parent_;notify("SETTING APPLIED");}
         return;
+    }
+    if(k==Key::Spectrum || page_==Page::Spectrum) {
+        if(page_==Page::Spectrum && (k==Key::Back || k==Key::Menu)){page_=parent_;return;}
+        if(k==Key::Left || k==Key::Right)spectrum_.select(k==Key::Right);
+        if(k!=Key::Spectrum && k!=Key::Ok)return;
+        const uint32_t center=config_.vfo[config_.active].rx_hz;
+        const bool vhf=voice::vhf_tx_frequency(center);
+        if(!vhf && !(voice::uhf_tx_frequency(center) && center%10==0)) {
+            notify("SPECTRUM REQUIRES VHF/UHF");return;
+        }
+        if(page_!=Page::Spectrum){parent_=page_;page_=Page::Spectrum;}
+        spectrum_.begin(center,vfo_steps[applied_vfo_step()],vhf?136000000u:400000000u,vhf?174000000u:470000000u);
+        notify("");return;
     }
     if(k==Key::ChannelScan || k==Key::VfoScan) {
         parent_=page_==Page::Settings?Page::Settings:Page::Radio;

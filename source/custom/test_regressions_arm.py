@@ -100,6 +100,9 @@ for suite,description in (
  ('aprs_personal_tests','APRS personal inbox: callsign/SSID, unread per entry, duplicates, identity changes and navigation'),
  ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, invalid and stale data, six-digit field and AX.25 round trip'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
+ ('spectrum_tests','RX spectrum: bounded grid, stale sample rejection, wrap-safe timeout, cursor, rescan and PTT'),
+ ('aprs_saved_point_tests','APRS saved position: explicit source, no GPS dependency, coordinate rounding, AX.25 and startup defaults'),
+ ('aprs_clear_messages_tests','APRS clear messages: cancel, confirm, clear unread and receive again'),
  ('monitor_hold_tests','momentary monitor: hold threshold, contact bounce, release, latched monitor and PF1/PTT interlock')):
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=3000000)
