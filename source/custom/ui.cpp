@@ -242,7 +242,7 @@ void draw_fm_probe(const Application &app,const InputStatus &input,bool force) {
    }
   }
   if(app.sw_am() && input.fm_phase==Phase::Receiver)
-   state=input.fm_audio_enabled?"AM LISTENING":input.fm_frequency?"AM TUNED":"AM TUNING";
+   state=app.fm_seek()?"AM SEEKING":input.fm_audio_enabled?"AM LISTENING":input.fm_frequency?"AM TUNED":"AM TUNING";
   if(changed(1,state,force)){panel(52,28);label(16,62,state,accent);}
   char part[8]="--",hz[12],rssi[8]="--",snr[8]="--";
   if(input.fm_part)num(part,input.fm_part);
@@ -281,7 +281,9 @@ void draw_fm_probe(const Application &app,const InputStatus &input,bool force) {
   if(app.fm_audio()) {
    const char *entry=*app.feedback()?app.feedback():*app.fm_entry()?app.fm_entry():app.sw_am()?"OK: enter frequency kHz":"OK: 10030 = 100.30";
    if(changed(8,entry,force)){rect(8,270,224,16,bg);label(10,271,entry,ink,bg);}
-   if(force && !app.sw_am())label(10,293,"Right: seek   ABC: save",muted,bg);
+   const char *hint=app.sw_am()?(app.fm_seek()?"Right: cancel seek":"Right: seek"):
+       "Right: seek   ABC: save";
+   if(changed(9,hint,force)){rect(8,286,224,8,bg);label(10,286,hint,muted,bg);}
   } else if(force)label(10,271,"FM TEST / AUDIO OFF",muted,bg);
 }
 void point_text(char *out,const GeoPoint &point,bool latitude) {

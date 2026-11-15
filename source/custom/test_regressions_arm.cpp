@@ -197,8 +197,10 @@ struct MockProbeBus:MockFm {
 };
 struct MockAm {
  uint8_t command=0;
- unsigned properties=0;
+ unsigned properties=0,seek_commands=0;
  uint16_t low=2300,high=30000,frequency=7100;
+ uint8_t tune_flags=0,status_arg=0;
+ bool seek_stalled=false;
  uint8_t spacing=5;
  bool write(uint8_t address,const uint8_t *data,size_t size) {
   if(address!=0x11 || !size)return false;
@@ -215,14 +217,20 @@ struct MockAm {
   }
   if(command==0x40)return properties==6 && size==6 && data[1]==0x40 &&
       (uint16_t(data[2])<<8|data[3])==frequency && !data[4] && data[5]==1;
-  return size==2 && ((command==0x42 && data[1]==3) || (command==0x43 && data[1]==1));
+  if(command==0x41) {
+   ++seek_commands;
+   return size==(low==2300?6u:2u) && data[1]==12 &&
+       (size==2 || (!data[2] && !data[3] && !data[4] && data[5]==1));
+  }
+  if(command==0x42 && size==2){status_arg=data[1];return status_arg==1 || status_arg==3;}
+  return size==2 && command==0x43 && data[1]==1;
  }
  bool read(uint8_t address,uint8_t *data,size_t size) {
   if(address!=0x11)return false;
-  data[0]=command==0x14?0x81:0x80;
+  data[0]=command==0x14 && !seek_stalled?0x81:0x80;
   if(size==1)return true;
   if(size==9 && command==0x10){data[1]=32;return true;}
-  if(size==8 && command==0x42){data[2]=uint8_t(frequency>>8);data[3]=uint8_t(frequency);return true;}
+  if(size==8 && command==0x42){data[1]=tune_flags;data[2]=uint8_t(frequency>>8);data[3]=uint8_t(frequency);return true;}
   if(size==6 && command==0x43){data[2]=1;data[4]=42;data[5]=18;return true;}
   return false;
  }
@@ -2987,6 +2995,48 @@ extern "C" unsigned broadcast_lower_bands_tests() {
   CHECK(probe.retune(entry.high,955));
   for(uint32_t now=955;now<=1200;now+=5)probe.poll(bus,[](bool){},now);
   CHECK(probe.frequency()==entry.high);
+ }
+ return 0;
+}
+
+
+extern "C" unsigned am_seek_tests() {
+ const fm::Band bands[]={fm::Band::Longwave,fm::Band::Mediumwave,fm::Band::Shortwave};
+ const Key keys[]={Key::LongwaveAm,Key::MediumwaveAm,Key::SwAm};
+ for(unsigned i=0;i<3;++i) {
+  const auto plan=fm::band_plan(bands[i]);
+  MockAm bus;
+  bus.low=plan.low;bus.frequency=plan.initial;bus.properties=6;
+  fm::Receiver rx;
+  auto run=[&](uint32_t from,uint32_t to){for(auto now=from;now<=to;now+=5)rx.poll(bus,now);};
+  CHECK(rx.tune(plan.initial,0,bands[i]));
+  run(0,100);CHECK(rx.frequency()==plan.initial);
+  Application app;
+  app.key(keys[i]);app.key(Key::Right);CHECK(app.fm_seek() && !app.voice_tx_page());
+  CHECK(rx.seek(105));bus.frequency=plan.high;bus.tune_flags=1;
+  run(105,205);
+  uint16_t found=0;
+  CHECK(rx.take_seek_result(found) && found==plan.high && bus.seek_commands==1 && bus.status_arg==1);
+  app.fm_seek_result(found);CHECK(app.fm_request()==plan.high && !app.fm_seek());
+
+  for(unsigned response=0;response<4;++response) {
+   bus.frequency=plan.high;CHECK(rx.tune(plan.high,210,bands[i]));run(210,310);
+   CHECK(rx.seek(315));
+   bus.frequency=response==2?uint16_t(plan.high+1):response==3?plan.high:plan.low;
+   bus.tune_flags=response==0?0:response==1?0x81:1;
+   run(315,415);
+   CHECK(rx.take_seek_result(found) && !found && !rx.frequency());
+  }
+  app.key(Key::Right);app.fm_seek_result(0);CHECK(app.fm_request()==plan.high && !app.fm_seek());
+  bus.frequency=plan.high;CHECK(rx.tune(plan.high,420,bands[i]));run(420,520);
+  CHECK(rx.seek(525));bus.seek_stalled=true;run(525,550);
+  app.key(Key::Right);app.key(Key::Up);CHECK(!app.fm_seek());
+  rx.cancel_seek(555);run(555,585);
+  CHECK(bus.status_arg==3 && !rx.seeking() && !rx.take_seek_result(found));
+  bus.seek_stalled=false;CHECK(rx.tune(plan.high,590,bands[i]));run(590,690);
+  CHECK(rx.seek(695));bus.seek_stalled=true;run(695,745);
+  run(180695,180725);
+  CHECK(bus.status_arg==3 && !rx.seeking() && rx.take_seek_result(found) && !found);
  }
  return 0;
 }

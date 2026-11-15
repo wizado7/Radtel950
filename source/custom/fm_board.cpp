@@ -51,8 +51,24 @@ void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now) {
         if(seek){seek_finished_=true;seek_result_=0;}
         return;
     }
-    if(probe_.phase()!=Probe::Phase::Receiver || !probe_.frequency())return;
-    if(seek && !seek_finished_) {
+    if(probe_.phase()!=Probe::Phase::Receiver)return;
+    const bool am=probe_.band()!=Band::Fm;
+    if(am) {
+        if(probe_.seeking()) {
+            if(!seek)probe_.cancel_seek(now);
+            return;
+        }
+        uint16_t found=0;
+        if(probe_.take_seek_result(found) && seek) {
+            seek_finished_=true;seek_result_=found;
+            return;
+        }
+        if(seek && probe_.frequency()==frequency && probe_.seek(now)) {
+            mute();
+            return;
+        }
+    } else if(!probe_.frequency())return;
+    if(!am && seek && !seek_finished_) {
         Signal signal;
         if(seek_steps_) {
             if(!probe_.signal(now,signal))return;

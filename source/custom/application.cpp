@@ -290,8 +290,10 @@ bool Application::set_option(Option o,bool on) {
     return true;
 }
 void Application::fm_seek_result(uint16_t found) {
-    if(found)fm_request_=found;
-    else notify("FM no station found");
+    if(found && fm::in_band(found,broadcast_band_)) {
+        (sw_am()?sw_request_:fm_request_)=found;
+        notify("");
+    } else notify(sw_am()?"AM no station found":"FM no station found");
     fm_seek_=false;
 }
 void Application::observe_voice_slot(uint8_t slot,uint32_t hz) {
@@ -328,7 +330,7 @@ void Application::digit(unsigned d) {
         editor_value_=editor_value_*10u+d;++editor_digits_;notify("");return;
     }
     if(page_==Page::FmProbe && fm_audio_) {
-        if(d<=9 && fm_digits_<5){fm_entry_[fm_digits_++]=char('0'+d);fm_entry_[fm_digits_]=0;}
+        if(d<=9 && fm_digits_<5){fm_seek_=false;fm_entry_[fm_digits_++]=char('0'+d);fm_entry_[fm_digits_]=0;}
         return;
     }
     if(page_==Page::EditName) {
@@ -829,7 +831,7 @@ void Application::key(Key k) {
     if(page_==Page::FmProbe) {
         if(k==Key::Back){page_=parent_;return;}
         if(!fm_audio_)return;
-        if(k==Key::Menu){key(sw_am()?Key::AmPresets:Key::FmPresets);return;}
+        if(k==Key::Menu){fm_seek_=false;key(sw_am()?Key::AmPresets:Key::FmPresets);return;}
         if(sw_am()) {
             const auto plan=fm::band_plan(broadcast_band_);
             if(k==Key::Erase && fm_digits_)fm_entry_[--fm_digits_]=0;
@@ -837,14 +839,16 @@ void Application::key(Key k) {
                 unsigned value=0;
                 for(unsigned i=0;i<fm_digits_;++i)value=value*10u+unsigned(fm_entry_[i]-'0');
                 if(fm::in_band(value,broadcast_band_)) {
-                    sw_request_=uint16_t(value);fm_digits_=0;fm_entry_[0]=0;notify("");
+                    sw_request_=uint16_t(value);fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;notify("");
                 } else notify(broadcast_band_==fm::Band::Longwave?"AM 153-279 kHz":
                     broadcast_band_==fm::Band::Mediumwave?"AM 520-1710 kHz":"AM 2300-30000 kHz");
             } else if(k==Key::Up || k==Key::Down) {
                 const int step=int(tuner_step(true));
                 const int next=int(sw_request_)+(k==Key::Up?step:-step);
                 sw_request_=uint16_t(next>plan.high?plan.low:next<plan.low?plan.high:next);
-                fm_digits_=0;fm_entry_[0]=0;
+                fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;notify("");
+            } else if(k==Key::Right) {
+                fm_seek_=!fm_seek_;fm_digits_=0;fm_entry_[0]=0;notify("");
             }
             return;
         }

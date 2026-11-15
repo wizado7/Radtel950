@@ -1296,3 +1296,14 @@ assert 'Длинные волны AM' in menu_ui.texts
 menu_key('Back');menu_key('MediumwaveAm');menu_draw()
 assert 'Средние волны AM' in menu_ui.texts
 print('ARM LW/MW UI: band labels in both languages and LCD bounds PASS')
+
+menu_key('Right');menu_draw()
+assert 'Вправо: отмена поиска' in menu_ui.texts
+menu_key('Right');menu_draw()
+assert 'Вправо: поиск' in menu_ui.texts
+menu_key('Back');menu_key('LanguageSelect');menu_key('Up');menu_key('Ok')
+menu_key('SwAm');menu_key('Right');menu_draw()
+assert 'Right: cancel seek' in menu_ui.texts
+menu_key('Up');menu_draw()
+assert 'Right: seek' in menu_ui.texts
+print('ARM AM seek UI: start, cancel and manual tuning in both languages PASS')

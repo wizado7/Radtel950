@@ -20,6 +20,10 @@ public:
     bool retune(uint16_t frequency,uint32_t now) {
         return phase_==Phase::Receiver && receiver_.tune(frequency,now,band_);
     }
+    bool seek(uint32_t now) {return phase_==Phase::Receiver && receiver_.seek(now);}
+    bool seeking() const {return receiver_.seeking();}
+    void cancel_seek(uint32_t now) {receiver_.cancel_seek(now);}
+    bool take_seek_result(uint16_t &frequency) {return receiver_.take_seek_result(frequency);}
     uint16_t frequency() const {return receiver_.frequency();}
     bool signal(uint32_t now,Signal &out) const {return receiver_.signal(now,out);}
 

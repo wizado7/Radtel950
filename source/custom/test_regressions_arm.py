@@ -91,6 +91,11 @@ u.emu_start(symbols['broadcast_lower_bands_tests']|1,0x080ff000,count=3000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'LW/MW AM failed at C++ line {result}'
 print('ARM LW/MW AM: band limits, tuning, preset roundtrip and receive-only UI PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['am_seek_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
+print('ARM AM seek: all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
 for suite,marker in [('broadcast_bank_tests','ARM broadcast banks:'),('about_page_tests','ARM about page:')]:
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=4000000)
@@ -341,7 +346,7 @@ if a.stock:
   length,command,reply_length,reply=regs
   calls.append((bytes(machine.mem_read(command,length)),reply_length))
   if reply_length:
-   packet={0x14: bytes([0x81]), 0x22: bytes([0x80,0,0x27,0x2e,48,19,0]),
+   packet={0x14: bytes([0x81]), 0x41: bytes([0x80]), 0x22: bytes([0x80,0,0x27,0x2e,48,19,0]),
            0x23: bytes([0x80,0,1,0x80,48,19,0,0]),
            0x43: bytes([0x80,0,1,0,42,18])}[calls[-1][0][0]]
    assert len(packet)==reply_length
@@ -377,6 +382,12 @@ if a.stock:
  assert oracle.reg_read(UC_ARM_REG_PC)==0x080ff000
  assert calls==[(bytes([0x40,0x40,0x1b,0xbc,0,1]),0)],calls
  print('OEM 0.29 AM tune: 7100 kHz command and antenna capacitor PASS')
+ calls.clear()
+ oracle.reg_write(UC_ARM_REG_R0,1);oracle.reg_write(UC_ARM_REG_R1,1)
+ oracle.reg_write(UC_ARM_REG_LR,0x080ff001)
+ oracle.emu_start(0x08006831,0x080ff000,count=20000)
+ assert calls==[(bytes([0x41,0x0c]),1)],calls
+ print('OEM 0.29 AM seek: executed command 41 0C, upwards with wrap PASS')
  properties=[]
  def capture_am_property(machine,address,size,_):
   properties.append((address,machine.reg_read(UC_ARM_REG_R0),machine.reg_read(UC_ARM_REG_R1)))

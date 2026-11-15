@@ -57,10 +57,28 @@ public:
     enum class State : uint8_t { Idle, Tuning, Tuned, Fault };
     bool tune(uint16_t frequency,uint32_t now,Band band=Band::Fm) {
         if(!in_band(frequency,band) || state_==State::Tuning)return false;
-        am_=band!=Band::Fm;
+        band_=band;operation_=Operation::Tune;seek_done_=false;
         requested_=frequency;tuned_=0;signal_={};signal_ready_=false;
         failure_=Failure::None;state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
         return true;
+    }
+    bool seek(uint32_t now) {
+        if(band_==Band::Fm || state_!=State::Tuned)return false;
+        requested_=tuned_;tuned_=0;signal_={};signal_ready_=false;
+        seek_done_=false;operation_=Operation::Seek;
+        state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
+        return true;
+    }
+    bool seeking() const {return state_==State::Tuning && operation_!=Operation::Tune;}
+    void cancel_seek(uint32_t now,bool report=false) {
+        if(!seeking() || operation_==Operation::Cancel)return;
+        operation_=Operation::Cancel;
+        report_cancel_=report;
+        phase_=Phase::BeforeCancel;started_=next_=now;
+    }
+    bool take_seek_result(uint16_t &frequency) {
+        if(!seek_done_)return false;
+        seek_done_=false;frequency=tuned_;return true;
     }
     Failure failure() const {return failure_;}
     State state() const {return state_;}
@@ -72,7 +90,12 @@ public:
     }
     template<class Bus> void poll(Bus &bus,uint32_t now) {
         if(state_==State::Idle || state_==State::Fault)return;
-        if(state_==State::Tuning && uint32_t(now-started_)>=1000u){fail(Failure::Timeout);return;}
+        if(state_==State::Tuning && uint32_t(now-started_)>=
+           (operation_==Operation::Seek?180000u:1000u)) {
+            if(operation_!=Operation::Seek){fail(Failure::Timeout);return;}
+            cancel_seek(now,true);
+        }
+        const bool am=band_!=Band::Fm;
         if(int32_t(now-next_)<0)return;
         next_=now+5;
         uint8_t reply[8]{};
@@ -81,9 +104,17 @@ public:
             if(ready(bus))phase_=Phase::SendTune;
             break;
         case Phase::SendTune: {
-            const uint8_t command[]={uint8_t(am_?0x40:0x20),uint8_t(am_?0x40:3),
-                                     uint8_t(requested_>>8),uint8_t(requested_),0,1};
-            if(!bus.write(Address,command,am_?6:5)){fail(Failure::Bus);break;}
+            if(operation_==Operation::Seek) {
+                // OEM 0.29 sends 41 0C. AN332 also specifies ANTCAP=1 for SW.
+                const uint8_t command[]={0x41,0x0c,0,0,0,1};
+                if(!bus.write(Address,command,band_==Band::Shortwave?6:2)){
+                    fail(Failure::Bus);break;
+                }
+            } else {
+                const uint8_t command[]={uint8_t(am?0x40:0x20),uint8_t(am?0x40:3),
+                                         uint8_t(requested_>>8),uint8_t(requested_),0,1};
+                if(!bus.write(Address,command,am?6:5)){fail(Failure::Bus);break;}
+            }
             phase_=Phase::QueryInterrupt;next_=now+50;
             break;
         }
@@ -98,29 +129,43 @@ public:
             if(!read_reply(bus,reply,1))break;
             phase_=(reply[0]&TuneComplete)?Phase::SendStatus:Phase::QueryInterrupt;
             break;
+        case Phase::BeforeCancel:
+            if(ready(bus))phase_=Phase::SendStatus;
+            break;
         case Phase::SendStatus: {
-            const uint8_t command[]={uint8_t(am_?0x42:0x22),3}; // OEM CANCEL | INTACK after STC
+            // INTACK completes a seek. CANCEL | INTACK aborts it or finishes a manual tune.
+            const uint8_t command[]={uint8_t(am?0x42:0x22),uint8_t(operation_==Operation::Seek?1:3)};
             if(!bus.write(Address,command,sizeof command)){fail(Failure::Bus);break;}
             phase_=Phase::ReadStatus;
             break;
         }
-        case Phase::ReadStatus:
-            if(!read_reply(bus,reply,am_?8:7))break;
-            if((uint16_t(reply[2])<<8 | reply[3])!=requested_){fail(Failure::Frequency);break;}
-            tuned_=requested_;state_=State::Tuned;phase_=Phase::SendSignal;
+        case Phase::ReadStatus: {
+            if(!read_reply(bus,reply,am?8:7))break;
+            const uint16_t frequency=uint16_t(reply[2])<<8 | reply[3];
+            if(operation_==Operation::Tune) {
+                if(frequency!=requested_){fail(Failure::Frequency);break;}
+                tuned_=frequency;
+            } else {
+                constexpr uint8_t valid=1,band_limit=0x80;
+                if(operation_==Operation::Seek && (reply[1]&(valid|band_limit))==valid &&
+                   frequency!=requested_ && in_band(frequency,band_))tuned_=frequency;
+                seek_done_=operation_==Operation::Seek || report_cancel_;
+            }
+            state_=tuned_?State::Tuned:State::Idle;phase_=Phase::SendSignal;
             break;
+        }
         case Phase::SendSignal: {
-            const uint8_t command[]={uint8_t(am_?0x43:0x23),1};
+            const uint8_t command[]={uint8_t(am?0x43:0x23),1};
             if(!bus.write(Address,command,sizeof command)){fail(Failure::Bus);break;}
             phase_=Phase::ReadSignal;request_at_=now;
             break;
         }
         case Phase::ReadSignal:
-            if(!read_reply(bus,reply,am_?6:8)) {
+            if(!read_reply(bus,reply,am?6:8)) {
                 if(state_!=State::Fault && uint32_t(now-request_at_)>=100u)fail(Failure::Timeout);
                 break;
             }
-            if(am_) {
+            if(am) {
                 signal_={reply[4],reply[5],bool(reply[2]&1u),false,bool(reply[2]&2u)};
                 signal_ready_=true;
             } else signal_ready_=decode_signal(reply,8,signal_);
@@ -129,7 +174,7 @@ public:
         }
     }
 private:
-    enum class Phase : uint8_t { BeforeTune, SendTune, QueryInterrupt, ReadInterrupt, SendStatus, ReadStatus, SendSignal, ReadSignal };
+    enum class Phase : uint8_t { BeforeTune, SendTune, QueryInterrupt, ReadInterrupt, BeforeCancel, SendStatus, ReadStatus, SendSignal, ReadSignal };
     template<class Bus> bool ready(Bus &bus) {
         uint8_t status=0;
         return read_reply(bus,&status,1);
@@ -146,6 +191,9 @@ private:
     uint32_t started_=0,next_=0,request_at_=0,sampled_=0;
     uint16_t requested_=0,tuned_=0;
     Signal signal_{};
-    bool signal_ready_=false,am_=false;
+    enum class Operation : uint8_t { Tune, Seek, Cancel };
+    Operation operation_=Operation::Tune;
+    Band band_=Band::Fm;
+    bool signal_ready_=false,seek_done_=false,report_cancel_=false;
 };
 }
