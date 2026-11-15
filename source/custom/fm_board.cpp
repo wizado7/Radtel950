@@ -89,7 +89,8 @@ void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now) {
     audio_enabled_=true;
 }
 
-void BoardProbe::poll(bool open,uint32_t now,bool am) {
+void BoardProbe::poll(bool open,uint32_t now,Band band) {
+    if(open && active_ && probe_.band()!=band)poll(false,now);
     if(open && !active_) {
         saved_[0]=uint8_t(GPIOA->CRL>>24&15u);levels_[0]=GPIOA->ODR&GPIO_PIN_6;
         saved_[1]=uint8_t(GPIOB->CRL>>24&15u);levels_[1]=GPIOB->ODR&GPIO_PIN_6;
@@ -103,7 +104,7 @@ void BoardProbe::poll(bool open,uint32_t now,bool am) {
         gpio_set_pin(GPIOB,GPIO_PIN_6|GPIO_PIN_7);
         gpio_config_pin(GPIOB,GPIO_PIN_6,GPIO_MODE_OUT_2MHZ,GPIO_CNF_PP);
         Lines{}.release_data();
-        active_=true;audio_error_=false;seek_steps_=0;seek_finished_=false;probe_.begin(now,am);
+        active_=true;audio_error_=false;seek_steps_=0;seek_finished_=false;probe_.begin(now,band);
     }
     if(!open && active_) {
         mute();reset_pin(false);

@@ -7,17 +7,18 @@ class Probe final {
 public:
     enum class Phase : uint8_t { Off, Reset, InitialCts, PowerWait, PowerCts, Revision, Configure, Receiver, Fault };
     enum class Failure : uint8_t { None, Bus, Chip, NoReply, Timeout, TuneTimeout, TuneFrequency };
-    void begin(uint32_t now,bool am=false) {
-        am_=am;
+    void begin(uint32_t now,Band band=Band::Fm) {
+        band_=band;
         phase_=Phase::Reset;failure_=Failure::None;due_=now+10u;deadline_=now+1000u;
         part_=0;property_=0;heard_=false;receiver_=Receiver{};
     }
     void end(){phase_=Phase::Off;receiver_=Receiver{};}
     Phase phase() const {return phase_;}
     Failure failure() const {return failure_;}
+    Band band() const {return band_;}
     uint8_t part() const {return part_;}
     bool retune(uint16_t frequency,uint32_t now) {
-        return phase_==Phase::Receiver && receiver_.tune(frequency,now,am_);
+        return phase_==Phase::Receiver && receiver_.tune(frequency,now,band_);
     }
     uint16_t frequency() const {return receiver_.frequency();}
     bool signal(uint32_t now,Signal &out) const {return receiver_.signal(now,out);}
@@ -66,12 +67,14 @@ public:
         } else if(phase_==Phase::Configure) {
             // 0.29 configures STCIEN and the two FM band edges.
             constexpr uint16_t fm_properties[][2]={{0x0001,1},{0x1400,MinFrequency},{0x1401,MaxFrequency}};
-            constexpr uint16_t am_properties[][2]={{0x0001,1},{0x3202,0},{0x3103,0x7800},
-                {0x3400,SwMinFrequency},{0x3401,SwMaxFrequency},{0x3402,5}};
-            if(property_==(am_?6:3)) {
-                receiver_.tune(am_?7100u:10030u,now,am_);phase_=Phase::Receiver;return;
+            const auto plan=band_plan(band_);
+            const uint16_t am_properties[][2]={{0x0001,1},{0x3202,0},{0x3103,0x7800},
+                {0x3400,plan.low},{0x3401,plan.high},{0x3402,plan.seek_spacing}};
+            const bool am=band_!=Band::Fm;
+            if(property_==(am?6:3)) {
+                receiver_.tune(plan.initial,now,band_);phase_=Phase::Receiver;return;
             }
-            const auto &property=am_?am_properties[property_]:fm_properties[property_];
+            const auto &property=am?am_properties[property_]:fm_properties[property_];
             const uint16_t id=property[0],value=property[1];
             const uint8_t command[]={0x12,0,uint8_t(id>>8),uint8_t(id),uint8_t(value>>8),uint8_t(value)};
             if(!bus.write(Address,command,sizeof command)){fail(Failure::Bus);return;}
@@ -80,7 +83,7 @@ public:
     }
 private:
     template<class Bus> void power_up(Bus &bus,uint32_t now,Failure failure) {
-        const uint8_t command[]={0x01,uint8_t(am_?0x11:0x10),0x05};
+        const uint8_t command[]={0x01,uint8_t(band_!=Band::Fm?0x11:0x10),0x05};
         if(!bus.write(Address,command,sizeof command)){fail(failure);return;}
         due_=now+500u;deadline_=now+1000u;phase_=Phase::PowerWait;
     }
@@ -90,6 +93,7 @@ private:
     Failure failure_=Failure::None;
     uint32_t due_=0,deadline_=0;
     uint8_t part_=0,property_=0;
-    bool heard_=false,am_=false;
+    bool heard_=false;
+    Band band_=Band::Fm;
 };
 }

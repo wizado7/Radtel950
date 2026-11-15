@@ -86,6 +86,11 @@ u.emu_start(symbols['scan_tone_dwell_tests']|1,0x080ff000,count=2000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'scan tone dwell failed at C++ line {result}'
 print('ARM scan tone dwell: minimum dwell, matching tone hold, wrong tone advance, RX timeout, manual step and VFO PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['broadcast_lower_bands_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'LW/MW AM failed at C++ line {result}'
+print('ARM LW/MW AM: band limits, tuning, preset roundtrip and receive-only UI PASS')
 for suite,marker in [('broadcast_bank_tests','ARM broadcast banks:'),('about_page_tests','ARM about page:')]:
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
  u.emu_start(symbols[suite]|1,0x080ff000,count=4000000)
@@ -372,6 +377,29 @@ if a.stock:
  assert oracle.reg_read(UC_ARM_REG_PC)==0x080ff000
  assert calls==[(bytes([0x40,0x40,0x1b,0xbc,0,1]),0)],calls
  print('OEM 0.29 AM tune: 7100 kHz command and antenna capacitor PASS')
+ properties=[]
+ def capture_am_property(machine,address,size,_):
+  properties.append((address,machine.reg_read(UC_ARM_REG_R0),machine.reg_read(UC_ARM_REG_R1)))
+  return_from_hook(machine,address,size,_)
+ hooks=[oracle.hook_add(UC_HOOK_CODE,capture_am_property,begin=address,end=address)
+        for address in (0x0802a33e,0x0802a420)]
+ oracle.mem_write(0x2000a949+67,b'\x01')
+ for band,low,high in ((0,153,279),(1,520,1710),(2,2300,30000)):
+  properties.clear()
+  oracle.mem_write(0x2000a388+1,bytes([band]))
+  oracle.reg_write(UC_ARM_REG_SP,0x20017000);oracle.reg_write(UC_ARM_REG_LR,0x080ff001)
+  oracle.emu_start(0x08011ac1,0x080ff000,count=2000)
+  assert oracle.reg_read(UC_ARM_REG_PC)==0x080ff000
+  assert properties==[(0x0802a33e,low,high),(0x0802a420,0x3402,5 if band==2 else 9)],properties
+  calls.clear()
+  oracle.mem_write(0x2000019c,bytes([band]))
+  oracle.reg_write(UC_ARM_REG_R0,low)
+  oracle.reg_write(UC_ARM_REG_LR,0x080ff001)
+  oracle.emu_start(0x08006861,0x080ff000,count=20000)
+  assert calls==[(bytes([0x40,0x40,low>>8,low&255,0,1]),0)],calls
+ for hook in hooks:oracle.hook_del(hook)
+ oracle.mem_write(0x2000a949+67,bytes(1))
+ print('OEM 0.29 LW/MW/SW: executed band boundaries, spacing and antenna command PASS')
  calls.clear()
  for address in (0x08011b40,0x080150f0,0x080119d4):
   oracle.reg_write(UC_ARM_REG_R0,10030)

@@ -454,7 +454,7 @@ extern "C" int main(void) {
             voice_watch.poll(voice_rx,app.config(),now,false,false);
             voice_rx.enable(false);
         }
-        fm_probe.poll(fm_open,now,app.sw_am());
+        fm_probe.poll(fm_open,now,app.broadcast_band());
         if(app.page()==Page::FmProbe) {
             fm_probe.listen(app.fm_request(),app.fm_seek(),app.fm_audio(),now);
             if(app.fm_seek() && fm_probe.seek_finished())app.fm_seek_result(fm_probe.seek_result());

@@ -287,7 +287,7 @@ bool Application::valid_snapshot() const {
     if(fm_step_>=sizeof fm_steps/sizeof fm_steps[0] || am_step_>=sizeof am_steps/sizeof am_steps[0] ||
        (decimal_coordinates_ && dms_coordinates_))return false;
     for(auto hz:fm_presets_)if(hz && (hz<6500 || hz>10800))return false;
-    for(auto hz:am_presets_)if(hz && (hz<2300 || hz>30000))return false;
+    for(auto hz:am_presets_)if(hz && fm::am_band(hz)==fm::Band::Fm)return false;
     if(auto_lock_>=sizeof menu_timeouts/sizeof menu_timeouts[0])return false;
     if(unsigned(mic_gain_)>unsigned(MicGain::High))return false;
     for(const auto &point:measured_power_.points)if(!MeasuredPower::valid(point))return false;

@@ -567,8 +567,9 @@ print('ARM compact migration: unknown version write guard, legacy fallback, inva
 fm_hw=Machine(raw)
 fm_poll=next(name for name in symbols if 'BoardProbe4poll' in name)
 fm_object=0x20012000
-def probe_poll(open_page,now):
-    for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2),(fm_object,open_page,now)):
+def probe_poll(open_page,now,band=0):
+    for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),
+                              (fm_object,open_page,now,band)):
         fm_hw.u.reg_write(register,value)
     fm_hw.function(fm_poll)
 def crl(port):return struct.unpack('<I',fm_hw.u.mem_read(port,4))[0]
@@ -581,10 +582,14 @@ assert crl(GPIO[0])>>24&15==2 and crl(GPIO[1])>>24==0x82
 assert not fm_hw.odr[GPIO[0]]&64
 probe_poll(1,10)
 assert fm_hw.odr[GPIO[0]]&64
-probe_poll(0,20)
+probe_poll(1,20,2) # Change from FM to LW while the receiver page is open.
+assert not fm_hw.odr[GPIO[0]]&64
+probe_poll(1,30,2)
+assert fm_hw.odr[GPIO[0]]&64
+probe_poll(0,40)
 assert crl(GPIO[0])==0x44000000 and crl(GPIO[1])==0x44000000
 assert crl(GPIO[2])==0x00040000
-print('ARM FM GPIO model: PC4 low, PA6 reset, PB6 push-pull, PB7 input pull-up and restore on exit PASS')
+print('ARM FM GPIO model: PC4 low, PA6 reset, PB6 push-pull, PB7 input pull-up, reset on band switch and restore on exit PASS')
 
 class VoiceMachine(Machine):
     def __init__(self):
@@ -1280,3 +1285,14 @@ assert 'UTC +04:30' in menu_ui.texts
 menu_key('Ok');menu_key('Timezone');menu_draw()
 assert 'UTC +04:30' in menu_ui.texts
 print('ARM GPS timezone UI: cancelled draft, 30/60-minute shortcuts, applied offset and LCD bounds RU/EN PASS')
+
+menu_key('Back');menu_key('LongwaveAm');menu_draw()
+assert 'Longwave AM' in menu_ui.texts
+menu_key('Back');menu_key('MediumwaveAm');menu_draw()
+assert 'Mediumwave AM' in menu_ui.texts
+menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+menu_key('LongwaveAm');menu_draw()
+assert 'Длинные волны AM' in menu_ui.texts
+menu_key('Back');menu_key('MediumwaveAm');menu_draw()
+assert 'Средние волны AM' in menu_ui.texts
+print('ARM LW/MW UI: band labels in both languages and LCD bounds PASS')

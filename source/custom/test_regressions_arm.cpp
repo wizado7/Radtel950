@@ -198,6 +198,8 @@ struct MockProbeBus:MockFm {
 struct MockAm {
  uint8_t command=0;
  unsigned properties=0;
+ uint16_t low=2300,high=30000,frequency=7100;
+ uint8_t spacing=5;
  bool write(uint8_t address,const uint8_t *data,size_t size) {
   if(address!=0x11 || !size)return false;
   command=data[0];
@@ -205,14 +207,14 @@ struct MockAm {
   if(command==0x10 || command==0x14)return size==1;
   if(command==0x12) {
    constexpr uint16_t ids[]={1,0x3202,0x3103,0x3400,0x3401,0x3402};
-   constexpr uint16_t vals[]={1,0,0x7800,2300,30000,5};
+   const uint16_t vals[]={1,0,0x7800,low,high,spacing};
    if(size!=6 || data[1] || properties>=6)return false;
    const unsigned index=properties++;
    return (uint16_t(data[2])<<8|data[3])==ids[index] &&
           (uint16_t(data[4])<<8|data[5])==vals[index];
   }
   if(command==0x40)return properties==6 && size==6 && data[1]==0x40 &&
-      data[2]==0x1b && data[3]==0xbc && !data[4] && data[5]==1;
+      (uint16_t(data[2])<<8|data[3])==frequency && !data[4] && data[5]==1;
   return size==2 && ((command==0x42 && data[1]==3) || (command==0x43 && data[1]==1));
  }
  bool read(uint8_t address,uint8_t *data,size_t size) {
@@ -220,7 +222,7 @@ struct MockAm {
   data[0]=command==0x14?0x81:0x80;
   if(size==1)return true;
   if(size==9 && command==0x10){data[1]=32;return true;}
-  if(size==8 && command==0x42){data[2]=0x1b;data[3]=0xbc;return true;}
+  if(size==8 && command==0x42){data[2]=uint8_t(frequency>>8);data[3]=uint8_t(frequency);return true;}
   if(size==6 && command==0x43){data[2]=1;data[4]=42;data[5]=18;return true;}
   return false;
  }
@@ -436,7 +438,7 @@ extern "C" int regression_tests() {
  CHECK(!sw.sw_am() && sw.fm_request()==10030);
  MockAm am_bus;
  fm::Probe am_probe;
- am_probe.begin(0,true);
+ am_probe.begin(0,fm::Band::Shortwave);
  for(unsigned now=0;now<950;++now)am_probe.poll(am_bus,[](bool){},now);
  fm::Signal am_signal;
  CHECK(am_probe.frequency()==7100 && am_probe.part()==32 && am_probe.signal(950,am_signal));
@@ -2943,5 +2945,48 @@ extern "C" unsigned scan_tone_dwell_tests() {
  CHECK(first!=0);
  scan.poll(app,750,true,true,false);CHECK(scan.frequency()==first);
  scan.poll(app,776,true,true,false);CHECK(scan.frequency()!=first);
+ return 0;
+}
+
+extern "C" unsigned broadcast_lower_bands_tests() {
+ Application app;
+ const struct {Key key;fm::Band band;uint16_t low,high,start;uint8_t spacing;} cases[]={
+  {Key::LongwaveAm,fm::Band::Longwave,153,279,198,9},
+  {Key::MediumwaveAm,fm::Band::Mediumwave,520,1710,999,9}
+ };
+ for(const auto &entry:cases) {
+  app.key(entry.key);
+  CHECK(app.page()==Page::FmProbe && app.fm_audio() && !app.voice_tx_page());
+  CHECK(app.broadcast_band()==entry.band && app.fm_request()==entry.start);
+  app.digit(4);app.digit(0);app.digit(0);app.key(Key::Ok);
+  CHECK(app.fm_request()==entry.start);
+  app.key(Key::Up);
+  unsigned low=entry.low;
+  unsigned digits[4]{},count=0;
+  do{digits[count++]=low%10;low/=10;}while(low);
+  while(count)app.digit(digits[--count]);
+  app.key(Key::Ok);CHECK(app.fm_request()==entry.low);
+  app.key(Key::Down);CHECK(app.fm_request()==entry.high);
+  app.key(Key::Menu);app.key(Key::Left);app.key(Key::Ok);
+  CHECK(app.broadcast_frequency(0)==entry.high && !app.voice_tx_page());
+  uint8_t snapshot[Application::SnapshotCapacity];
+  const auto size=app.save_portable_snapshot(snapshot,sizeof snapshot);
+  Application restored(false);
+  CHECK(restored.restore_portable_snapshot(snapshot,size,Application::PortableSchema));
+  restored.key(Key::AmPresets);restored.key(Key::Ok);
+  CHECK(restored.broadcast_band()==entry.band && restored.fm_request()==entry.high);
+  app.key(Key::Back);app.key(Key::Back);
+  fm::Probe probe;
+  MockAm bus;
+  bus.low=entry.low;bus.high=entry.high;bus.frequency=entry.start;bus.spacing=entry.spacing;
+  probe.begin(0,entry.band);
+  for(uint32_t now=0;now<=950;now+=5)probe.poll(bus,[](bool){},now);
+  CHECK(probe.frequency()==entry.start && probe.failure()==fm::Probe::Failure::None);
+  CHECK(!probe.retune(400,951));
+  bus.frequency=entry.high;
+  CHECK(probe.retune(entry.high,955));
+  for(uint32_t now=955;now<=1200;now+=5)probe.poll(bus,[](bool){},now);
+  CHECK(probe.frequency()==entry.high);
+ }
  return 0;
 }

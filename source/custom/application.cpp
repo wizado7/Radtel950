@@ -405,6 +405,9 @@ constexpr MenuEntry radio_menu[]={
     {"FM presets",Key::FmPresets},{"AM presets",Key::AmPresets},
     {"FM tuning step",Key::FmStep},{"AM tuning step",Key::AmStep},
     {"Mic Gain",Key::MicGain},
+#ifdef RT950_MAIN_TX
+    {"Longwave AM",Key::LongwaveAm},{"Mediumwave AM",Key::MediumwaveAm},
+#endif
     {"NOAA",Key::Weather},{"NOAA Alert",Key::WeatherAlert},
     {"Monitor",Key::Monitor},
     {"Repeater",Key::Menu,Option::Count,MenuGroup::Repeater}
@@ -616,7 +619,8 @@ void Application::key(Key k) {
         if(k==Key::Erase){if(selected){broadcast_action_=2;notify("");}else notify("PRESET EMPTY");}
         if(k==Key::Ok) {
             if(!selected){notify("PRESET EMPTY");return;}
-            sw_am_=am;if(am)sw_request_=selected;else fm_request_=selected;
+            broadcast_band_=am?fm::am_band(selected):fm::Band::Fm;
+            if(am)sw_request_=selected;else fm_request_=selected;
             fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;fm_audio_=true;
             page_=Page::FmProbe;notify("");
         }
@@ -812,29 +816,34 @@ void Application::key(Key k) {
         if(k==Key::Back){page_=Page::Settings;return;}
         return;
     }
-    if(k==Key::FmRadio || k==Key::FmProbe || k==Key::SwAm) {
+    if(k==Key::FmRadio || k==Key::FmProbe || k==Key::SwAm || k==Key::LongwaveAm || k==Key::MediumwaveAm) {
         if(page_==Page::FmProbe){page_=parent_;return;}
         if(page_!=Page::Radio && page_!=Page::Settings)return;
-        parent_=page_;page_=Page::FmProbe;fm_audio_=k!=Key::FmProbe;sw_am_=k==Key::SwAm;
+        parent_=page_;page_=Page::FmProbe;fm_audio_=k!=Key::FmProbe;
+        broadcast_band_=k==Key::SwAm?fm::Band::Shortwave:k==Key::LongwaveAm?fm::Band::Longwave:
+            k==Key::MediumwaveAm?fm::Band::Mediumwave:fm::Band::Fm;
+        if(sw_am() && !fm::in_band(sw_request_,broadcast_band_))
+            sw_request_=fm::band_plan(broadcast_band_).initial;
         fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;notify("");return;
     }
     if(page_==Page::FmProbe) {
         if(k==Key::Back){page_=parent_;return;}
         if(!fm_audio_)return;
-        if(k==Key::Menu){key(sw_am_?Key::AmPresets:Key::FmPresets);return;}
-        if(sw_am_) {
+        if(k==Key::Menu){key(sw_am()?Key::AmPresets:Key::FmPresets);return;}
+        if(sw_am()) {
+            const auto plan=fm::band_plan(broadcast_band_);
             if(k==Key::Erase && fm_digits_)fm_entry_[--fm_digits_]=0;
             else if(k==Key::Ok && fm_digits_) {
                 unsigned value=0;
                 for(unsigned i=0;i<fm_digits_;++i)value=value*10u+unsigned(fm_entry_[i]-'0');
-                if(value>=fm::SwMinFrequency && value<=fm::SwMaxFrequency) {
+                if(fm::in_band(value,broadcast_band_)) {
                     sw_request_=uint16_t(value);fm_digits_=0;fm_entry_[0]=0;notify("");
-                } else notify("AM 2300-30000 kHz");
+                } else notify(broadcast_band_==fm::Band::Longwave?"AM 153-279 kHz":
+                    broadcast_band_==fm::Band::Mediumwave?"AM 520-1710 kHz":"AM 2300-30000 kHz");
             } else if(k==Key::Up || k==Key::Down) {
                 const int step=int(tuner_step(true));
                 const int next=int(sw_request_)+(k==Key::Up?step:-step);
-                sw_request_=uint16_t(next>fm::SwMaxFrequency?fm::SwMinFrequency:
-                    next<fm::SwMinFrequency?fm::SwMaxFrequency:next);
+                sw_request_=uint16_t(next>plan.high?plan.low:next<plan.low?plan.high:next);
                 fm_digits_=0;fm_entry_[0]=0;
             }
             return;

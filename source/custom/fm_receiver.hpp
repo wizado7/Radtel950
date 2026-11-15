@@ -6,7 +6,27 @@
 namespace rt950::fm {
 constexpr uint8_t Address=0x11;
 constexpr uint16_t MinFrequency=6500, MaxFrequency=10800; // units of 10 kHz
-constexpr uint16_t SwMinFrequency=2300, SwMaxFrequency=30000; // kHz
+enum class Band : uint8_t { Fm, Shortwave, Longwave, Mediumwave };
+struct BandPlan {uint16_t low,high,initial,seek_spacing;};
+constexpr BandPlan band_plan(Band band) {
+    switch(band) {
+    case Band::Longwave:return {153,279,198,9};
+    case Band::Mediumwave:return {520,1710,999,9};
+    case Band::Shortwave:return {2300,30000,7100,5};
+    case Band::Fm:return {MinFrequency,MaxFrequency,10030,0};
+    }
+    return {};
+}
+constexpr bool in_band(unsigned frequency,Band band) {
+    const auto plan=band_plan(band);
+    return frequency>=plan.low && frequency<=plan.high;
+}
+constexpr Band am_band(unsigned frequency) {
+    if(in_band(frequency,Band::Longwave))return Band::Longwave;
+    if(in_band(frequency,Band::Mediumwave))return Band::Mediumwave;
+    if(in_band(frequency,Band::Shortwave))return Band::Shortwave;
+    return Band::Fm;
+}
 constexpr uint8_t Cts=0x80, Error=0x40, TuneComplete=0x01;
 
 enum class Quality : uint8_t { NoStation, Weak, Fair, Good };
@@ -35,10 +55,9 @@ class Receiver final {
 public:
     enum class Failure : uint8_t { None, Bus, Chip, Timeout, Frequency };
     enum class State : uint8_t { Idle, Tuning, Tuned, Fault };
-    bool tune(uint16_t frequency,uint32_t now,bool am=false) {
-        if(frequency<(am?SwMinFrequency:MinFrequency) ||
-           frequency>(am?SwMaxFrequency:MaxFrequency) || state_==State::Tuning)return false;
-        am_=am;
+    bool tune(uint16_t frequency,uint32_t now,Band band=Band::Fm) {
+        if(!in_band(frequency,band) || state_==State::Tuning)return false;
+        am_=band!=Band::Fm;
         requested_=frequency;tuned_=0;signal_={};signal_ready_=false;
         failure_=Failure::None;state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
         return true;

@@ -550,7 +550,11 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   static_assert(sizeof(titles)/sizeof(titles[0])==unsigned(MenuGroup::Count));
   copy(line,titles[unsigned(a.menu_group())]);
  } else if(a.page()==Page::PowerStatus)copy(line,"TX DISABLED ON THIS PAGE");
- else {copy(line,"GPS ");copy(line+4,state);}
+ else if(a.page()==Page::FmProbe && a.sw_am()) {
+  const auto band=a.broadcast_band();
+  copy(line,band==fm::Band::Longwave?"Longwave AM":
+      band==fm::Band::Mediumwave?"Mediumwave AM":"Shortwave AM");
+ } else {copy(line,"GPS ");copy(line+4,state);}
  if(changed(0,line,force)) {rect(8,32,224,12,bg);label(10,34,line,accent,bg);}
  if(a.page()==Page::Radio) {
   const auto &c=a.config();

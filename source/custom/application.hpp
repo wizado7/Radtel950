@@ -6,12 +6,13 @@
 #include "radio_settings.hpp"
 #include "power_calibration.hpp"
 #include "weather_rx.hpp"
+#include "fm_receiver.hpp"
 extern "C" {
 #include "../mvp/core.h"
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm };
 enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather };
 enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
@@ -145,11 +146,12 @@ public:
         return i<BroadcastCount?(broadcast_am()?am_presets_[i]:fm_presets_[i]):0;
     }
     uint16_t broadcast_source() const {return broadcast_am()?sw_request_:fm_request_;}
-    uint16_t fm_request() const {return sw_am_?sw_request_:fm_request_;}
+    uint16_t fm_request() const {return sw_am()?sw_request_:fm_request_;}
     WeatherRx &weather() {return weather_;}
     const WeatherRx &weather() const {return weather_;}
     void weather_ptt() {if(page_==Page::Weather)page_=Page::Radio;}
-    bool sw_am() const {return sw_am_;}
+    bool sw_am() const {return broadcast_band_!=fm::Band::Fm;}
+    fm::Band broadcast_band() const {return broadcast_band_;}
     const char *fm_entry() const {return fm_entry_;}
     bool monitor_enabled() const {return monitor_enabled_;}
     bool monitor_draft() const {return monitor_draft_;}
@@ -298,7 +300,8 @@ private:
     char fm_entry_[6]{};
     uint8_t fm_digits_=0;
     bool monitor_enabled_=false,monitor_draft_=false;
-    bool fm_audio_=false,fm_seek_=false,sw_am_=false;
+    bool fm_audio_=false,fm_seek_=false;
+    fm::Band broadcast_band_=fm::Band::Fm;
     Page parent_=Page::Settings;
     const char *notice_="";
     uint32_t now_=0,notice_since_=0;
