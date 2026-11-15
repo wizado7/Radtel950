@@ -9,11 +9,20 @@ public:
     struct Entry {
         char source[7]{},destination[10]{},body[68]{},id[6]{};
         uint8_t ssid=0;
+        bool unread=false;
     };
     unsigned count(bool personal=false) const {return list(personal).size;}
     const Entry *at(unsigned index,bool personal=false) const {
         const auto &messages=list(personal);
         return index<messages.size?&messages.entries[index]:nullptr;
+    }
+    bool personal_unread() const {
+        for(unsigned i=0;i<personal_.size;++i)
+            if(personal_.entries[i].unread)return true;
+        return false;
+    }
+    void read_personal(unsigned index) {
+        if(index<personal_.size)personal_.entries[index].unread=false;
     }
     void select_identity(const char *callsign,uint8_t ssid) {
         char address[10]{};
@@ -66,7 +75,10 @@ public:
         entry.ssid=(frame[13]>>1)&15u;
 
         all_.push(entry);
-        if(address_[0] && addressed_to_me(entry.destination))personal_.push(entry);
+        if(address_[0] && addressed_to_me(entry.destination)) {
+            entry.unread=true;
+            personal_.push(entry);
+        }
     }
 private:
     static bool equal(const char *a,const char *b) {

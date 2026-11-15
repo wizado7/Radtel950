@@ -284,7 +284,7 @@ void draw_fm_probe(const Application &app,const InputStatus &input,bool force) {
    const char *entry=*app.feedback()?app.feedback():*app.fm_entry()?app.fm_entry():app.sw_am()?"OK: enter frequency kHz":"OK: 10030 = 100.30";
    if(changed(8,entry,force)){rect(8,270,224,16,bg);label(10,271,entry,ink,bg);}
    const char *hint=app.sw_am()?(app.fm_seek()?"Arrows: cancel seek":"Left / right: seek"):
-       "Right: seek   ABC: save";
+       app.fm_seek()?"Right: cancel seek":"Right: seek   ABC: save";
    if(changed(9,hint,force)){rect(8,286,224,8,bg);label(10,286,hint,muted,bg);}
   } else if(force)label(10,271,"FM TEST / AUDIO OFF",muted,bg);
 }
@@ -542,7 +542,13 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   rect(right-5*glyph_width,5,5*glyph_width,16,card);
   label(right-length*glyph_width,9,battery,muted);
  }
- if(changed(12,a.keypad_locked()?"LOCK":"",force)){rect(88,5,88,16,card);if(a.keypad_locked())label(88,9,"LOCK",accent);}
+ const bool mail=a.page()==Page::Radio && input.aprs_messages.personal_unread();
+ const char header[]={a.keypad_locked()?'L':'-',mail?'M':'-',0};
+ if(changed(12,header,force)) {
+  rect(88,5,88,16,card);
+  if(a.keypad_locked())label(88,9,"LOCK",accent);
+  if(mail)label(136,9,"APRS*",accent);
+ }
  const bool presets=a.page()==Page::FmPresets || a.page()==Page::AmPresets;
  const char *footer=a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
      a.weather().scanning()?"OK LISTEN / BACK EXIT":"OK SCAN / BACK EXIT"):

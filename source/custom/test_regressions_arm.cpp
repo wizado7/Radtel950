@@ -156,20 +156,24 @@ struct VoiceReceiver {
 };
 struct MockFm {
  unsigned operations=0;
- uint8_t command=0;
+ uint8_t command=0,seek_arg=0,status_arg=0,flags=0;
+ uint16_t frequency=10030;
+ bool seek_stalled=false;
  bool stalled=false,error=false,wire_error=false,wrong_frequency=false;
  bool write(uint8_t address,const uint8_t *data,size_t size) {
   ++operations;command=data[0];
   if(wire_error || address!=0x11)return false;
   if(command==0x20)return size==5 && data[1]==3 && data[2]==0x27 && data[3]==0x2e && data[4]==0;
+  if(command==0x21){seek_arg=data[1];return size==2 && seek_arg==0x0c;}
   if(command==0x14)return size==1;
-  return size==2 && ((command==0x22 && data[1]==3) || (command==0x23 && data[1]==1));
+  if(command==0x22 && size==2){status_arg=data[1];return status_arg==1 || status_arg==3;}
+  return size==2 && command==0x23 && data[1]==1;
  }
  bool read(uint8_t address,uint8_t *data,size_t size) {
   ++operations;
   if(wire_error || address!=0x11)return false;
-  data[0]=error?0xc0:stalled?0:command==0x14?0x81:0x80;
-  if(size==7 && command==0x22){data[2]=0x27;data[3]=wrong_frequency?0:0x2e;}
+  data[0]=error?0xc0:stalled?0:command==0x14 && !seek_stalled?0x81:0x80;
+  if(size==7 && command==0x22){data[1]=flags;data[2]=uint8_t(frequency>>8);data[3]=wrong_frequency?0:uint8_t(frequency);}
   if(size==8 && command==0x23){data[2]=1;data[3]=0x80;data[4]=48;data[5]=19;}
   return true;
  }
@@ -181,12 +185,13 @@ struct MockProbeBus:MockFm {
   if(data[0]==1){powered=!wire_error && address==0x11 && size==3 && data[1]==0x10 && data[2]==5;return powered;}
   if(data[0]==0x10){revision=powered && size==1;return revision;}
   if(data[0]==0x12){
-   constexpr uint8_t expected[][6]={{0x12,0,0,1,0,1},{0x12,0,0x14,0,0x19,0x64},{0x12,0,0x14,1,0x2a,0x30}};
-   if(!revision || address!=0x11 || size!=6 || properties>=3)return false;
+   constexpr uint8_t expected[][6]={{0x12,0,0,1,0,1},{0x12,0,0x14,0,0x19,0x64},
+     {0x12,0,0x14,1,0x2a,0x30},{0x12,0,0x14,2,0,10},{0x12,0,0x14,3,0,10},{0x12,0,0x14,4,0,25}};
+   if(!revision || address!=0x11 || size!=6 || properties>=6)return false;
    for(size_t i=0;i<size;++i)if(data[i]!=expected[properties][i])return false;
    ++properties;return true;
   }
-  if(data[0]==0x20 && properties!=3)return false;
+  if(data[0]==0x20 && properties!=6)return false;
   return MockFm::write(address,data,size);
  }
  bool read(uint8_t address,uint8_t *data,size_t size) {
@@ -933,7 +938,7 @@ extern "C" int regression_tests() {
  bool reset_released=false;
  probe.begin(0);
  for(uint32_t now=0;now<=800;now+=5)probe.poll(probe_bus,[&](bool high){reset_released=high;},now);
- CHECK(reset_released && probe_bus.powered && probe_bus.revision && probe_bus.properties==3);
+ CHECK(reset_released && probe_bus.powered && probe_bus.revision && probe_bus.properties==6);
  CHECK(probe.phase()==fm::Probe::Phase::Receiver && probe.part()==32 && probe.frequency()==10030);
  CHECK(probe.signal(800,signal) && signal.rssi==48);
  probe.end();CHECK(!probe.signal(800,signal) && probe.phase()==fm::Probe::Phase::Off);
@@ -3115,8 +3120,10 @@ extern "C" int aprs_personal_tests() {
      messages.record(frame,28);
  };
  receive("n0call-15",'A');
+ CHECK(messages.personal_unread() && !messages.at(0)->unread);
+ messages.read_personal(0);CHECK(!messages.personal_unread());
  receive("n0call-15",'A');
- CHECK(messages.count()==1 && messages.count(true)==1);
+ CHECK(messages.count()==1 && messages.count(true)==1 && !messages.personal_unread());
  receive("N0CALL-1",'B');receive("N0CALL",'C');receive("N0CALL-14",'D');
  CHECK(messages.count()==3 && messages.count(true)==1 && messages.at(0,true)->body[0]=='A');
  messages.select_identity("N0CALL",15);CHECK(messages.count(true)==1);
@@ -3125,7 +3132,9 @@ extern "C" int aprs_personal_tests() {
  CHECK(messages.count(true)==0);
  receive("N0CALL-0",'H');receive("N0CALL",'I');
  CHECK(messages.count(true)==2 && messages.at(0,true)->body[0]=='I' && messages.at(1,true)->body[0]=='H');
- messages.select_identity("",0);receive("N0CALL",'J');CHECK(!messages.count(true));
+ messages.read_personal(1);CHECK(messages.personal_unread());
+ messages.read_personal(0);CHECK(!messages.personal_unread());
+ messages.select_identity("",0);receive("N0CALL",'J');CHECK(!messages.count(true) && !messages.personal_unread());
  Application app(false);
  app.key(Key::AprsMessages);app.aprs_message_counts(3,2);
  app.key(Key::Mode);CHECK(app.aprs_personal() && !app.aprs_message_index());
@@ -3135,6 +3144,61 @@ extern "C" int aprs_personal_tests() {
  app.aprs_message_counts(3,0);CHECK(!app.aprs_message_index());
  app.key(Key::Mode);CHECK(!app.aprs_personal());
  app.key(Key::Up);CHECK(app.aprs_message_index()==2);
+ return 0;
+}
+
+extern "C" int beacon_altitude_tests() {
+ nav_reset();
+ nmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,123.4,M,46.9,M,,",100);
+ const auto &nav=*nav_get();
+ CHECK(aprs::beacon_altitude(nav,100)==405 && aprs::beacon_altitude(nav,3100)==-1);
+ nmea("GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,-0.1,M,46.9,M,,",200);
+ CHECK(aprs::beacon_altitude(nav,200)==-1);
+ aprs::FrameTransmitter tx;
+ const char call[7]="N0CALL";
+ const int32_t values[]={-1,0,405,999999,1000000};
+ const char *fields[]={"","/A=000000","/A=000405","/A=999999",""};
+ for(unsigned index=0;index<5;++index) {
+     CHECK(aprs::encode_beacon(tx,call,9,"4807.038",'N',"01131.000",'E','>',values[index]));
+     AprsCapture capture;
+     aprs::FrameReceiver rx;
+     bool previous=false;
+     for(size_t i=0;i<tx.size();++i) {
+         const bool current=tx.level(i);
+         rx.bit(current==previous,capture_aprs,&capture);
+         previous=current;
+     }
+     CHECK(capture.count==1 && capture.length==(fields[index][0]?48u:39u));
+     for(unsigned i=0;fields[index][i];++i)CHECK(capture.kiss[38+i]==uint8_t(fields[index][i]));
+ }
+ return 0;
+}
+
+extern "C" int fm_native_seek_tests() {
+ for(unsigned trial=0;trial<6;++trial) {
+     fm::Receiver rx;
+     MockFm bus;
+     auto run=[&](uint32_t start,uint32_t end){for(uint32_t now=start;now<=end;now+=5)rx.poll(bus,now);};
+     CHECK(rx.tune(10030,0));
+     run(0,100);CHECK(rx.frequency()==10030 && rx.seek(105));
+     bus.flags=trial==1?0x81:trial==2?0:1;
+     bus.frequency=trial==3?6400:10240;
+     bus.seek_stalled=trial>=4;
+     run(105,205);
+     CHECK(bus.seek_arg==0x0c);
+     uint16_t found=0;
+     if(trial==4) {
+         rx.cancel_seek(210);run(210,250);
+         CHECK(bus.status_arg==3 && !rx.take_seek_result(found));
+     } else {
+         if(trial==5)run(30105,30140);
+         CHECK(bus.status_arg==(trial==5?3:1) && rx.take_seek_result(found) && found==(trial==0?10240:0));
+     }
+     if(trial!=0) {
+         bus.seek_stalled=false;bus.frequency=10030;
+         CHECK(rx.tune(10030,30150));run(30150,30250);CHECK(rx.frequency()==10030);
+     }
+ }
  return 0;
 }
 

@@ -17,7 +17,6 @@ private:
     bool levels_[4]{};
     uint32_t audio_deadline_=0;
     uint16_t seek_result_=0;
-    unsigned seek_steps_=0;
     uint8_t audio_step_=0;
     bool active_=false,audio_enabled_=false,audio_error_=false,seek_finished_=false;
     void mute();

@@ -69,13 +69,14 @@ public:
         } else if(phase_==Phase::Revision) {
             part_=reply[1];phase_=Phase::Configure;deadline_=now+1000u;
         } else if(phase_==Phase::Configure) {
-            // 0.29 configures STCIEN and the two FM band edges.
-            constexpr uint16_t fm_properties[][2]={{0x0001,1},{0x1400,MinFrequency},{0x1401,MaxFrequency}};
+            // OEM band edges, 100 kHz seek spacing and the Custom UI Fair thresholds.
+            constexpr uint16_t fm_properties[][2]={{0x0001,1},{0x1400,MinFrequency},
+                {0x1401,MaxFrequency},{0x1402,10},{0x1403,FairSnr},{0x1404,FairRssi}};
             const auto plan=band_plan(band_);
             const uint16_t am_properties[][2]={{0x0001,1},{0x3202,0},{0x3103,0x7800},
                 {0x3400,plan.low},{0x3401,plan.high},{0x3402,plan.seek_spacing}};
             const bool am=band_!=Band::Fm;
-            if(property_==(am?6:3)) {
+            if(property_==6) {
                 receiver_.tune(plan.initial,now,band_);phase_=Phase::Receiver;return;
             }
             const auto &property=am?am_properties[property_]:fm_properties[property_];

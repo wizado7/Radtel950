@@ -43,43 +43,24 @@ void BoardProbe::mute() {
 
 void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now,bool seek_up) {
     if(!active_)return;
-    if(!seek) {
-        seek_steps_=0;seek_finished_=false;
-    }
+    if(!seek)seek_finished_=false;
     if(!audio || probe_.phase()==Probe::Phase::Fault) {
         mute();
         if(seek){seek_finished_=true;seek_result_=0;}
         return;
     }
     if(probe_.phase()!=Probe::Phase::Receiver)return;
-    const bool am=probe_.band()!=Band::Fm;
-    if(am) {
-        if(probe_.seeking()) {
-            if(!seek)probe_.cancel_seek(now);
-            return;
-        }
-        uint16_t found=0;
-        if(probe_.take_seek_result(found) && seek) {
-            seek_finished_=true;seek_result_=found;
-            return;
-        }
-        if(seek && probe_.frequency()==frequency && probe_.seek(now,seek_up)) {
-            mute();
-            return;
-        }
-    } else if(!probe_.frequency())return;
-    if(!am && seek && !seek_finished_) {
-        Signal signal;
-        if(seek_steps_) {
-            if(!probe_.signal(now,signal))return;
-            if(quality(signal)>=Quality::Fair || seek_steps_>=(MaxFrequency-MinFrequency)/10+1) {
-                seek_finished_=true;
-                seek_result_=quality(signal)>=Quality::Fair?probe_.frequency():0;
-                return;
-            }
-        }
-        const unsigned next=unsigned(probe_.frequency())+10;
-        mute();++seek_steps_;probe_.retune(uint16_t(next>MaxFrequency?MinFrequency:next),now);return;
+    if(probe_.seeking()) {
+        if(!seek)probe_.cancel_seek(now);
+        return;
+    }
+    uint16_t found=0;
+    if(probe_.take_seek_result(found) && seek) {
+        seek_finished_=true;seek_result_=found;
+        return;
+    }
+    if(seek && probe_.frequency()==frequency && probe_.seek(now,seek_up)) {
+        mute();return;
     }
     if(probe_.frequency()!=frequency) {
         mute();audio_error_=false;
@@ -120,7 +101,7 @@ void BoardProbe::poll(bool open,uint32_t now,Band band) {
         gpio_set_pin(GPIOB,GPIO_PIN_6|GPIO_PIN_7);
         gpio_config_pin(GPIOB,GPIO_PIN_6,GPIO_MODE_OUT_2MHZ,GPIO_CNF_PP);
         Lines{}.release_data();
-        active_=true;audio_error_=false;seek_steps_=0;seek_finished_=false;probe_.begin(now,band);
+        active_=true;audio_error_=false;seek_finished_=false;probe_.begin(now,band);
     }
     if(!open && active_) {
         mute();reset_pin(false);

@@ -438,6 +438,7 @@ constexpr Text catalog[]={
     {"AM no station found","AM: станция не найдена"},
     {"Left / right: seek","Влево / вправо: поиск"},
     {"Arrows: cancel seek","Стрелки: отмена поиска"},
+    {"Right: cancel seek","Вправо: отмена поиска"},
     {"FM AUDIO ERROR","FM: ошибка звука"},
     {"FM LISTENING","FM: прослушивание"},
     {"FM NO STATION","FM: станция не захвачена"},

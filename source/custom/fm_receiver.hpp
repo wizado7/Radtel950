@@ -28,6 +28,7 @@ constexpr Band am_band(unsigned frequency) {
     return Band::Fm;
 }
 constexpr uint8_t Cts=0x80, Error=0x40, TuneComplete=0x01;
+constexpr uint8_t FairRssi=25,FairSnr=10;
 
 enum class Quality : uint8_t { NoStation, Weak, Fair, Good };
 struct Signal {
@@ -45,7 +46,7 @@ inline bool decode_signal(const uint8_t *reply,size_t size,Signal &out) {
 inline Quality quality(const Signal &signal) {
     if(!signal.valid || signal.afc_railed)return Quality::NoStation;
     if(signal.rssi>=40 && signal.snr>=18)return Quality::Good;
-    if(signal.rssi>=25 && signal.snr>=10)return Quality::Fair;
+    if(signal.rssi>=FairRssi && signal.snr>=FairSnr)return Quality::Fair;
     return Quality::Weak;
 }
 
@@ -63,7 +64,7 @@ public:
         return true;
     }
     bool seek(uint32_t now,bool up=true) {
-        if(band_==Band::Fm || state_!=State::Tuned)return false;
+        if(state_!=State::Tuned)return false;
         requested_=tuned_;tuned_=0;signal_={};signal_ready_=false;
         seek_done_=false;seek_up_=up;operation_=Operation::Seek;
         state_=State::Tuning;phase_=Phase::BeforeTune;started_=next_=now;
@@ -90,12 +91,12 @@ public:
     }
     template<class Bus> void poll(Bus &bus,uint32_t now) {
         if(state_==State::Idle || state_==State::Fault)return;
+        const bool am=band_!=Band::Fm;
         if(state_==State::Tuning && uint32_t(now-started_)>=
-           (operation_==Operation::Seek?180000u:1000u)) {
+           (operation_==Operation::Seek?(am?180000u:30000u):1000u)) {
             if(operation_!=Operation::Seek){fail(Failure::Timeout);return;}
             cancel_seek(now,true);
         }
-        const bool am=band_!=Band::Fm;
         if(int32_t(now-next_)<0)return;
         next_=now+5;
         uint8_t reply[8]{};
@@ -106,7 +107,7 @@ public:
         case Phase::SendTune: {
             if(operation_==Operation::Seek) {
                 // OEM 0.29 sends 41 0C. AN332 specifies SEEKUP at bit 3 and ANTCAP=1 for SW.
-                const uint8_t command[]={0x41,uint8_t(seek_up_?0x0c:0x04),0,0,0,1};
+                const uint8_t command[]={uint8_t(am?0x41:0x21),uint8_t(seek_up_?0x0c:0x04),0,0,0,1};
                 if(!bus.write(Address,command,band_==Band::Shortwave?6:2)){
                     fail(Failure::Bus);break;
                 }

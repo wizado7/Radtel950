@@ -1350,3 +1350,30 @@ for russian in (False,True):
     expected=('V/M: МНЕ','ЗАДАЙТЕ ПОЗЫВНОЙ / SSID') if russian else ('V/M: TO ME','SET CALLSIGN / SSID')
     assert all(s in menu_ui.texts for s in expected)
 print('ARM APRS personal inbox UI: view toggle and missing identity in both languages PASS')
+
+fields=('personal_.size','personal_.entries[0].unread')
+mail_offsets_text=subprocess.check_output([args.prefix+'gdb','-batch',str(build/'rt950-custom-ui.elf'),
+    *sum((['-ex','p/x (unsigned long)&((rt950::InputStatus*)0)->aprs_messages.'+field] for field in fields),[])],
+    text=True,stderr=subprocess.DEVNULL)
+mail_offsets=[int(v,16) for v in re.findall(r'\$\d+ = (0x[0-9a-f]+)',mail_offsets_text)]
+assert len(mail_offsets)==len(fields)
+menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+menu_ui.u.mem_write(0x20015000+mail_offsets[0],struct.pack('<I',1))
+menu_ui.u.mem_write(0x20015000+mail_offsets[1],bytes([1]))
+menu_key('KeypadLock');menu_draw()
+assert 'APRS*' in menu_ui.texts and 'LOCK' in menu_ui.texts
+menu_ui.u.mem_write(0x20015000+mail_offsets[1],bytes([0]))
+menu_draw();assert 'APRS*' not in menu_ui.texts and 'LOCK' in menu_ui.texts
+menu_ui.u.mem_write(0x20015000+mail_offsets[0],bytes(4))
+print('ARM APRS unread UI: home indicator coexists with keypad lock and clears PASS')
+
+menu_key('KeypadLock')
+for russian in (False,True):
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+    menu_key('FmRadio');menu_key('Right');menu_draw()
+    assert ('Вправо: отмена поиска' if russian else 'Right: cancel seek') in menu_ui.texts
+    menu_key('Right');menu_draw()
+    assert ('Вправо: поиск ABC: память' if russian else 'Right: seek   ABC: save') in menu_ui.texts
+    menu_key('Back')
+print('ARM FM native seek UI: start and cancel in both languages PASS')

@@ -271,7 +271,7 @@ extern "C" int main(void) {
             const auto &nav=*nav_get();
             if(aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
                                    nav.lat,nav.ns[0],nav.lon,nav.ew[0],
-                                   beacon_symbols[app.beacon_symbol_index()].code)) {
+                                   beacon_symbols[app.beacon_symbol_index()].code,aprs::beacon_altitude(nav,now))) {
                 voice_watch.poll(voice_rx,config,now,false,false);
                 beacon_tx_hz=packet_hz;
                 beacon.start(packet_hz,now);
@@ -621,7 +621,11 @@ extern "C" int main(void) {
             (config.ble_on && !switch_off?1u<<Load::Ble:0u) |
             (packet_rx.running()?1u<<Load::AprsRx:0u) | (transmitting?1u<<Load::Tx:0u));
 #endif
-        if(app.screen_awake() && uint32_t(now-last_draw)>=200u) {last_draw=now;ui_draw(app,input,now);}
+        if(app.screen_awake() && uint32_t(now-last_draw)>=200u) {
+            last_draw=now;ui_draw(app,input,now);
+            if(app.page()==Page::AprsMessages && app.aprs_personal())
+                input.aprs_messages.read_personal(app.aprs_message_index());
+        }
         board_display_brightness(app.screen_awake()?(uint8_t)app.brightness():0);
         // Sleep only the CPU, keep SysTick/UART and GPIO polling active.
         // SysTick wakes us every millisecond; the watchdog still checks main.

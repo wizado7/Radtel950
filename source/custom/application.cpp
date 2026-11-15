@@ -907,7 +907,9 @@ void Application::key(Key k) {
             const int next=int(fm_request_)+(k==Key::Up?step:-step);
             fm_request_=uint16_t(next>10800?6500:next<6500?10800:next);
             fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;
-        } else if(k==Key::Right)fm_seek_=!fm_seek_;
+        } else if(k==Key::Right) {
+            fm_seek_down_=false;fm_seek_=!fm_seek_;fm_digits_=0;fm_entry_[0]=0;notify("");
+        }
         else if(k==Key::NextSlot) {fm_memory_=fm_request_;fm_presets_[0]=fm_request_;notify("FM preset saved");}
         else if(k==Key::Left && fm_memory_) {fm_request_=fm_memory_;fm_seek_=false;fm_digits_=0;fm_entry_[0]=0;notify("");}
         return;

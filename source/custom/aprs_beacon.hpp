@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "aprs_tx.hpp"
+#include "gps_view.hpp"
 #include "voice_ptt.hpp"
 
 namespace rt950::aprs {
+inline int32_t beacon_altitude(const nav_status_t &nav,uint32_t now) {
+    return gps_altitude_fresh(nav,now) && nav.altitude_decimetres>=0?
+        gps_altitude_display(nav.altitude_decimetres,true):-1;
+}
+
 inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ssid,
-                          const char *lat,char ns,const char *lon,char ew,char symbol='>') {
+                          const char *lat,char ns,const char *lon,char ew,char symbol='>',
+                          int32_t altitude_feet=-1) {
     if(!call[0] || ssid>15 || !lat || !lon || symbol<'!' || symbol>'~')return false;
-    uint8_t frame[36]{};
+    uint8_t frame[45]{};
     const char destination[]="APRS  ";
     bool padded=false;
     for(unsigned i=0;i<6;++i) {
@@ -26,7 +33,14 @@ inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ss
     int32_t ignored=0;
     if(!coordinate(frame+17,2,true,ignored) || !coordinate(frame+26,3,false,ignored))return false;
     frame[35]=uint8_t(symbol);
-    return out.encode(frame,sizeof frame,32);
+    size_t size=36;
+    if(altitude_feet>=0 && altitude_feet<=999999) {
+        frame[size++]='/';frame[size++]='A';frame[size++]='=';
+        const unsigned feet=unsigned(altitude_feet);
+        for(unsigned divisor=100000;divisor;divisor/=10)
+            frame[size++]=uint8_t('0'+feet/divisor%10);
+    }
+    return out.encode(frame,size,32);
 }
 
 // RF and DAC are separate so this state machine can be tested without MMIO.
