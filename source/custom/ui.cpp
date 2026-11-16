@@ -299,8 +299,9 @@ void point_text(char *out,const GeoPoint &point,bool latitude) {
 }
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_navigation(const Application &a,uint32_t now,bool force) {
- const auto &target=a.waypoint();const bool setup=a.page()==Page::Waypoint;
- if(force)label(10,52,setup?"Saved GPS point":"Distance to point",accent,bg);
+ const bool setup=a.page()==Page::Waypoint;
+ const auto &target=setup?a.waypoint():a.distance_target();
+ if(force)label(10,52,setup?"Saved GPS point":a.aprs_distance()?"Distance to APRS point":"Distance to point",accent,bg);
  char latitude[30],longitude[30];point_text(latitude,target,true);point_text(longitude,target,false);
  if(setup) {
   const char *status=target.valid?"SAVED TARGET":"NO SAVED GPS POINT";
@@ -345,7 +346,8 @@ void draw_navigation(const Application &a,uint32_t now,bool force) {
  }
  if(changed(1,distance,force))stat(80,"Distance",distance);
  if(changed(2,bearing,force))stat(120,"Azimuth",bearing);
- const char *status=!target.valid?"NO SAVED GPS POINT":!fresh?"FRESH GPS FIX REQUIRED":"SAVED TARGET";
+ const char *status=!target.valid?"NO SAVED GPS POINT":!fresh?"FRESH GPS FIX REQUIRED":
+     a.aprs_distance()?"RECEIVED APRS POSITION":"SAVED TARGET";
  if(changed(3,status,force)){rect(8,160,224,16,bg);label(10,164,status,accent,bg);}
  if(changed(4,latitude,force)){rect(8,192,224,16,bg);label(10,196,latitude,ink,bg);}
  if(changed(5,longitude,force)){rect(8,224,224,16,bg);label(10,228,longitude,ink,bg);}
@@ -551,7 +553,8 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(mail)label(136,9,"APRS*",accent);
  }
  const bool presets=a.page()==Page::FmPresets || a.page()==Page::AmPresets;
- const char *footer=a.page()==Page::Spectrum?"ARROWS CURSOR / OK RESCAN":
+ const char *footer=a.page()==Page::Aprs && input.aprs_stations.at(0)?"ARROWS SELECT / OK DISTANCE":
+     a.page()==Page::Spectrum?"ARROWS CURSOR / OK RESCAN":
      a.page()==Page::AprsMessages?"* CLEAR MESSAGES / BACK":
      a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
      a.weather().scanning()?"OK LISTEN / BACK EXIT":"OK SCAN / BACK EXIT"):
@@ -1316,12 +1319,23 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   show_count(13,124,"BG CANCELLED",input.aprs_cancelled);
   show_count(14,270,"BG FRAMES",input.aprs_background_frames);
   show_count(15,282,"BLE QUEUE DROPS",input.aprs_export_dropped);
+  static_assert(aprs::RecentStations::Capacity==Application::AprsDistanceCapacity);
+  GeoPoint targets[aprs::RecentStations::Capacity]{};
+  unsigned count=0;
+  for(unsigned i=0;i<aprs::RecentStations::Capacity;++i) {
+   const auto *entry=input.aprs_stations.at(i);
+   if(!entry)break;
+   targets[count++]={entry->position.latitude_e5*10,entry->position.longitude_e5*10,true};
+  }
+  a.aprs_distance_targets(targets,count);
   for(unsigned i=0;i<aprs::RecentStations::Capacity;++i) {
    const auto *entry=input.aprs_stations.at(i);
    char identity[30]{},coordinates[30]{};
    if(entry) {
     const bool station=entry->position.kind==aprs::PositionKind::Station;
-    copy(identity,station?entry->position.callsign:entry->position.name);
+    identity[0]=i==a.aprs_distance_cursor()?'>':' ';
+    identity[1]=' ';
+    copy(identity+2,station?entry->position.callsign:entry->position.name);
     unsigned n=0;while(identity[n])++n;
     if(station && entry->position.ssid){identity[n++]='-';num(identity+n,entry->position.ssid);}
     n=0;while(identity[n])++n;

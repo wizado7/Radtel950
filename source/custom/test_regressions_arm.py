@@ -103,6 +103,7 @@ for suite,description in (
  ('spectrum_tests','RX spectrum: bounded grid, stale samples, timeout, PTT and measured frequency copied RX-only'),
  ('manual_waypoint_tests','manual GPS point: decimal input, hemisphere, range, cancel, snapshot and beacon revocation'),
  ('spectrum_binding_tests','spectrum PF binding: open/close, PTT C priority and portable storage'),
+ ('aprs_distance_tests','GPS APRS distance: selection from visible reports, target isolation, return and RX-only page'),
  ('aprs_saved_point_tests','APRS saved position: explicit source, no GPS dependency, coordinate rounding, AX.25 and startup defaults'),
  ('aprs_clear_messages_tests','APRS clear messages: cancel, confirm, clear unread and receive again'),
  ('monitor_hold_tests','momentary monitor: hold threshold, contact bounce, release, latched monitor and PF1/PTT interlock')):
@@ -352,6 +353,63 @@ if a.stock:
    assert oracle.reg_read(UC_ARM_REG_PC)==0x080ff000
    assert oracle.reg_read(UC_ARM_REG_R0)==(hour+offset)%24
  print('OEM 0.29 GPS: menu pointers, half-hour add instruction and 648 hour/zone rollovers PASS')
+ gps=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS);gps.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_M4)
+ gps.mem_map(0x08000000,0x100000);gps.mem_map(0x20000000,0x18000);gps.mem_write(0x08003000,stock)
+ gps.reg_write(UC_ARM_REG_C1_C0_2,0xf00000);gps.reg_write(UC_ARM_REG_FPEXC,1<<30)
+ # Supply the C runtime character classes used by the OEM numeric parser.
+ classes=bytearray(256)
+ for char in b' \t\r\n':classes[char]=1
+ for char in b'0123456789':classes[char]=8
+ gps.mem_write(0x20010000,bytes(classes));gps.mem_write(0x20010f3c,struct.pack('<I',0x20010000))
+ def gps_run(start,end,*args):
+  gps.reg_write(UC_ARM_REG_SP,0x20017000);gps.reg_write(UC_ARM_REG_LR,0x080ff001)
+  for reg,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2),args):gps.reg_write(reg,value)
+  gps.emu_start(start|1,end,count=100000)
+  assert gps.reg_read(UC_ARM_REG_PC)==end
+ assert stock[0xf9a0:0xf9a8]==bytes.fromhex('ea10030824ae0020')
+ defaults=stock[0x2e0ea:0x2e0ea+121]
+ fields=(1,2,3,4,5,6,0x4d)
+ assert bytes(defaults[i] for i in fields)==bytes((0,0,0,0,0,21,0))
+ gps_run(0x0801298c,0x08012998)
+ assert gps.mem_read(0x2000ae24,121)==defaults
+ def gps_spi_read(machine,address,size,_):
+  source,target,length=(machine.reg_read(reg) for reg in (UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2))
+  assert (source,length) in ((0x10000,8),(0x10008,128))
+  machine.mem_write(target,b'\xff'*length)
+  machine.reg_write(UC_ARM_REG_PC,machine.reg_read(UC_ARM_REG_LR))
+ hook=gps.hook_add(UC_HOOK_CODE,gps_spi_read,begin=0x08024424,end=0x08024424)
+ gps.mem_write(0x2000ae24,bytes(121))
+ gps_run(0x08012018,0x080120c2)
+ assert gps.mem_read(0x2000ae24,121)==defaults
+ gps.hook_del(hook)
+ gps_run(0x08008e78,0x080ff000,12,defaults[6])
+ assert gps.reg_read(UC_ARM_REG_R0)==21 # 12:00 UTC + 9 with the stock default.
+ assert stock[0x63c4:0x63d0]==bytes.fromhex('fff77efd00281bd01048e522')
+ assert stock[0xfddc:0xfde8]==bytes.fromhex('a8084ff4983101eb00380822')
+ record=bytearray(229)
+ payload=b'!4903.50S/07201.75W> TEST GPS /A=001234\0'
+ record[101:101+len(payload)]=payload
+ gps.mem_write(0x2000aa04,bytes(record));gps.mem_write(0x2000a9ef,b'\1')
+ gps_run(0x080093a4,0x080093e0)
+ position=bytes.fromhex('505327133257211c4b7801000000000000000000')
+ assert gps.mem_read(0x2000ad98,20)==position
+ assert gps.mem_read(0x2000acb3+101,len(payload))==payload
+ gps.reg_write(UC_ARM_REG_R9,1)
+ gps_run(0x08007f04,0x08007f56)
+ assert gps.mem_read(0x20017010,20)==position
+ def gps_read_aprs_record(machine,address,size,_):
+  index,target,length=(machine.reg_read(reg) for reg in (UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2))
+  assert index==7 and length==205
+  machine.mem_write(target,bytes(record[:length]))
+  machine.reg_write(UC_ARM_REG_PC,machine.reg_read(UC_ARM_REG_LR))
+ hook=gps.hook_add(UC_HOOK_CODE,gps_read_aprs_record,begin=0x08012110,end=0x08012110)
+ gps_index=struct.unpack_from('<I',stock,0x52e0)[0]
+ gps.mem_write(gps_index+4,b'\0');gps.mem_write(gps_index+967,b'\7')
+ gps.reg_write(UC_ARM_REG_R9,0)
+ gps_run(0x08007f04,0x08007f56)
+ assert gps.mem_read(0x20017010,20)==position
+ gps.hook_del(hook)
+ print('OEM 0.29 GPS distance: factory reset and failed CRC defaults, APRS RX writer, last and indexed target branches PASS')
  rng=random.Random(950)
  for case in range(64):
   payload=bytes(rng.randrange(256) for _ in range(case*139//63))

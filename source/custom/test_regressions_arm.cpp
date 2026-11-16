@@ -2452,6 +2452,24 @@ extern "C" int gps_dms_tests() {
  return 0;
 }
 
+extern "C" int aprs_distance_tests() {
+ Application app(false);
+ app.key(Key::Aprs);app.key(Key::Ok);CHECK(app.page()==Page::Aprs);
+ const GeoPoint reports[]={{49058330,-72029170,true},{-90000000,180000000,true}};
+ app.aprs_distance_targets(reports,2);
+ app.key(Key::Down);app.key(Key::Down);
+ CHECK(app.aprs_distance_cursor()==1);
+ app.key(Key::Ok);
+ CHECK(app.page()==Page::Distance && app.aprs_distance() && !app.voice_tx_page());
+ CHECK(app.distance_target().latitude==-90000000 && app.distance_target().longitude==180000000);
+ app.aprs_distance_targets(reports,1);
+ CHECK(app.distance_target().latitude==-90000000 && !app.waypoint().valid);
+ app.key(Key::Back);CHECK(app.page()==Page::Aprs);
+ app.key(Key::Ok);CHECK(app.page()==Page::Aprs);
+ app.key(Key::Distance);CHECK(!app.aprs_distance() && !app.distance_target().valid);
+ return 0;
+}
+
 extern "C" int gps_point_tests() {
  Application app(false);nav_reset();
  CHECK(app.distance_unit()==DistanceUnit::Kilometres && !app.waypoint().valid);

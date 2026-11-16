@@ -342,6 +342,12 @@ int Application::recent_voice_slot() const {
        config_.vfo[last_voice_slot_].rx_hz!=last_voice_hz_)return -1;
     return last_voice_slot_;
 }
+void Application::aprs_distance_targets(const GeoPoint *targets,unsigned count) {
+    count=count>AprsDistanceCapacity?AprsDistanceCapacity:count;
+    for(unsigned i=0;i<count;++i)aprs_distance_targets_[i]=targets[i];
+    aprs_distance_count_=uint8_t(count);
+    if(aprs_distance_cursor_>=count)aprs_distance_cursor_=0;
+}
 void Application::change_waypoint(GeoPoint point) {
     waypoint_=point;
     if(beacon_saved_point_){beacon_saved_point_=false;config_.beacon_on=false;}
@@ -661,10 +667,22 @@ void Application::key(Key k) {
         }
         return;
     }
-    if(k==Key::Distance){page_=Page::Distance;notify("");return;}
+    if(k==Key::Distance){aprs_distance_=false;page_=Page::Distance;notify("");return;}
     if(page_==Page::Distance) {
-        if(k==Key::Back || k==Key::Menu){page_=Page::Settings;notify("");}
+        if(k==Key::Back || k==Key::Menu) {
+            page_=aprs_distance_?Page::Aprs:Page::Settings;
+            if(aprs_distance_)aprs_distance_targets(nullptr,0);
+            notify("");
+        }
         return;
+    }
+    if(page_==Page::Aprs && aprs_distance_count_) {
+        if(k==Key::Up && aprs_distance_cursor_)--aprs_distance_cursor_;
+        if(k==Key::Down && aprs_distance_cursor_+1u<aprs_distance_count_)++aprs_distance_cursor_;
+        if(k==Key::Ok) {
+            aprs_distance_target_=aprs_distance_targets_[aprs_distance_cursor_];
+            aprs_distance_=true;page_=Page::Distance;notify("");return;
+        }
     }
     if(k==Key::FmStep || k==Key::AmStep) {
         parent_=Page::Settings;page_=k==Key::AmStep?Page::AmStep:Page::FmStep;
@@ -1246,6 +1264,7 @@ void Application::key(Key k) {
     if(k==Key::Gps || k==Key::Aprs || k==Key::Debug || k==Key::Channels || k==Key::Battery || k==Key::Brightness || k==Key::ScreenTimer || k==Key::LcdTest) {
         parent_=page_==Page::Settings?Page::Settings:Page::Radio;
         page_=k==Key::Gps?Page::Gps:k==Key::Aprs?Page::Aprs:k==Key::Debug?Page::Debug:k==Key::Channels?Page::Channels:k==Key::Battery?Page::Battery:k==Key::Brightness?Page::Brightness:k==Key::ScreenTimer?Page::ScreenTimer:Page::LcdTest;
+        if(page_==Page::Aprs)aprs_distance_targets(nullptr,0);
         if(k==Key::LcdTest)lcd_test_gray_=false;
         editor_value_=0;editor_digits_=0;
         if(k==Key::Channels)select_channel_for_list();

@@ -1408,3 +1408,31 @@ for russian in (False,True):
     menu_key('Back');menu_key('Back');menu_key('Pf1Hold');menu_key('Up');menu_draw()
     assert ('Обзор спектра RX' if russian else 'RX spectrum') in menu_ui.texts
 print('ARM manual GPS and spectrum PF UI: coordinate fields, hemispheres and binding in both languages PASS')
+
+fields=('size_','entries_[0].position.latitude_e5','entries_[0].position.longitude_e5','entries_[0].position.callsign')
+commands=[]
+for field in fields:
+    commands+=['-ex','p/x (unsigned long)&((rt950::InputStatus*)0)->aprs_stations.'+field]
+station_offsets_text=subprocess.check_output([args.prefix+'gdb','-batch',str(build/'rt950-custom-ui.elf'),
+    *commands],text=True,stderr=subprocess.DEVNULL)
+station_offsets=[int(v,16) for v in re.findall(r'\$\d+ = (0x[0-9a-f]+)',station_offsets_text)]
+assert len(station_offsets)==len(fields)
+for offset,data in zip(station_offsets,(struct.pack('<I',1),struct.pack('<i',100000),
+                                        struct.pack('<i',0),b'N0CALL\0')):
+    menu_ui.u.mem_write(0x20015000+offset,data)
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
+    menu_ui.function('nav_reset')
+    nav_payload(b'GPRMC,120000.00,A,0000.000000,N,00000.000000,E,1.00,90.0,071126,,,A',1000)
+    menu_key('Aprs');gps_draw_at(1000)
+    assert any(s.startswith('> N0CALL') for s in menu_ui.texts)
+    menu_key('Ok');gps_draw_at(1000)
+    assert ('Расстояние до точки APRS' if russian else 'Distance to APRS point') in menu_ui.texts
+    assert '111.195 km' in menu_ui.texts and '0.0 deg' in menu_ui.texts
+    gps_draw_at(4000)
+    assert menu_ui.texts.count('--')>=2 and '111.195 km' not in menu_ui.texts
+    menu_key('Back');gps_draw_at(4000)
+    assert any(s.startswith('> N0CALL') for s in menu_ui.texts)
+print('ARM APRS distance UI: selected report, fresh/stale GPS and return in both languages PASS')

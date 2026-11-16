@@ -122,6 +122,11 @@ public:
     DistanceUnit distance_unit() const {return distance_unit_;}
     DistanceUnit distance_draft() const {return distance_draft_;}
     const GeoPoint &waypoint() const {return waypoint_;}
+    const GeoPoint &distance_target() const {return aprs_distance_?aprs_distance_target_:waypoint_;}
+    bool aprs_distance() const {return aprs_distance_;}
+    unsigned aprs_distance_cursor() const {return aprs_distance_cursor_;}
+    void aprs_distance_targets(const GeoPoint *targets,unsigned count);
+    static constexpr unsigned AprsDistanceCapacity=3;
     bool waypoint_clear() const {return waypoint_clear_;}
     bool waypoint_confirm() const {return waypoint_confirm_;}
     unsigned waypoint_edit_cursor() const {return waypoint_edit_cursor_;}
@@ -311,6 +316,9 @@ private:
     bool decimal_coordinates_=false,dms_coordinates_=false;
     DistanceUnit distance_unit_=DistanceUnit::Kilometres,distance_draft_=DistanceUnit::Kilometres;
     GeoPoint waypoint_{};
+    GeoPoint aprs_distance_target_{},aprs_distance_targets_[AprsDistanceCapacity]{};
+    uint8_t aprs_distance_count_=0,aprs_distance_cursor_=0;
+    bool aprs_distance_=false;
     bool waypoint_clear_=false,waypoint_confirm_=false;
     uint32_t waypoint_edit_value_[2]{};
     bool waypoint_edit_negative_[2]{};
