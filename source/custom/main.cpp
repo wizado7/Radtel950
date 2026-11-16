@@ -108,6 +108,8 @@ extern "C" int main(void) {
     aprs::RelayQueue relay;
     bool packet_is_relay=false,packet_battery_pending=false;
     uint32_t last_beacon=get_tick(),packet_tx_hz=0;
+    bool smart_started=false;
+    int smart_heading=-1;
 #endif
 #endif
     static SettingsExport<BackupUart> settings_export;
@@ -293,7 +295,7 @@ extern "C" int main(void) {
         const auto calibrated_packet=[&](uint32_t hz) {
             return hz%10u==0 && (voice::vhf_tx_frequency(hz)?
                 vhf_valid && vhf.bias(hz,voice::factory_power_selector(TxPower::Low)):
-                factory_valid && voice::uhf_tx_frequency(hz));
+                factory_valid && factory.bias(voice::uhf_pa_index(hz),voice::factory_power_selector(TxPower::Low)));
         };
         const auto &routing=app.aprs_routing();
         const uint32_t relay_hz=routing.relay_use_beacon?packet_hz:config.aprs_rx_hz;
@@ -301,6 +303,7 @@ extern "C" int main(void) {
             ptt.state()==voice::Ptt::State::Idle;
         const bool beacon_allowed=packet_permitted && page==Page::Radio && config.beacon_on &&
             position_ready && identity.callsign[0] && calibrated_packet(packet_hz);
+        if(!beacon_allowed || !app.beacon_requested(now))app.cancel_beacon_request();
         const bool relay_allowed=packet_permitted && relay_page && config.aprs_rx &&
             app.enabled(Option::AprsRelay) && calibrated_packet(relay_hz);
         const auto begin_packet=[&](uint32_t hz,bool is_relay) {
@@ -318,21 +321,38 @@ extern "C" int main(void) {
             current_rx.frequency==config.aprs_rx_hz && !voice_rx.carrier();
         if(relay.take(packet_frame,now,relay_allowed && !packet_tx.active(),relay_channel_clear && supply_ready,
             aprs::tx_flags[routing.preamble]))begin_packet(relay_hz,true);
+        const auto &nav=*nav_get();
+        const bool live_motion=!saved_position && nav.rmc_valid && nav.course_valid && nav.speed_valid &&
+            nav_fix_fresh(now) && uint32_t(now-nav.last_rmc_ms)<3000u;
+        const unsigned heading=((nav.course_deci+5u)/10u)%360u;
+        const unsigned speed_kmh=live_motion?(nav.speed_centi_knots*1852u+50000u)/100000u:0;
+        const bool smart=config.beacon_on && app.beacon_mode()==aprs::BeaconMode::Smart;
+        if(!smart)smart_started=false;
+        const bool smart_due=smart && (!smart_started ||
+            aprs::smart_beacon_due(now-last_beacon,speed_kmh,live_motion?int(heading):-1,smart_heading));
         const bool beacon_due=!packet_tx.active() && !relay.pending() && beacon_allowed &&
             !aprs_listen && !voice_rx.carrier() && current_rx.ready &&
-            uint32_t(now-last_beacon)>=config.beacon_seconds*1000u;
+            (app.beacon_due(now,last_beacon) || smart_due);
         packet_battery_pending=!packet_tx.active() && !supply_ready &&
             (beacon_due || (relay_allowed && relay.pending()));
         if(beacon_due && supply_ready) {
             last_beacon=now;
-            const auto &nav=*nav_get();
+            app.cancel_beacon_request();
+            if(smart){smart_started=true;smart_heading=live_motion?int(heading):-1;}
             const auto symbol=beacon_symbol(app.beacon_symbol_index());
-            const bool encoded=saved_position?
-                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol.code,routing,
-                    app.fixed_beacon_altitude_metres(),symbol.table):
-                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
-                    nav.lat,nav.ns[0],nav.lon,nav.ew[0],symbol.code,aprs::beacon_altitude(nav,now),routing,symbol.table);
-            if(encoded)begin_packet(packet_hz,false);
+            aprs::BeaconReport report;
+            if(saved_position)report.position=app.waypoint();
+            else gps_current_point(now,report.position);
+            report.symbol=symbol.code;report.table=app.beacon_wire_table();
+            const auto metres=app.fixed_beacon_altitude_metres();
+            report.altitude_feet=saved_position?(metres>=0?gps_altitude_display(metres*10,true):-1):
+                aprs::beacon_altitude(nav,now);
+            report.live=!saved_position;
+            report.motion=live_motion;
+            report.course=uint16_t(heading);
+            report.speed_knots=uint16_t((nav.speed_centi_knots+50u)/100u);
+            if(aprs::encode_beacon_report(packet_frame,identity.callsign,identity.ssid,report,
+                                          app.beacon_format(),routing))begin_packet(packet_hz,false);
         }
         if(packet_tx.active())packet_tx.poll(packet_frame,now,packet_is_relay?relay_allowed:beacon_allowed);
 #endif
@@ -347,7 +367,7 @@ extern "C" int main(void) {
         const uint8_t selector=voice::factory_power_selector(profile.power);
         const bool numeric=numeric_power(profile.power);
         const unsigned pa_index=voice::uhf_pa_index(slot.tx_hz);
-        const uint8_t factory_low=factory_valid && pa_index<13?factory.pa[2][pa_index]:0;
+        const uint8_t factory_low=factory_valid?factory.bias(pa_index,voice::factory_power_selector(TxPower::Low)):0;
         app.power_code_limit(factory_low);
         // Select a record at the unkeyed battery voltage. Normal battery
         // protection remains live during TX; load sag must not select another
@@ -367,7 +387,7 @@ extern "C" int main(void) {
         input.power_status=!numeric?"":!numeric_ready?"POWER CALIBRATION NEEDED":
             profile.power==TxPower::Lpd10mW?"10 mW TARGET / RECORD":"0.5 W TARGET / RECORD";
         const bool calibration_valid=cb_tx?cb_valid && cb.bias(slot.tx_hz,selector):vhf_tx?
-            vhf_valid && vhf.bias(slot.tx_hz,selector):factory_valid;
+            vhf_valid && vhf.bias(slot.tx_hz,selector):factory_valid && factory.bias(pa_index,selector);
 #else
         const bool simplex=slot.tx_hz==slot.rx_hz && profile.shift==Shift::None;
         bool frequency_allowed=simplex && slot.rx_hz==RT950_BENCH_TX_HZ;
@@ -480,15 +500,16 @@ extern "C" int main(void) {
         const char *calibration_error="TX NO CALIBRATION";
 #ifdef RT950_MAIN_TX
         constexpr const char *factory_errors[]={"TX NO CALIBRATION","CAL SPI UNAVAILABLE",
-            "CAL SPI READ FAILED","CAL MARKER INVALID","CAL PA TABLE INVALID","CAL MIC INVALID","CAL FREQ TRIM INVALID"};
+            "CAL SPI READ FAILED","CAL MARKER INVALID","CAL MIC INVALID","CAL FREQ TRIM INVALID"};
         if(!factory_valid)calibration_error=factory_errors[unsigned(factory_status)];
+        else if(!calibration_valid && voice::uhf_tx_frequency(slot.tx_hz))calibration_error="CAL PA TABLE INVALID";
 #endif
         input.bench_ptt=ptt.state()==voice::Ptt::State::Ending?"TX ENDING":!pressed?"":transmitting?tx_on:tx_owns_radio?"TX PREPARING":
 #ifdef RT950_MAIN_TX
             page==Page::Radio && app.editing()?"TX: FINISH FREQ INPUT":
 #endif
             profile.tx_inhibit?"TX INHIBITED":
-            !slot.tx_hz?"TX FREQ UNSET":
+            !slot.tx_hz?"TX FREQ UNSET":!frequency_allowed?"TX OUT OF BAND":
             !calibration_valid?calibration_error:
 #ifdef RT950_MAIN_TX
             !power_tx_ok?supply_fault_text(supply_fault):
@@ -513,8 +534,7 @@ extern "C" int main(void) {
         diagnostics.low=battery_limits.low;diagnostics.high=battery_limits.High;
         diagnostics.factory_limits=battery_limits_factory;
         diagnostics.profile_check=profile.tx_inhibit?"TX INHIBITED":!slot.tx_hz?"TX FREQ UNSET":
-            !calibration_valid?calibration_error:!power_tx_ok?supply_fault_text(supply_fault):
-            !frequency_allowed?"TX OUT OF BAND":
+            !frequency_allowed?"TX OUT OF BAND":!calibration_valid?calibration_error:!power_tx_ok?supply_fault_text(supply_fault):
             !tone_allowed?"TX TONE INVALID":!power_allowed?"POWER CALIBRATION NEEDED":
             cb_tx && !profile.narrow?"TX PROFILE BLOCKED":"STATIC CHECKS PASS";
         const bool packet_transmitting=packet_tx.transmitting();

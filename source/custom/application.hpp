@@ -16,7 +16,7 @@ extern "C" {
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude, BeaconFormat, BeaconMode, BeaconOverlay, BeaconNow };
 enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint, FrequencyCopy, AprsRouteChoice, AprsHop1, AprsHop2, BeaconAltitude };
 enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Spectrum, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
@@ -107,6 +107,20 @@ public:
     bool take_aprs_messages_clear() {const bool pending=aprs_messages_clear_;aprs_messages_clear_=false;return pending;}
     bool beacon_saved_point() const {return beacon_saved_point_;}
     bool beacon_source_draft() const {return beacon_source_draft_;}
+    aprs::BeaconFormat beacon_format() const {return beacon_format_;}
+    aprs::BeaconMode beacon_mode() const {return beacon_mode_;}
+    char beacon_wire_table() const {
+        const char table=beacon_symbol(beacon_symbol_).table;
+        return table=='/'?table:aprs::overlay_character(beacon_overlay_);
+    }
+    bool beacon_requested(uint32_t now) const {
+        return beacon_requested_ && uint32_t(now-beacon_requested_at_)<5000u;
+    }
+    void cancel_beacon_request() {beacon_requested_=false;}
+    bool beacon_due(uint32_t now,uint32_t last) const {
+        return config_.beacon_on && (beacon_requested(now) ||
+            (beacon_mode_==aprs::BeaconMode::Timed && uint32_t(now-last)>=config_.beacon_seconds*1000u));
+    }
     static constexpr unsigned MaxBeaconAltitudeMetres=32767;
     int32_t fixed_beacon_altitude_metres() const {return int32_t(beacon_altitude_code_)-1;}
     int32_t beacon_altitude_draft() const {
@@ -142,10 +156,10 @@ public:
     static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA","RX spectrum"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
-    static constexpr unsigned PortableSchema=5,PortableSize=8096;
+    static constexpr unsigned PortableSchema=6,PortableSize=8108;
     static constexpr bool portable_layout_supported(size_t size,unsigned schema) {
         return (schema==1 && size==7992) || (schema==2 && size==8008) || (schema==3 && size==8092) ||
-            ((schema==4 || schema==PortableSchema) && size==PortableSize);
+            ((schema==4 || schema==5) && size==8096) || (schema==PortableSchema && size==PortableSize);
     }
     size_t save_portable_snapshot(uint8_t *data,size_t capacity) const;
     bool restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema);
@@ -346,6 +360,11 @@ private:
     bool aprs_messages_clear_=false,beacon_saved_point_=false,beacon_source_draft_=false;
     // Zero means omitted. Other codes represent metres plus one.
     uint16_t beacon_altitude_code_=0;
+    aprs::BeaconFormat beacon_format_=aprs::BeaconFormat::Normal;
+    uint8_t beacon_overlay_=0;
+    aprs::BeaconMode beacon_mode_=aprs::BeaconMode::Timed;
+    bool beacon_requested_=false;
+    uint32_t beacon_requested_at_=0;
     bool beacon_altitude_clear_=false;
     Spectrum spectrum_{};
     voice::FrequencyCopy frequency_copy_{};
@@ -430,6 +449,7 @@ private:
     template<class Archive,class App> static void full_snapshot_fields(Archive &,App &);
     template<class Archive,class App> static void portable_snapshot_fields(Archive &,App &);
     template<class Archive,class App> static void aprs_routing_fields(Archive &,App &);
+    template<class Archive,class App> static void beacon_fields(Archive &,App &);
     bool valid_snapshot() const;
 };
 } // namespace rt950

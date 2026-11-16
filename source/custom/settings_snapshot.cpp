@@ -24,12 +24,12 @@ struct Reader {
 };
 // Compact container v1: magic, version, canonical word count, encoded length,
 // CRC32 over the first 16 header bytes and encoded bytes, then zero alignment.
-constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=5;
+constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=6;
 constexpr size_t PackedHeader=20;
 // Changing array capacities requires a separate historical decoder, not a
 // silent reinterpretation of the released v1/v2 canonical field order.
 static_assert(Application::MemoryCount==64 && Application::ZoneCount==15 && Application::BroadcastCount==8);
-static_assert(Application::PortableSize==8008+22*4);
+static_assert(Application::PortableSize==8008+25*4);
 struct WordCounter {
     size_t words=0;
     template<class T> void field(T){++words;}
@@ -167,10 +167,14 @@ void Application::aprs_routing_fields(Archive &archive,App &s) {
     archive.field(routing.relay_use_beacon);
     archive.field(routing.delay);archive.field(routing.preamble);
 }
+template<class Archive,class App>
+void Application::beacon_fields(Archive &archive,App &s) {
+    archive.field(s.beacon_format_);archive.field(s.beacon_overlay_);archive.field(s.beacon_mode_);
+}
 size_t Application::save_portable_snapshot(uint8_t *data,size_t capacity) const {
     if(!data)return 0;
     Writer writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
     return writer.good?writer.pos:0;
 }
 bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema) {
@@ -182,6 +186,7 @@ bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsi
         for(auto &action:candidate.key_actions_)reader.field(action);
         if(schema>=3)aprs_routing_fields(reader,candidate);
         if(schema>=4)reader.field(candidate.beacon_altitude_code_);
+        if(schema>=6)beacon_fields(reader,candidate);
         if(!reader.good || reader.pos!=reader.capacity || !candidate.valid_snapshot())return false;
     }
     *this=candidate;return true;
@@ -193,18 +198,18 @@ size_t Application::save_snapshot(uint8_t *data,size_t capacity) const {
 }
 size_t Application::canonical_snapshot_size() const {
     WordCounter counter;portable_snapshot_fields(counter,*this);aprs_routing_fields(counter,*this);
-    counter.field(beacon_altitude_code_);return counter.words*4u;
+    counter.field(beacon_altitude_code_);beacon_fields(counter,*this);return counter.words*4u;
 }
 size_t Application::compact_snapshot_size() const {
     PackedWriter writer{nullptr,SnapshotCapacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     return writer.good && size<=SnapshotCapacity?size:0;
 }
 size_t Application::save_compact_snapshot(uint8_t *data,size_t capacity) const {
     if(!data || capacity<PackedHeader)return 0;
     PackedWriter writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     if(!writer.good || size>capacity)return 0;
     storage::put(data,PackedMagic);storage::put(data+4,PackedVersion);
@@ -233,6 +238,7 @@ bool Application::restore_snapshot(const uint8_t *data,size_t size) {
         else portable_snapshot_fields(reader,candidate);
         if(version>=3)aprs_routing_fields(reader,candidate);
         if(version>=4)reader.field(candidate.beacon_altitude_code_);
+        if(version>=6)beacon_fields(reader,candidate);
         if(!reader.good || reader.pos!=reader.end || reader.words!=storage::word(data+8) || !candidate.valid_snapshot())return false;
         candidate.config_.ble_export=false;candidate.reconcile_channels();
         if(!rt_config_valid(&candidate.config_))return false;
@@ -308,7 +314,8 @@ bool Application::valid_snapshot() const {
        aprs_routing_.delay>=sizeof aprs::relay_delays/sizeof *aprs::relay_delays ||
        aprs_routing_.preamble>=sizeof aprs::tx_flags/sizeof *aprs::tx_flags)return false;
     if(unsigned(distance_unit_)>unsigned(DistanceUnit::NauticalMiles) || !geo_valid(waypoint_) ||
-       beacon_altitude_code_>MaxBeaconAltitudeMetres+1u)return false;
+       beacon_altitude_code_>MaxBeaconAltitudeMetres+1u || beacon_format_>=aprs::BeaconFormat::Count ||
+       beacon_overlay_>=aprs::BeaconOverlayCount || beacon_mode_>aprs::BeaconMode::Smart)return false;
     if(fm_step_>=sizeof fm_steps/sizeof fm_steps[0] || am_step_>=sizeof am_steps/sizeof am_steps[0] ||
        (decimal_coordinates_ && dms_coordinates_))return false;
     for(auto hz:fm_presets_)if(hz && (hz<6500 || hz>10800))return false;

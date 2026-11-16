@@ -63,10 +63,9 @@ constexpr bool vhf_tx_frequency(uint32_t hz) {
 // selector and must apply the result only in a valid, authorized TX session.
 inline bool uhf_tx_values(const UhfCalibration &cal,uint32_t hz,uint8_t selector,
                           uint16_t old_mic,UhfTxValues &out) {
-    const unsigned index=uhf_pa_index(hz);
-    if(selector>=3 || index>=13 || hz%10 || cal.microphone>63)return false;
-    const uint8_t bias=cal.pa[selector][index];
-    if(!bias || bias==0xff)return false;
+    if(hz%10 || cal.microphone>63)return false;
+    const uint8_t bias=cal.bias(uhf_pa_index(hz),selector);
+    if(!bias)return false;
     const uint32_t word=corrected_frequency_word(hz/10,cal.frequency_correction);
     if(word<40000000u || word>47000000u)return false;
     out={uint16_t(word),uint16_t(word>>16),microphone_word(old_mic,2,cal.microphone),bias};

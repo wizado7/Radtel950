@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 namespace rt950::voice {
-enum class CalibrationStatus : uint8_t { Ready, SpiUnavailable, ReadFailed, InvalidMarker, InvalidPa, InvalidMic, InvalidTrim };
+enum class CalibrationStatus : uint8_t { Ready, SpiUnavailable, ReadFailed, InvalidMarker, InvalidMic, InvalidTrim };
 
 // Plausibility limit for a marked crystal trim: 871 ten-Hz units at 435.5 MHz (20 ppm).
 inline constexpr int16_t MaxCrystalTrim=871;
@@ -22,6 +22,18 @@ struct UhfCalibration {
     uint8_t microphone=0,ctcss_level=0xff,dcs_level=0xff;
     uint8_t ctcss_raw=0xff,dcs_raw=0xff;
     int16_t frequency_correction=0;
+
+    uint8_t bias(unsigned index,uint8_t selector) const {
+        if(index>=13 || selector>=3)return 0;
+        const uint8_t high=pa[0][index],mid=pa[1][index],low=pa[2][index];
+        const auto programmed=[](uint8_t code){return code && code!=0xff;};
+        if(!programmed(low))return 0;
+        if((programmed(mid) && mid<low) || (programmed(high) && high<low))return 0;
+        // An absent higher level does not invalidate a programmed Low.
+        if(selector==2)return low;
+        if(!programmed(mid) || !programmed(high) || high<mid)return 0;
+        return pa[selector][index];
+    }
 };
 
 // OEM 0.29 0x08024424: read opcode, big-endian 24-bit address,
@@ -40,9 +52,8 @@ bool read_factory_flash(Spi &spi,uint32_t address,uint8_t *data,size_t length) {
     return ok;
 }
 
-// OEM loader 0x080121FC. The erased-marker check is supplemented by
-// rejecting missing table entries rather than using stock fallback values.
-// Table order is the OEM selector order, independent of UI enum order.
+// OEM loader 0x080121FC. Read every row; cells are checked when TX selects
+// its frequency and power. The table order is the OEM selector order.
 template<class Reader>
 CalibrationStatus inspect_uhf_calibration(Reader read,UhfCalibration &out) {
     uint8_t marker=0;
@@ -52,11 +63,7 @@ CalibrationStatus inspect_uhf_calibration(Reader read,UhfCalibration &out) {
     for(unsigned level=0;level<3;++level) {
         auto &table=candidate.pa[level];
         if(!read(0xf000u+level*0x40u,table,sizeof table))return CalibrationStatus::ReadFailed;
-        for(uint8_t bias:table)if(!bias || bias==0xff)return CalibrationStatus::InvalidPa;
     }
-    // UHF TX reaches 400..470 MHz in 10-MHz steps.
-    for(unsigned index=0;index<=7;++index)
-        if(!valid_pa_column(candidate.pa,index))return CalibrationStatus::InvalidPa;
     uint8_t settings[16]{};
     if(!read(0xf210,settings,sizeof settings))return CalibrationStatus::ReadFailed;
     if(settings[0]>63)return CalibrationStatus::InvalidMic;

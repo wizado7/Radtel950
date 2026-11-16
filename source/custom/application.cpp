@@ -336,7 +336,7 @@ bool Application::set_option(Option o,bool on) {
     case Option::AprsRx:config_.aprs_rx=on;if(!on)aprs_relay_armed_=false;break;
     case Option::AprsRelay:aprs_relay_armed_=on;break;
     case Option::Tail:tx_tail_=on;break;
-    case Option::Beacon:config_.beacon_on=on;break;
+    case Option::Beacon:config_.beacon_on=on;cancel_beacon_request();break;
     case Option::Ble:config_.ble_on=on;if(!on)config_.ble_export=false;break;
     case Option::Export:config_.ble_export=on;break;
     default:return false;
@@ -525,7 +525,9 @@ constexpr MenuEntry aprs_menu[]={
 #endif
 };
 constexpr MenuEntry aprs_rx_menu[]={{"APRS receive",Key::Menu,Option::AprsRx},{"RX frequency",Key::AprsRxFrequency},{"Background scan interval",Key::AprsScanInterval},{"Clear APRS list",Key::ClearAprs}};
-constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource},{"Fixed beacon altitude",Key::BeaconAltitude}};
+constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource},{"Fixed beacon altitude",Key::BeaconAltitude},
+    {"Beacon format",Key::BeaconFormat},{"Beacon mode",Key::BeaconMode},{"Symbol overlay",Key::BeaconOverlay},
+    {"Send beacon now",Key::BeaconNow}};
 constexpr MenuEntry aprs_route_menu[]={
     {"APRS relay (session)",Key::Menu,Option::AprsRelay},
     {"Relay routing",Key::RelayMode},{"Relay TX channel",Key::RelayChannel},{"Relay wait",Key::RelayDelay},
@@ -554,7 +556,7 @@ namespace {
 struct RouteChoice {
     const char *title;
     unsigned count;
-    const char *labels[5];
+    const char *labels[9];
 };
 constexpr RouteChoice route_choices[]={
     {"Beacon path",4,{"Direct","WIDE1-1","WIDE1-1,WIDE2-1","Custom path"}},
@@ -563,11 +565,28 @@ constexpr RouteChoice route_choices[]={
     {"Relay wait",5,{"100 ms","250 ms","500 ms","1000 ms","2000 ms"}},
     {"APRS TX preamble",4,{"16 flags","32 flags","48 flags","64 flags"}}
 };
-const RouteChoice &route_choice(Key key) {return route_choices[unsigned(key)-unsigned(Key::AprsPath)];}
+constexpr RouteChoice beacon_choices[]={
+    {"Beacon format",9,{"APRS normal","APRS compressed","Mic-E: Off duty","Mic-E: En route","Mic-E: In service",
+                         "Mic-E: Returning","Mic-E: Committed","Mic-E: Special","Mic-E: Priority"}},
+    {"Beacon mode",3,{"Timed beacon","Manual beacon","Smart beacon"}},
+    {"Symbol overlay",aprs::BeaconOverlayCount,{"No overlay"}}
+};
+__attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
+const RouteChoice &route_choice(Key key) {
+    if(key>=Key::BeaconFormat)return beacon_choices[unsigned(key)-unsigned(Key::BeaconFormat)];
+    return route_choices[unsigned(key)-unsigned(Key::AprsPath)];
+}
 }
 const char *Application::route_title() const {return route_choice(route_setting_).title;}
 unsigned Application::route_count() const {return route_choice(route_setting_).count;}
-const char *Application::route_label(unsigned index) const {return route_choice(route_setting_).labels[index];}
+const char *Application::route_label(unsigned index) const {
+    if(route_setting_==Key::BeaconOverlay && index) {
+        static char label[2]{};
+        label[0]=aprs::overlay_character(index);
+        return label;
+    }
+    return route_choice(route_setting_).labels[index];
+}
 unsigned Application::route_value() const {
     switch(route_setting_) {
     case Key::AprsPath:return unsigned(aprs_routing_.beacon);
@@ -575,6 +594,9 @@ unsigned Application::route_value() const {
     case Key::RelayChannel:return aprs_routing_.relay_use_beacon;
     case Key::RelayDelay:return aprs_routing_.delay;
     case Key::AprsPreamble:return aprs_routing_.preamble;
+    case Key::BeaconFormat:return unsigned(beacon_format_);
+    case Key::BeaconMode:return unsigned(beacon_mode_);
+    case Key::BeaconOverlay:return beacon_overlay_;
     default:return 0;
     }
 }
@@ -587,6 +609,9 @@ void Application::apply_route_choice() {
     case Key::RelayChannel:aprs_routing_.relay_use_beacon=route_draft_!=0;break;
     case Key::RelayDelay:aprs_routing_.delay=route_draft_;break;
     case Key::AprsPreamble:aprs_routing_.preamble=route_draft_;config_.beacon_on=false;break;
+    case Key::BeaconFormat:beacon_format_=aprs::BeaconFormat(route_draft_);config_.beacon_on=false;break;
+    case Key::BeaconMode:beacon_mode_=aprs::BeaconMode(route_draft_);config_.beacon_on=false;break;
+    case Key::BeaconOverlay:beacon_overlay_=route_draft_;config_.beacon_on=false;break;
     default:break;
     }
 }
@@ -1255,7 +1280,16 @@ void Application::key(Key k) {
         if(k==Key::Ok){speed_unit_=speed_draft_;page_=parent_;notify("SETTING APPLIED");}
         return;
     }
-    if(k>=Key::AprsPath && k<=Key::AprsPreamble) {
+    if(k==Key::BeaconNow) {
+        if(!config_.beacon_on){notify("ENABLE BEACON FIRST");return;}
+        GeoPoint live;
+        if(!(beacon_saved_point_?waypoint_.valid:config_.gps_on && gps_current_point(now_,live))) {
+            notify("BEACON NEEDS POSITION");return;
+        }
+        beacon_requested_=true;beacon_requested_at_=now_;
+        page_=Page::Radio;notify("BEACON REQUESTED");return;
+    }
+    if((k>=Key::AprsPath && k<=Key::AprsPreamble) || (k>=Key::BeaconFormat && k<=Key::BeaconOverlay)) {
         parent_=Page::Settings;page_=Page::AprsRouteChoice;
         route_setting_=k;route_draft_=uint8_t(route_value());notify("");return;
     }

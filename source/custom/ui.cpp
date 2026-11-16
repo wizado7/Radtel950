@@ -208,14 +208,13 @@ void radio_options(const Application &a,bool force) {
   if(changed(8,hint,force)){rect(8,280,224,14,bg);label(10,282,hint,muted,bg);}
   for(unsigned row=0;row<5 && first+row<radio_option_count(setting);++row) {
    const unsigned index=first+row,y=76+row*36;
-   char key[16],value[8];num(key,index);
+   char key[16],value[RadioOptionLabelSize];num(key,index);
    unsigned n=0;while(key[n])++n;
    key[n++]=index==selection?'S':'-';key[n++]=index==applied?'A':'-';key[n]=0;
    if(!changed(row+1,key,force))continue;
    const uint16_t fill=index==selection?selected:card;
    rect(8,y,224,30,fill);rect(8,y,3,30,index==selection?accent:card);
-   label(17,y+11,radio_option_label(setting,index,value),ink,fill);
-   if(index && (setting==RadioSetting::RxCtcss || setting==RadioSetting::TxCtcss))label(81,y+11,"Hz",muted,fill);
+   label(17,y+11,radio_option_label(setting,index,value,a.language()==Language::Russian),ink,fill);
    if(index==applied)label(212,y+11,"*",accent,fill);
   }
 }
@@ -429,11 +428,15 @@ void draw_frequency_copy(const Application &a,bool force) {
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_aprs_route_choice(const Application &a,bool force) {
  if(force)label(10,54,a.route_title(),accent,bg);
- for(unsigned i=0;i<a.route_count();++i) {
+ constexpr unsigned visible=5;
+ const unsigned count=a.route_count();
+ const unsigned first=count<=visible || a.route_draft()<visible?0:a.route_draft()-visible+1;
+ for(unsigned i=first;i<count && i<first+visible;++i) {
+  const unsigned row=i-first;
   const bool highlighted=i==a.route_draft(),applied=i==a.route_value();
-  const unsigned y=76+i*36;
+  const unsigned y=76+row*36;
   const char key[]={char('0'+i),char('0'+highlighted),char('0'+applied),0};
-  if(!changed(i+1,key,force))continue;
+  if(!changed(row+1,key,force))continue;
   const uint16_t fill=highlighted?selected:card;
   rect(8,y,224,30,fill);label(17,y+10,a.route_label(i),ink,fill);
   if(applied)label(212,y+10,"*",accent,fill);
@@ -1069,7 +1072,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V5 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V6 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";

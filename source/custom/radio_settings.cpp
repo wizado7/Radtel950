@@ -56,7 +56,7 @@ bool dcs_inverted(Tone tone) {
 }
 bool radio_is_tone(RadioSetting s) {return s>=RadioSetting::RxCtcss && s<=RadioSetting::TxDcs;}
 unsigned radio_option_count(RadioSetting s) {return settings[unsigned(s)].count;}
-const char *radio_option_label(RadioSetting s,unsigned option,char *buffer) {
+const char *radio_option_label(RadioSetting s,unsigned option,char *buffer,bool russian) {
     if(!radio_is_tone(s))return settings[unsigned(s)].options[option];
     if(!option)return "OFF";
     if(s==RadioSetting::RxCtcss || s==RadioSetting::TxCtcss) {
@@ -65,9 +65,12 @@ const char *radio_option_label(RadioSetting s,unsigned option,char *buffer) {
         if(tone>=1000)*out++=char('0'+tone/1000);
         *out++=char('0'+tone/100%10);
         *out++=char('0'+tone/10%10);
-        *out++='.';
+        *out++=russian?',':'.';
         *out++=char('0'+tone%10);
-        *out=0;
+        for(const char *suffix=russian?" Гц (":" Hz (";*suffix;++suffix)*out++=*suffix;
+        if(option>=10)*out++=char('0'+option/10);
+        *out++=char('0'+option%10);
+        *out++=')';*out=0;
     } else {
         const unsigned code=dcs[(option-1)%dcs_count];
         buffer[0]='D';

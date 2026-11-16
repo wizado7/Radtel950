@@ -9,6 +9,15 @@ struct Address {
 };
 enum class BeaconPath : uint8_t { Direct, FillIn, Wide, Custom };
 enum class RelayMode : uint8_t { Addressed, FillIn, Wide };
+enum class BeaconMode : uint8_t { Timed, Manual, Smart };
+enum class BeaconFormat : uint8_t { Normal, Compressed, OffDuty, EnRoute, InService, Returning, Committed, Special, Priority, Count };
+inline constexpr unsigned BeaconOverlayCount=37;
+constexpr char overlay_character(unsigned index) {
+    return index==0?'\\':char(index<=10?'0'+index-1:'A'+index-11);
+}
+constexpr bool beacon_table(char table) {
+    return table=='/' || table=='\\' || (table>='0' && table<='9') || (table>='A' && table<='Z');
+}
 inline constexpr uint16_t relay_delays[]={100,250,500,1000,2000};
 inline constexpr uint8_t tx_flags[]={16,32,48,64};
 struct Routing {

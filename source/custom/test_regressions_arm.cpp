@@ -675,7 +675,7 @@ extern "C" int regression_tests() {
    data[12]=uint8_t(trim);data[13]=uint8_t(uint16_t(trim)>>8);
   } else if((address==0xf000 || address==0xf040 || address==0xf080) && count==13) {
    for(size_t i=0;i<count;++i)data[i]=uint8_t(164-(address-0xf000)/4+i);
-   if(bad_order && address==0xf040)data[4]=136;
+   if(bad_order && address==0xf040){data[1]=1;data[4]=136;data[12]=0xff;}
   } else return false;
   return true;
  };
@@ -688,7 +688,16 @@ extern "C" int regression_tests() {
   CHECK(cal.dcs_raw==255u-raw && cal.dcs_level==((255u-raw)&127u));
  }
  bad_order=true;
- CHECK(voice::inspect_uhf_calibration(read_factory,cal)==voice::CalibrationStatus::InvalidPa);
+ CHECK(voice::inspect_uhf_calibration(read_factory,cal)==voice::CalibrationStatus::Ready);
+ CHECK(cal.bias(4,2)==136 && cal.bias(4,1)==136 && cal.bias(1,2)==0);
+ voice::UhfTxValues low_case;
+ CHECK(voice::uhf_tx_values(cal,446018250,2,0xe912,low_case) && low_case.pa_bias==136);
+ cal.pa[1][4]=0xff;
+ CHECK(voice::uhf_tx_values(cal,446018250,2,0xe912,low_case) && low_case.pa_bias==136);
+ CHECK(!voice::uhf_tx_values(cal,446018250,1,0xe912,low_case));
+ CHECK(!voice::uhf_tx_values(cal,446018250,0,0xe912,low_case));
+ cal.pa[2][4]=0xff;
+ CHECK(!voice::uhf_tx_values(cal,446018250,2,0xe912,low_case));
  bad_order=false;
  constexpr int invalid_trims[]={-32768,-872,872,32767};
  for(int k:invalid_trims) {
@@ -1070,11 +1079,16 @@ extern "C" int regression_tests() {
  CHECK(profiles.recall(63) && profiles.active_radio_profile().timeout_seconds==120);
  profiles.key(Key::Mode);CHECK(profiles.active_radio_profile().timeout_seconds==60);
  RadioProfile tones;
- char label[8];
+ char label[RadioOptionLabelSize];
  CHECK(radio_option_count(RadioSetting::RxCtcss)==51);
  CHECK(radio_option_count(RadioSetting::RxDcs)==211);
  radio_option_label(RadioSetting::RxCtcss,1,label);
- CHECK(label[0]=='6' && label[1]=='7' && label[2]=='.' && label[3]=='0' && !label[4]);
+ constexpr char first_ctcss[]="67.0 Hz (1)";
+ for(unsigned i=0;i<sizeof first_ctcss;++i)CHECK(label[i]==first_ctcss[i]);
+ radio_option_label(RadioSetting::TxCtcss,50,label,true);
+ constexpr char last_ctcss[]="254,1 Гц (50)";
+ static_assert(sizeof last_ctcss<=RadioOptionLabelSize);
+ for(unsigned i=0;i<sizeof last_ctcss;++i)CHECK(label[i]==last_ctcss[i]);
  radio_option_label(RadioSetting::TxDcs,210,label);
  CHECK(label[0]=='D' && label[1]=='7' && label[2]=='5' && label[3]=='4' && label[4]=='I' && !label[5]);
  radio_profile_apply(tones,RadioSetting::RxCtcss,1);
@@ -1472,7 +1486,9 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  for(uint32_t now=0;now<46;++now)receiver.poll(now,false);
  if(!receiver.status().ready)return 1;
  UhfCalibration factory;
- factory.pa[2][4]=136;factory.microphone=55;factory.ctcss_level=47;factory.dcs_level=75;factory.frequency_correction=-31;
+ factory.pa[2][4]=(tone&0x80000u)?0xff:136;
+ if(tone&0x40000u){factory.pa[0][4]=0xff;factory.pa[1][4]=0xff;}
+ factory.microphone=55;factory.ctcss_level=47;factory.dcs_level=75;factory.frequency_correction=-31;
  VhfPaCalibration vhf;vhf.pa[0][5]=150;vhf.pa[1][5]=125;vhf.pa[2][5]=98;
  CbPaCalibration cb;cb.pa[0][2]=150;cb.pa[1][2]=100;cb.pa[2][2]=73;
  BoardUhfTx adapter(receiver,factory,2,nullptr,&vhf,&cb,(tone&0x10000u)!=0);
@@ -2619,8 +2635,8 @@ extern "C" int compact_storage_tests() {
  CHECK(!source.save_compact_snapshot(roundtrip,size-1));
  CHECK(roundtrip[size-1]==0xa5 && roundtrip[size]==0xa5);
  CHECK(Application::snapshot_format_supported(packed,size) && Application::snapshot_format_supported(legacy,old_size));
- put(packed+4,6);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
- put(packed+4,5);
+ put(packed+4,7);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
+ put(packed+4,6);
  CHECK(restored.restore_snapshot(packed,size));CHECK(restored.save_snapshot(roundtrip,sizeof roundtrip)==old_size);
  for(size_t i=0;i<old_size;++i)CHECK(legacy[i]==roundtrip[i]);
  CHECK(restored.restore_snapshot(legacy,old_size));
@@ -2894,7 +2910,7 @@ extern "C" int user_key_tests() {
  portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
- const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==5);
+ const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==6);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
  dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
@@ -2905,8 +2921,8 @@ extern "C" int user_key_tests() {
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
  // Default altitude, routing fields and key codes each fit one packed byte.
- for(unsigned version=4;version>0;--version) {
-  const unsigned removed=version==4?0:version==3?1:version==2?21:4;
+ for(unsigned version=5;version>0;--version) {
+  const unsigned removed=version==5?3:version==4?0:version==3?1:version==2?21:4;
   const auto old_encoded=word(packed+12)-removed,old_size=(20+old_encoded+3u)&~3u;
   put(packed+4,version);put(packed+8,word(packed+8)-removed);put(packed+12,old_encoded);
   for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
@@ -3231,6 +3247,96 @@ extern "C" int voice_signal_tests() {
  return 0;
 }
 
+extern "C" int beacon_formats_tests() {
+ using namespace aprs;
+ const char call[7]="N0CALL";
+ FrameTransmitter tx;
+ BeaconReport report;
+ report.position={49450000,-72750000,true};report.table='5';report.symbol='>';
+ report.altitude_feet=328;report.live=true;report.motion=true;report.course=88;report.speed_knots=36;
+ const auto decode=[&]() {
+     AprsCapture capture;
+     FrameReceiver rx;
+     bool previous=false;
+     for(size_t i=0;i<tx.size();++i) {
+         const bool level=tx.level(i);rx.bit(level==previous,capture_aprs,&capture);previous=level;
+     }
+     return capture;
+ };
+ CHECK(encode_beacon_report(tx,call,7,report,BeaconFormat::Compressed,{}));
+ auto capture=decode();
+ CHECK(capture.count==1 && capture.kiss[18]=='!' && capture.kiss[19]=='f' &&
+       capture.kiss[29]=='7' && capture.kiss[30]=='P' && capture.kiss[31]=='C');
+ const char reference[]="<*e8"; // Ch. 9 example, rounded to 20427157 by Ferrite.
+ for(unsigned i=0;i<sizeof reference-1;++i)CHECK(capture.kiss[24+i]==uint8_t(reference[i]));
+ Position point;
+ CHECK(position(capture.kiss+2,capture.length-3,point) && point.latitude_e5==4945000 &&
+       point.longitude_e5==-7275000 && point.ssid==7);
+ report.position={45425200,-75690100,true};report.course=270;report.speed_knots=42;report.motion=true;
+ Routing via;via.beacon=BeaconPath::Wide;
+ CHECK(encode_beacon_report(tx,call,7,report,BeaconFormat::EnRoute,via));
+ capture=decode();
+ CHECK(capture.count==1 && position(capture.kiss+2,capture.length-3,point) &&
+       point.latitude_e5==4542517 && point.longitude_e5==-7569017);
+ constexpr char destination[]="TU2U5Q";
+ for(unsigned i=0;i<6;++i)CHECK(capture.kiss[2+i]==uint8_t(destination[i]<<1));
+ const unsigned info=2+capture.offset;
+ CHECK(capture.kiss[info]==0x60 && capture.kiss[info+4]==32 && capture.kiss[info+5]==50 &&
+       capture.kiss[info+6]==98 && capture.kiss[info+8]=='5');
+ CHECK(capture.kiss[info+12]=='}');
+ const unsigned altitude=(capture.kiss[info+9]-33)*8281u+(capture.kiss[info+10]-33)*91u+
+                         (capture.kiss[info+11]-33);
+ CHECK(altitude==10100);
+ const int32_t longitudes[]={1000000,9000000,10000000,99999999,100000000,109000000,110000000,179000000};
+ for(auto lon:longitudes) {
+     report.position={-12345000,lon,true};
+     CHECK(encode_beacon_report(tx,call,7,report,BeaconFormat::OffDuty,{}));
+     capture=decode();
+     CHECK(capture.count==1 && position(capture.kiss+2,capture.length-3,point) &&
+           point.latitude_e5==-1234500 && point.longitude_e5-lon/10>=-17 && point.longitude_e5-lon/10<=17);
+ }
+ report.position.valid=false;
+ CHECK(!encode_beacon_report(tx,call,7,report,BeaconFormat::Priority,{}));
+ CHECK(!smart_beacon_due(179999,10,0,0) && smart_beacon_due(180000,10,0,0));
+ CHECK(!smart_beacon_due(359999,5,0,0) && smart_beacon_due(360000,5,0,0));
+ CHECK(!smart_beacon_due(1799999,0,-1,-1) && smart_beacon_due(1800000,0,-1,-1));
+ CHECK(smart_beacon_due(30000,90,20,345) && !smart_beacon_due(29999,90,20,345) &&
+       !smart_beacon_due(30000,90,10,350) && !smart_beacon_due(30000,90,20,-1));
+
+ Application app(false),restored(false);
+ app.key(Key::BeaconFormat);app.key(Key::Down);app.key(Key::Back);
+ CHECK(app.beacon_format()==BeaconFormat::Normal);
+ app.key(Key::BeaconFormat);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.beacon_format()==BeaconFormat::Compressed);
+ app.key(Key::BeaconSymbol);app.key(Key::Mode);app.key(Key::Right);app.key(Key::Ok);
+ app.key(Key::BeaconOverlay);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.beacon_wire_table()=='Z');
+ app.key(Key::BeaconMode);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.beacon_mode()==BeaconMode::Manual);
+ app.key(Key::BeaconNow);CHECK(!app.beacon_requested(0));
+ app.key(Key::BeaconIdentity);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.set_aprs_frequency(144800000));
+ CHECK(app.set_option(Option::Gps,true) && app.set_option(Option::Beacon,true));
+ nav_reset();
+ app.tick(5000);app.key(Key::BeaconNow);CHECK(!app.beacon_requested(5000));
+ nmea("GPRMC,120000.00,A,5545.123456,S,03759.999999,W,1.00,90.0,071126,,,A",6000);
+ app.tick(6000);CHECK(!app.beacon_due(90000,0));
+ app.key(Key::BeaconNow);CHECK(app.beacon_due(6000,0) && !app.beacon_due(11000,0));
+ app.set_option(Option::Beacon,false);CHECK(!app.beacon_requested(6000));
+ uint8_t data[Application::SnapshotCapacity];
+ const auto size=app.save_portable_snapshot(data,sizeof data);
+ CHECK(size==Application::PortableSize && restored.restore_portable_snapshot(data,size,6));
+ CHECK(restored.beacon_mode()==BeaconMode::Manual && restored.beacon_format()==BeaconFormat::Compressed &&
+       restored.beacon_wire_table()=='Z' && !restored.enabled(Option::Beacon));
+ CHECK(restored.restore_portable_snapshot(data,8096,5) &&
+       restored.beacon_mode()==BeaconMode::Timed && restored.beacon_format()==BeaconFormat::Normal &&
+       restored.beacon_wire_table()==92);
+ storage::put(data+size-8,37);CHECK(!restored.restore_portable_snapshot(data,size,6));
+ const auto compact=app.save_compact_snapshot(data,sizeof data);
+ CHECK(compact && restored.restore_snapshot(data,compact) && restored.beacon_wire_table()=='Z');
+ return 0;
+}
+
 extern "C" int aprs_symbols_tests() {
  Application app(false),loaded(false);
  CHECK(BeaconPresetCount==10 && beacon_symbol(0).code=='>' && beacon_symbol(3).code=='b');
@@ -3374,9 +3480,9 @@ extern "C" int beacon_altitude_tests() {
  CHECK(portable==Application::PortableSize);
  CHECK(restored.restore_portable_snapshot(data,portable,Application::PortableSchema) &&
        restored.fixed_beacon_altitude_metres()==123 && !restored.enabled(Option::Beacon));
- CHECK(restored.restore_portable_snapshot(data,portable-4,3) &&
+ CHECK(restored.restore_portable_snapshot(data,8092,3) &&
        restored.fixed_beacon_altitude_metres()==-1);
- storage::put(data+portable-4,32769);
+ storage::put(data+8092,32769);
  CHECK(!restored.restore_portable_snapshot(data,portable,Application::PortableSchema));
  const auto compact=app.save_compact_snapshot(data,sizeof data);
  CHECK(compact && restored.restore_snapshot(data,compact) && restored.fixed_beacon_altitude_metres()==123);

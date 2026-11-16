@@ -16,7 +16,8 @@ MAX_PAYLOAD = 8192
 CANONICAL_SIZE = 7992
 KEYS_SIZE = 8008
 ROUTING_SIZE = 8092
-PORTABLE_SIZE = 8096
+ALTITUDE_SIZE = 8096
+PORTABLE_SIZE = 8108
 KEY_ACTION_COUNT = 12
 
 
@@ -24,7 +25,7 @@ def parse_header(header):
     if len(header) != HEADER or header[:8] != MAGIC:
         raise ValueError('not a Custom UI settings backup')
     protocol, size, schema, payload_crc = struct.unpack_from('<4I', header, 8)
-    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, PORTABLE_SIZE), (5, PORTABLE_SIZE)):
+    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, ALTITUDE_SIZE), (5, ALTITUDE_SIZE), (6, PORTABLE_SIZE)):
         raise ValueError('unsupported backup protocol, schema or payload length')
     if struct.unpack_from('<I', header, 40)[0] != 0:
         raise ValueError('unsupported backup flags')
@@ -61,8 +62,10 @@ def inspect_backup(data):
                 raise ValueError('invalid APRS path address')
         if any(value > limit for value, limit in zip(routing[16:], (3, 2, 1, 4, 3))):
             raise ValueError('invalid APRS routing setting')
-    if schema >= 4 and words[-1] > 32768:
+    if schema >= 4 and words[ROUTING_SIZE//4] > 32768:
         raise ValueError('invalid fixed beacon altitude')
+    if schema >= 6 and (words[-3] > 8 or words[-2] > 36 or words[-1] > 2):
+        raise ValueError('invalid beacon format, overlay or mode')
     if words[0] not in (0, 1):
         raise ValueError('invalid language field')
     # Canonical v1: 29 base words, 3 VFOs x18, 15 zones x9, 64 memories x26.
