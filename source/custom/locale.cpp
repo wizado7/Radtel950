@@ -63,6 +63,7 @@ constexpr Text catalog[]={
     {"CAL MARKER INVALID","КАЛИБР.: МЕТКА НЕВЕРНА"},
     {"CAL PA TABLE INVALID","КАЛИБР.: ТАБЛИЦА PA НЕВЕРНА"},
     {"CAL MIC INVALID","КАЛИБР.: КОД МИКРОФОНА"},
+    {"CAL FREQ TRIM INVALID","КАЛИБР.: ПОПРАВКА ЧАСТОТЫ"},
     {"TX BATTERY SENSOR","TX: ДАТЧИК ПИТАНИЯ"},
     {"TX LOW BATTERY","TX: НИЗКОЕ НАПРЯЖЕНИЕ"},
     {"TX HIGH VOLTAGE","TX: ВЫСОКОЕ НАПРЯЖЕНИЕ"},

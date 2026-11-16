@@ -2,7 +2,7 @@
 #pragma once
 #include "voice_ptt.hpp"
 #include "voice_tx_route.hpp"
-#include "voice_tx_values.hpp"
+#include "voice_tx_registers.hpp"
 
 namespace rt950::voice {
 // Hardware adapters must provide settled channel
@@ -44,9 +44,8 @@ public:
         // Prepare the route with zero PA bias. Delegate board-specific
         // modulation, clock and RF mode transitions to the board adapter.
         prepare_uhf_route(board_);
-        if(!board_.configure_voice(values_))return false;
-        board_.bias(values_.pa_bias);
-        if(!board_.finish_voice() || !healthy())return false;
+        if(!board_.configure_voice(values_) || !board_.finish_voice() ||
+           !verify_voice_tx(board_,values_,board_.power_selector()))return false;
         if(cb_fm_frequency(frequency_)) {
             board_.set(TxRoutePin::Pe7,false);
             board_.set(TxRoutePin::Pb1,false);
@@ -56,7 +55,18 @@ public:
             board_.set(TxRoutePin::Pb1,true);
             board_.set(TxRoutePin::Pe14,false);
         } else select_uhf_tx_route(board_);
-        return healthy();
+        constexpr unsigned steps=4;
+        for(unsigned step=1;step<=steps;++step) {
+            if(!healthy()) {
+                board_.bias(0);
+                return false;
+            }
+            board_.bias(uint8_t(unsigned(values_.pa_bias)*step/steps));
+            if(step<steps)board_.delay_us(1000);
+        }
+        if(healthy())return true;
+        board_.bias(0);
+        return false;
     }
     bool start_tail() {return active_ && board_.start_tail();}
     void stop() {

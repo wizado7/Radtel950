@@ -97,7 +97,7 @@ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
 print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
 for suite,description in (
- ('aprs_personal_tests','APRS personal inbox: callsign/SSID, unread per entry, duplicates, identity changes and navigation'),
+ ('aprs_personal_tests','APRS inbox: callsign/SSID, unread, duplicates, Reply-ACK, control packets and navigation'),
  ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, invalid and stale data, six-digit field and AX.25 round trip'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
  ('spectrum_tests','RX spectrum: bounded grid, stale samples, timeout, PTT and measured frequency copied RX-only'),
@@ -669,7 +669,7 @@ if a.stock:
   machine.reg_write(UC_ARM_REG_LR,0x080ff001)
   try:machine.emu_start(pc|1,0x080ff000,count=budget)
   except UcError as error:raise AssertionError(f"{pc:#x} stopped at {machine.reg_read(UC_ARM_REG_PC):#x}") from error
-  assert machine.reg_read(UC_ARM_REG_PC)==0x080ff000
+  assert machine.reg_read(UC_ARM_REG_PC)==0x080ff000,(hex(pc),hex(machine.reg_read(UC_ARM_REG_PC)),budget)
   return machine.reg_read(UC_ARM_REG_R0)
  # Run the stock frequency counter and spectrum helpers against mocked RF reads.
  reads=[]
@@ -880,7 +880,8 @@ if a.stock:
     if len(frame)>4:
      offset=int.from_bytes(bytes(frame[1:4]),'big')+len(frame)-5
      reply=(dump[offset] if a.calibration_dump else
-            6 if offset==0xf0e0 else 55 if offset==0xf210 else 0x64)
+            6 if offset==0xf0e0 else 55 if offset==0xf210 else
+            0xc0-((offset-0xf000)//0x40)*0x20 if 0xf000<=offset<0xf08d else 0x64)
     word_write(address,reply)
  device=FactoryDevice()
  u.hook_add(UC_HOOK_MEM_WRITE,device.write)
@@ -986,6 +987,10 @@ if a.stock:
  route=[]
  responses={0:(0xa800,0x0280,55),1:(0xa800,0xe912,0x6fff,0x33,0xa800)}
  words=[iter(responses[0]),iter(responses[1])]
+ tx_registers=[{},{}]
+ bad_readback=None
+ pa_routes=[]
+ expected_pa_route=None
  bits=[]
  selected_chip=None
  sample_bit=0
@@ -994,6 +999,10 @@ if a.stock:
   global selected_chip,bits,sample_bit,sample_value
   if address==0x4000741c:
    power.append(value)
+   if not value:pa_routes.clear()
+   else:pa_routes.append((word_read(ep+12)&0x4080,word_read(port+12)&2))
+  if address==0x4000741c and value and expected_pa_route is not None:
+   assert pa_routes[-1]==expected_pa_route,(pa_routes,expected_pa_route)
   if address==ep+20 and value&0x7080 or address==port+20 and value&3:
    route.append((address,value,word_read(0x4000741c)))
   if address not in (ep+16,ep+20):return
@@ -1008,7 +1017,9 @@ if a.stock:
    elif selected_chip==chip:
     if len(bits)==24:
      value24=int(''.join(map(str,bits)),2)
-     transfers.append((chip,value24>>16,value24&0xffff,word_read(0x4000741c)))
+     register,value16=value24>>16,value24&0xffff
+     tx_registers[chip][register]=value16
+     transfers.append((chip,register,value16,word_read(0x4000741c)))
     selected_chip=None
   if high and value&0x400 and selected_chip is not None:
    bits.append(int(bool(prior&0x800)))
@@ -1019,10 +1030,13 @@ if a.stock:
   if address!=ep+8 or selected_chip is None:return
   assert not forbid_active_reads or not power or power[-1]==0,'serial read while PA active'
   if not sample_bit:
-   if register_response is None:sample_value=next(words[selected_chip])
-   else:
-    register=int(''.join(map(str,bits[:8])),2)&0x7f
-    sample_value=register_response(register)
+   register=int(''.join(map(str,bits[:8])),2)&0x7f
+   regs=tx_registers[selected_chip]
+   if register in (0x30,0x36,0x38,0x39) and regs.get(0x30)==0xc1fe:
+    assert not power or power[-1]==0
+    sample_value=regs[register] ^ int(register==bad_readback)
+   elif register_response is None:sample_value=next(words[selected_chip])
+   else:sample_value=register_response(register)
    sample_bit=16
   sample_bit-=1
   word_write(address,((sample_value>>sample_bit)&1)<<11)
@@ -1046,36 +1060,45 @@ if a.stock:
  register_response=None
  transfers.clear();power.clear();route.clear()
  print('ARM board frequency counter: VHF/UHF RX routes, chip 0, PA idle and stop before receiver release PASS')
- result=call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=6000000)
+ expected_pa_route=(0x80,0)
+ result=call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=16000000)
  assert result==0,result
  assert (1,0x30,0xc1fe,0) in transfers
- assert (1,0x36,0x57,136) in transfers
+ assert (1,0x36,0x57,0) in transfers
  assert all(not (chip==0 and reg==0x30 and val==0xc1fe) for chip,reg,val,_ in transfers)
- assert 136 in power and power[-1]==0
- assert [(address,mask) for address,mask,bias in route if bias]==[(port+20,2),(ep+20,0x4000)]
- assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,136))+1:]
+ assert [v for v in power if v]==[34,68,102,136] and power[-1]==0
+ assert not any(bias for _,_,bias in route)
+ assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
  assert word_read(ep+12)&0x7080==0x7080 and word_read(port+12)&3==3
- print('ARM board UHF PTT: PE15, zero-bias setup, calibrated DAC and safe release PASS')
+ print('ARM board UHF PTT: PE15, zero-bias readback, four-step calibrated DAC and safe release PASS')
+ for bad_readback in (0x30,0x38,0x39,0x36):
+  transfers.clear();power.clear();route.clear()
+  words=[iter(responses[0]),iter(responses[1])]
+  assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=16000000)==2
+  assert power and not any(power) and not any(bias for _,_,bias in route)
+  assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
+ bad_readback=None
+ print('ARM board TX: each mismatched readback blocks PA and unkeys chip PASS')
  for selection,gain in enumerate((36,45,55),1):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
-  assert call_tx(u,symbols['voice_board_tx_probe'],446081250,selection<<24,budget=6000000)==0
+  assert call_tx(u,symbols['voice_board_tx_probe'],446081250,selection<<24,budget=16000000)==0
   assert (1,0x7d,(0xe912&0xffe0)|gain,0) in transfers,(selection,transfers)
   assert 136 in power and power[-1]==0
  print('ARM board microphone: Low/Middle/High select OEM register words without changing PA bias PASS')
  for mode in (1,2,3,4):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
-  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,mode<<20,budget=6000000)
+  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,mode<<20,budget=16000000)
   assert result==(0 if mode==1 else 2),(mode,result)
   assert power and power[-1]==0
-  assert (42 in power and 136 not in power) if mode==1 else not any(power),(mode,power)
+  assert [v for v in power if v]==([10,21,31,42] if mode==1 else []),(mode,power)
  print('ARM measured PA code: exact DAC override; above-Low, wrong frequency and zero blocked before keying PASS')
  forbid_active_reads=True
  for tail_tone in (0,0x109,0x201):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
-  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,tail_tone|0x20000,budget=6000000)
+  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,tail_tone|0x20000,budget=16000000)
   assert result==0,(tail_tone,result)
   if tail_tone==0x201:
    assert (1,0x52,0x8fff,136) in transfers
@@ -1087,45 +1110,50 @@ if a.stock:
  print('ARM UHF tail: cached register 52, no serial reads while PA active, 400 ms and safe release PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
- result=call_tx(u,symbols['voice_board_tx_probe'],145500000,0,budget=6000000)
+ expected_pa_route=(0,2)
+ result=call_tx(u,symbols['voice_board_tx_probe'],145500000,0,budget=16000000)
  assert result==0,result
  assert (0,0x30,0xc1fe,0) in transfers
- assert (0,0x36,0x57,98) in transfers
+ assert (0,0x36,0x57,0) in transfers
  assert 98 in power and power[-1]==0
  assert all(chip==0 for chip,_,_,_ in transfers)
- assert [(address,mask) for address,mask,bias in route if bias]==[(ep+20,0x80),(ep+20,0x4000)]
- assert (0,0x30,0,0) in transfers[transfers.index((0,0x36,0x57,98))+1:]
+ assert not any(bias for _,_,bias in route)
+ assert (0,0x30,0,0) in transfers[transfers.index((0,0x36,0x57,0))+1:]
  print('ARM board VHF PTT: PE8, calibrated DAC, VHF route and release PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
- assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x10000,budget=6000000)==0
+ assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x10000,budget=16000000)==0
  assert (0,0x7d,0xe934,0) in transfers
  print('ARM board APRS TX: stock packet gain in register 7D and calibrated VHF key PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,)),iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800,0xa800,0x0280,170))]
- result=call_tx(u,symbols['voice_board_tx_probe'],27185000,0,budget=12000000)
+ expected_pa_route=(0x4000,0)
+ result=call_tx(u,symbols['voice_board_tx_probe'],27185000,0,budget=16000000)
  assert result==0,(result,transfers[-16:],power)
- assert (1,0x30,0xc1fe,0) in transfers and (1,0x36,0x57,73) in transfers
- assert [(address,mask) for address,mask,bias in route if bias]==[(ep+20,0x80),(port+20,2)]
+ assert (1,0x30,0xc1fe,0) in transfers and (1,0x36,0x57,0) in transfers
+ assert not any(bias for _,_,bias in route)
  assert 73 in power and power[-1]==0
- assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,73))+1:]
+ assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
  print('ARM board 27 MHz FM PTT: CB PA calibration, route 4, DAC zero on release and RX restore PASS')
  for hz,chip,bias in ((145500000,0,98),(27185000,1,73)):
+  expected_pa_route=(0x4000,0) if chip else (0,2)
   for selection,gain in enumerate((36,45,55),1):
    transfers.clear();power.clear();route.clear()
    words=([iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())] if chip==0 else
           [iter((0xa800,)),iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800,0xa800,0x0280,170))])
-   assert call_tx(u,symbols['voice_board_tx_probe'],hz,selection<<24,budget=12000000)==0
+   assert call_tx(u,symbols['voice_board_tx_probe'],hz,selection<<24,budget=16000000)==0
    assert (chip,0x7d,(0xe912&0xffe0)|gain,0) in transfers
    assert bias in power and power[-1]==0
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
- assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x1010000,budget=6000000)==0
+ expected_pa_route=(0,2)
+ assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x1010000,budget=16000000)==0
  assert (0,0x7d,0xe934,0) in transfers
  print('ARM microphone isolation: VHF/CB gain, acquired-owner lock and fixed APRS gain PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter(responses[0]),iter(responses[1])]
- assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x109,budget=6000000)==0
+ expected_pa_route=(0x80,0)
+ assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x109,budget=16000000)==0
  assert (1,0x51,0x902f,0) in transfers
  assert (1,0x07,1827,0) in transfers
  assert (1,0x52,0x0292,0) in transfers
@@ -1133,7 +1161,7 @@ if a.stock:
  print('ARM board CTCSS TX: 88.5 Hz sequence before applying PA bias and safe release PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter(responses[0]),iter(responses[1])]
- assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x201,budget=6000000)==0
+ assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x201,budget=16000000)==0
  assert (1,0x51,0xa04b,0) in transfers
  assert (1,0x07,0x0ad7,0) in transfers
  dcs_words=[(reg,value) for chip,reg,value,bias in transfers if chip==1 and reg==8 and not bias]
@@ -1141,7 +1169,7 @@ if a.stock:
  assert power[-1]==0
  transfers.clear();power.clear();route.clear()
  words=[iter(responses[0]),iter(responses[1])]
- assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x26a,budget=6000000)==0
+ assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x26a,budget=16000000)==0
  assert (1,0x51,0x804b,0) in transfers
  assert [(reg,value) for chip,reg,value,bias in transfers if chip==1 and reg==8 and not bias]==dcs_words
  assert power[-1]==0
@@ -1237,7 +1265,7 @@ if a.stock:
  assert vhf_pointers==(0x20000024,0x20000064,0x200000a4)
  for level,pointer in enumerate(vhf_pointers):
   menu.mem_write(0x20000c7c+23,bytes([level]))
-  menu.mem_write(pointer,bytes(range(1+16*level,17+16*level)))
+  menu.mem_write(pointer,bytes(range(33-16*level,49-16*level)))
   for hz in range(136000000,174000001,125000):
    menu.mem_write(0x20000c7c+12,struct.pack('<I',hz//10))
    assert call_tx(menu,0x0801ea60)==call_tx(u,symbols['voice_vhf_pa_probe'],hz,level),(hz,level)
@@ -1263,7 +1291,7 @@ if a.stock:
  assert cb_pointers==(0x2000016c,0x2000017c,0x2000018c)
  for level,pointer in enumerate(cb_pointers):
   menu.mem_write(0x20000c7c+23,bytes([level]))
-  menu.mem_write(pointer,bytes(range(1+16*level,17+16*level)))
+  menu.mem_write(pointer,bytes(range(33-16*level,49-16*level)))
   for hz in range(26000000,28000000,25000):
    menu.mem_write(0x20000c7c+12,struct.pack('<I',hz//10))
    assert call_tx(menu,0x0801ea60)==call_tx(u,symbols['voice_cb_pa_probe'],hz,level),(hz,level)

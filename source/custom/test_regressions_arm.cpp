@@ -103,21 +103,23 @@ struct TxBoard {
  uint8_t bias_value=0;
  unsigned route_writes=0,nonzero_bias=0,restores=0,register_writes=0,delay_total=0;
  bool bad_restore=false;
+ uint16_t regs[128]{};
  bool acquire(){acquired=true;return true;}
  void bias(uint8_t value){bias_value=value;if(value)++nonzero_bias;}
  bool listen(uint32_t hz){tuned=hz;return true;}
  Channel channel(uint32_t) const {return observation;}
  bool read(uint8_t reg,uint16_t &out){
-  if(reg==0x7d)out=0xe912;
+  if(reg==0x30 || reg==0x36 || reg==0x38 || reg==0x39)out=regs[reg];
+  else if(reg==0x7d)out=0xe912;
   else if(reg==0x52)out=0x6fff;
   else if(reg==0x31)out=0x33;
   else if(reg==0x40)out=0xa800;
   else return false;
   return true;
  }
- bool write(uint8_t reg,uint16_t) {
-  if(!configure_ok || (reg!=0x36 && bias_value) || (reg==0x36 && !bias_value))return false;
-  ++register_writes;return true;
+ bool write(uint8_t reg,uint16_t value) {
+  if(!configure_ok || bias_value)return false;
+  regs[reg]=value;++register_writes;return true;
  }
  void delay_us(unsigned duration){delay_total+=duration;}
  bool tx_values(uint16_t mic,rt950::voice::UhfTxValues &out) const {
@@ -663,14 +665,17 @@ extern "C" int regression_tests() {
  spi.fail_after=8;
  CHECK(!voice::read_factory_flash(spi,0xf0e0,factory_read,2) && !spi.selected);
  voice::UhfCalibration cal;
- bool erased=false;uint8_t raw_tone=0;
+ bool erased=false,bad_order=false;uint8_t raw_tone=0;
+ int trim=-31;bool marked=true;
  auto read_factory=[&](uint32_t address,uint8_t *data,size_t count) {
   for(size_t i=0;i<count;++i)data[i]=0;
   if(address==0xf0e0 && count==1)data[0]=erased?0xff:6;
   else if(address==0xf210 && count==16) {
-   data[0]=55;data[1]=raw_tone;data[2]=uint8_t(255u-raw_tone);data[11]=0xa0;data[12]=0xe1;data[13]=0xff;
+   data[0]=55;data[1]=raw_tone;data[2]=uint8_t(255u-raw_tone);data[11]=marked?0xa0:0;
+   data[12]=uint8_t(trim);data[13]=uint8_t(uint16_t(trim)>>8);
   } else if((address==0xf000 || address==0xf040 || address==0xf080) && count==13) {
-   for(size_t i=0;i<count;++i)data[i]=uint8_t(100+(address-0xf000)/4+i);
+   for(size_t i=0;i<count;++i)data[i]=uint8_t(164-(address-0xf000)/4+i);
+   if(bad_order && address==0xf040)data[4]=136;
   } else return false;
   return true;
  };
@@ -682,6 +687,23 @@ extern "C" int regression_tests() {
   CHECK(cal.ctcss_raw==raw && cal.ctcss_level==(raw&127u));
   CHECK(cal.dcs_raw==255u-raw && cal.dcs_level==((255u-raw)&127u));
  }
+ bad_order=true;
+ CHECK(voice::inspect_uhf_calibration(read_factory,cal)==voice::CalibrationStatus::InvalidPa);
+ bad_order=false;
+ constexpr int invalid_trims[]={-32768,-872,872,32767};
+ for(int k:invalid_trims) {
+  trim=k;
+  CHECK(voice::inspect_uhf_calibration(read_factory,cal)==voice::CalibrationStatus::InvalidTrim);
+ }
+ constexpr int edge_trims[]={-871,871};
+ for(int k:edge_trims) {
+  trim=k;
+  CHECK(voice::load_uhf_calibration(read_factory,cal) && cal.frequency_correction==k);
+ }
+ marked=false;trim=32767;
+ CHECK(voice::load_uhf_calibration(read_factory,cal) && !cal.frequency_correction);
+ marked=true;trim=-31;
+ CHECK(voice::load_uhf_calibration(read_factory,cal));
  voice::UhfTxValues tx_values;
  CHECK(voice::uhf_tx_values(cal,446081250,2,0xe912,tx_values));
  CHECK((uint32_t(tx_values.frequency_high)<<16 | tx_values.frequency_low)==44608094 &&
@@ -784,7 +806,7 @@ extern "C" int regression_tests() {
  tx_board.configure_ok=true;
  integrated.poll(uhf_tx,target,14,true);
  CHECK(integrated.state()==voice::Ptt::State::Transmitting && tx_board.bias_value==136 &&
-       tx_board.route_writes==15 && tx_board.register_writes==16 && tx_board.delay_total==100);
+       tx_board.route_writes==15 && tx_board.register_writes==16 && tx_board.delay_total==3100 && tx_board.nonzero_bias==4);
  integrated.poll(uhf_tx,target,15,false);
  CHECK(tx_board.restores==3 && !tx_board.bad_restore && !tx_board.acquired);
  integrated.poll(uhf_tx,target,16,true);
@@ -1446,8 +1468,8 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  if(!receiver.status().ready)return 1;
  UhfCalibration factory;
  factory.pa[2][4]=136;factory.microphone=55;factory.ctcss_level=47;factory.dcs_level=75;factory.frequency_correction=-31;
- VhfPaCalibration vhf;vhf.pa[2][5]=98;
- CbPaCalibration cb;cb.pa[2][2]=73;
+ VhfPaCalibration vhf;vhf.pa[0][5]=150;vhf.pa[1][5]=125;vhf.pa[2][5]=98;
+ CbPaCalibration cb;cb.pa[0][2]=150;cb.pa[1][2]=100;cb.pa[2][2]=73;
  BoardUhfTx adapter(receiver,factory,2,nullptr,&vhf,&cb,(tone&0x10000u)!=0);
  const unsigned microphone_mode=(tone>>24)&3u;
  if(microphone_mode)adapter.select_microphone(static_cast<rt950::MicGain>(microphone_mode-1));
@@ -1495,7 +1517,7 @@ extern "C" uint32_t voice_vhf_pa_probe(uint32_t hz,uint32_t selector) {
  const auto read=[](uint32_t address,uint8_t *data,size_t length) {
   if(address==0xf0e0 && length==1) {*data=1;return true;}
   if(length!=16 || (address!=0xf010 && address!=0xf050 && address!=0xf090))return false;
-  for(unsigned i=0;i<length;++i)data[i]=uint8_t(1+(address-0xf010)/4+i);
+  for(unsigned i=0;i<length;++i)data[i]=uint8_t(33-(address-0xf010)/4+i);
   return true;
  };
  if(!rt950::voice::load_vhf_pa_calibration(read,cal) || selector>=3)return 0;
@@ -1516,7 +1538,7 @@ extern "C" uint32_t voice_cb_pa_probe(uint32_t hz,uint32_t selector) {
  const auto read=[](uint32_t address,uint8_t *data,size_t length) {
   if(address==0xf0e0 && length==1) {*data=1;return true;}
   if(length!=16 || (address!=0xf190 && address!=0xf1a0 && address!=0xf1b0))return false;
-  for(unsigned i=0;i<length;++i)data[i]=uint8_t(1+address-0xf190+i);
+  for(unsigned i=0;i<length;++i)data[i]=uint8_t(33-(address-0xf190)+i);
   return true;
  };
  if(!rt950::voice::load_cb_pa_calibration(read,cal) || selector>=3)return 0;
@@ -3162,7 +3184,7 @@ extern "C" unsigned am_seek_tests() {
 extern "C" int aprs_personal_tests() {
  aprs::RecentMessages messages;
  messages.select_identity("N0CALL",15);
- uint8_t frame[32]={'A'<<1,'P'<<1,'R'<<1,'S'<<1,' '<<1,' '<<1,0x60,
+ uint8_t frame[64]={'A'<<1,'P'<<1,'R'<<1,'S'<<1,' '<<1,' '<<1,0x60,
      'W'<<1,'1'<<1,'A'<<1,'B'<<1,'C'<<1,' '<<1,0x61,0x03,0xf0,':'};
  auto receive=[&](const char *destination,char body) {
      unsigned i=0;
@@ -3187,6 +3209,28 @@ extern "C" int aprs_personal_tests() {
  messages.read_personal(1);CHECK(messages.personal_unread());
  messages.read_personal(0);CHECK(!messages.personal_unread());
  messages.select_identity("",0);receive("N0CALL",'J');CHECK(!messages.count(true) && !messages.personal_unread());
+ messages.select_identity("N0CALL",0);
+ messages.clear();
+ receive("N0CALL",'X');
+ messages.clear();
+ auto packet=[&](const char *payload) {
+     unsigned end=27;
+     while(*payload)frame[end++]=uint8_t(*payload++);
+     messages.record(frame,end);
+ };
+ packet("HELLO{12}34");
+ CHECK(messages.count()==1 && messages.count(true)==1 && messages.personal_unread());
+ const auto *message=messages.at(0,true);
+ CHECK(message && message->id[0]=='1' && message->id[1]=='2' && !message->id[2]);
+ constexpr char expected[]="HELLO";
+ for(unsigned i=0;i<sizeof expected;++i)CHECK(message->body[i]==expected[i]);
+ messages.read_personal(0);
+ packet("HELLO{12}56");packet("HELLO{12}");packet("HELLO{12");
+ packet("ack12");packet("rejA1234");packet("ack12}");packet("rej12}34");
+ packet("BAD{12}3");packet("BAD{12}3!");packet("BAD{123}45");
+ CHECK(messages.count()==1 && messages.count(true)==1 && !messages.personal_unread());
+ packet("ack12 tomorrow");
+ CHECK(messages.count()==2 && messages.count(true)==2 && messages.personal_unread());
  Application app(false);
  app.key(Key::AprsMessages);app.aprs_message_counts(3,2);
  app.key(Key::Mode);CHECK(app.aprs_personal() && !app.aprs_message_index());

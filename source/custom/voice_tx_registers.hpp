@@ -8,6 +8,7 @@ constexpr uint8_t uhf_tx_chip=1;
 
 // OEM 0.29 0x0801E510 and 0x0801ED50 take the slot bandwidth, not the chip.
 constexpr uint16_t fm_filter_word(bool narrow) {return narrow?0x4008:0x3028;}
+inline constexpr uint16_t TxActiveWord=0xc1fe;
 constexpr uint16_t fm_start_word(bool narrow) {return narrow?0:0x0200;}
 
 
@@ -70,7 +71,7 @@ bool prepare_voice_tx(Radio &radio,const UhfTxValues &values,bool narrow,
        !radio.read(0x40,reg40) || !radio.write(0x40,(reg40&0xf000)|0x050a) ||
        !radio.write(0x30,fm_start_word(narrow)))return false;
     radio.delay_us(50);
-    return radio.write(0x30,0xc1fe);
+    return radio.write(0x30,TxActiveWord);
 }
 
 // OEM 0.29 0x0801D7B4 with its extra signalling flag clear.
@@ -93,9 +94,21 @@ bool prepare_tail_tx(Radio &radio,Tone tone,uint8_t ctcss_level) {
 }
 
 // OEM 0x0801F114. Selectors are in factory order.
+constexpr uint16_t pa_control_word(uint8_t selector) {return selector==0?0x007f:0x0057;}
+
 template<class Radio>
 bool finish_voice_tx(Radio &radio,uint8_t selector) {
-    constexpr uint16_t words[]={0x007f,0x0057,0x0057};
-    return selector<3 && radio.write(0x36,words[selector]);
+    return selector<3 && radio.write(0x36,pa_control_word(selector));
+}
+
+// Keep the DAC at zero throughout readback. Verify the registers set here.
+template<class Radio>
+bool verify_voice_tx(Radio &radio,const UhfTxValues &values,uint8_t selector) {
+    const auto matches=[&radio](uint8_t address,uint16_t expected) {
+        uint16_t actual=0;
+        return radio.read(address,actual) && actual==expected;
+    };
+    return selector<3 && matches(0x30,TxActiveWord) && matches(0x38,values.frequency_low) &&
+           matches(0x39,values.frequency_high) && matches(0x36,pa_control_word(selector));
 }
 }

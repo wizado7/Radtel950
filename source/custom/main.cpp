@@ -454,7 +454,7 @@ extern "C" int main(void) {
         const char *calibration_error="TX NO CALIBRATION";
 #ifdef RT950_MAIN_TX
         constexpr const char *factory_errors[]={"TX NO CALIBRATION","CAL SPI UNAVAILABLE",
-            "CAL SPI READ FAILED","CAL MARKER INVALID","CAL PA TABLE INVALID","CAL MIC INVALID"};
+            "CAL SPI READ FAILED","CAL MARKER INVALID","CAL PA TABLE INVALID","CAL MIC INVALID","CAL FREQ TRIM INVALID"};
         if(!factory_valid)calibration_error=factory_errors[unsigned(factory_status)];
 #endif
         input.bench_ptt=ptt.state()==voice::Ptt::State::Ending?"TX ENDING":!pressed?"":transmitting?tx_on:tx_owns_radio?"TX PREPARING":

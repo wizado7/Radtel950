@@ -4,7 +4,16 @@
 #include <stdint.h>
 
 namespace rt950::voice {
-enum class CalibrationStatus : uint8_t { Ready, SpiUnavailable, ReadFailed, InvalidMarker, InvalidPa, InvalidMic };
+enum class CalibrationStatus : uint8_t { Ready, SpiUnavailable, ReadFailed, InvalidMarker, InvalidPa, InvalidMic, InvalidTrim };
+
+// Plausibility limit for a marked crystal trim: 871 ten-Hz units at 435.5 MHz (20 ppm).
+inline constexpr int16_t MaxCrystalTrim=871;
+
+template<size_t N>
+constexpr bool valid_pa_column(const uint8_t (&pa)[3][N],unsigned index) {
+    return pa[2][index]!=0 && pa[2][index]<pa[1][index] &&
+           pa[1][index]<pa[0][index] && pa[0][index]!=0xff;
+}
 
 constexpr uint8_t factory_tone_level(uint8_t value) {return value&0x7fu;}
 
@@ -45,6 +54,9 @@ CalibrationStatus inspect_uhf_calibration(Reader read,UhfCalibration &out) {
         if(!read(0xf000u+level*0x40u,table,sizeof table))return CalibrationStatus::ReadFailed;
         for(uint8_t bias:table)if(!bias || bias==0xff)return CalibrationStatus::InvalidPa;
     }
+    // UHF TX reaches 400..470 MHz in 10-MHz steps.
+    for(unsigned index=0;index<=7;++index)
+        if(!valid_pa_column(candidate.pa,index))return CalibrationStatus::InvalidPa;
     uint8_t settings[16]{};
     if(!read(0xf210,settings,sizeof settings))return CalibrationStatus::ReadFailed;
     if(settings[0]>63)return CalibrationStatus::InvalidMic;
@@ -56,6 +68,8 @@ CalibrationStatus inspect_uhf_calibration(Reader read,UhfCalibration &out) {
     if(settings[11]==0xa0) {
         const unsigned encoded=unsigned(settings[12])|(unsigned(settings[13])<<8);
         candidate.frequency_correction=int16_t(encoded<0x8000?int(encoded):int(encoded)-65536);
+        if(candidate.frequency_correction < -MaxCrystalTrim || candidate.frequency_correction > MaxCrystalTrim)
+            return CalibrationStatus::InvalidTrim;
     }
     out=candidate;
     return CalibrationStatus::Ready;
@@ -71,8 +85,8 @@ struct VhfPaCalibration {
 
     uint8_t bias(uint32_t hz,uint8_t selector) const {
         if(hz<136000000u || hz>174000000u || hz%10 || selector>=3)return 0;
-        const uint8_t value=pa[selector][(hz/1000000u-130u)/3u];
-        return value==0xff?0:value;
+        const unsigned index=(hz/1000000u-130u)/3u;
+        return valid_pa_column(pa,index)?pa[selector][index]:0;
     }
 };
 
@@ -102,8 +116,8 @@ struct CbPaCalibration {
 
     uint8_t bias(uint32_t hz,uint8_t selector) const {
         if(!cb_fm_frequency(hz) || selector>=3)return 0;
-        const uint8_t value=pa[selector][(hz/1000000u-15u)/5u];
-        return value==0xff?0:value;
+        const unsigned index=(hz/1000000u-15u)/5u;
+        return valid_pa_column(pa,index)?pa[selector][index]:0;
     }
 };
 

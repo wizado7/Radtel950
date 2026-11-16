@@ -61,15 +61,18 @@ public:
             entry.body[length++]=char(ch);
         }
         if(!length)return;
+        const char *body=entry.body;
+        if(at==size && length>3 && ((body[0]=='a' && body[1]=='c' && body[2]=='k') ||
+                                   (body[0]=='r' && body[1]=='e' && body[2]=='j')) &&
+           message_id(body+3,length-3))return;
         if(at<size) {
-            ++at;
-            const size_t id_size=size-at;
-            if(!id_size || id_size>5)return;
-            for(unsigned i=0;i<id_size;++i) {
-                const uint8_t ch=frame[at+i];
-                if(!((ch>='0' && ch<='9') || (ch>='A' && ch<='Z') || (ch>='a' && ch<='z')))return;
-                entry.id[i]=char(ch);
-            }
+            const size_t id_start=++at;
+            while(at<size && frame[at]!='}')++at;
+            const size_t id_size=at-id_start;
+            if(!message_id(reinterpret_cast<const char *>(frame+id_start),id_size))return;
+            for(unsigned i=0;i<id_size;++i)entry.id[i]=char(frame[id_start+i]);
+            if(at<size && (id_size!=2 ||
+                !reply_id(reinterpret_cast<const char *>(frame+at+1),size-at-1)))return;
         }
         for(unsigned i=0;i<6 && (frame[7+i]>>1)!=' ';++i)
             entry.source[i]=char(frame[7+i]>>1);
@@ -82,6 +85,21 @@ public:
         }
     }
 private:
+    static bool alphanumeric(char ch) {
+        return (ch>='0' && ch<='9') || (ch>='A' && ch<='Z') || (ch>='a' && ch<='z');
+    }
+    // APRS 1.1 Reply-ACK appends '}' and optionally the two-character ACK.
+    static bool reply_id(const char *id,size_t size) {
+        return !size || (size==2 && alphanumeric(id[0]) && alphanumeric(id[1]));
+    }
+    static bool message_id(const char *id,size_t size) {
+        if(!size || size>5)return false;
+        for(size_t i=0;i<size;++i) {
+            if(!alphanumeric(id[i]))
+                return i==2 && id[i]=='}' && reply_id(id+i+1,size-i-1);
+        }
+        return true;
+    }
     static bool equal(const char *a,const char *b) {
         while(*a && *a==*b){++a;++b;}
         return *a==*b;
