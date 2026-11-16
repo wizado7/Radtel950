@@ -99,6 +99,7 @@ print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped
 for suite,description in (
  ('vox_tests','VOX: threshold, hysteresis, hang time, stale sample, wrap, reset and snapshot migration'),
  ('tx_readback_diagnostics_tests','TX diagnosis: distinct BK4829 register failures before PA'),
+ ('signal_levels_tests','slot RSSI: independent Watch observations, input age, other frequency and RF fault'),
  ('channel_tx_tests','memory TX: PMR02 simplex default, recall, legacy migration and persistent explicit clear'),
  ('voice_signal_tests','voice signals: all DTMF pairs, four burst keys, debounce, bounded duration and cancellation'),
  ('beacon_formats_tests','APRS beacon completion: Base91 reference, Mic-E wire fields, SmartBeaconing, manual permit and migration'),
@@ -1087,6 +1088,9 @@ if a.stock:
  expected_pa_route=(0x80,0)
  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=16000000)
  assert result==0,result
+ assert transfers[:3]==[(1,0x47,0x6042,0),(1,0x30,0,0),(1,0x37,0x1d00,0)],transfers[:5]
+ assert (0,0x37,0x9d1f,0) in transfers
+ print('ARM BK4829 idle: unused chip muted, RF stopped and LDO asleep while active chip wakes PASS')
  assert (1,0x30,0xc1fe,0) in transfers
  assert (1,0x36,0x57,0) in transfers
  assert all(not (chip==0 and reg==0x30 and val==0xc1fe) for chip,reg,val,_ in transfers)
@@ -1169,7 +1173,9 @@ if a.stock:
  assert (0,0x30,0xc1fe,0) in transfers
  assert (0,0x36,0x57,0) in transfers
  assert 98 in power and power[-1]==0
- assert all(chip==0 for chip,_,_,_ in transfers)
+ inactive=[(reg,val,bias) for chip,reg,val,bias in transfers if chip==1]
+ sleep=[(0x47,0x6042,0),(0x30,0,0),(0x37,0x1d00,0)]
+ assert inactive in (sleep,sleep*2),inactive
  assert not any(bias for _,_,bias in route)
  assert (0,0x30,0,0) in transfers[transfers.index((0,0x36,0x57,0))+1:]
  print('ARM board VHF PTT: PE8, calibrated DAC, VHF route and release PASS')
@@ -1222,6 +1228,11 @@ if a.stock:
   if not invalid_low:
    assert (1,0x51,0x902f,0) in transfers and (1,0x07,1383,0) in transfers
  print('ARM 446.01825 MHz Low + CTCSS 1 (67 Hz): erased higher levels ignored, erased own Low blocks PA PASS')
+ transfers.clear();power.clear();route.clear()
+ words=[iter(responses[0]),iter(responses[1])]
+ result=call_tx(u,symbols['voice_board_tx_probe'],446018750,0x101,budget=16000000)
+ assert result==0 and (1,0x07,1383,0) in transfers and any(power) and power[-1]==0,result
+ print('ARM PMR02 446.01875 MHz: Low and 67 Hz, RF startup, PA stages and RX release PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter(responses[0]),iter(responses[1])]
  assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0x201,budget=16000000)==0

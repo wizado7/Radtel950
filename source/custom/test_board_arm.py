@@ -630,13 +630,14 @@ def voice_call(method,a=0,b=0,c=0):
     for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),(voice_object,a,b,c)):
         voice.u.reg_write(register,value)
     name=next(name for name in symbols if 'BoardReceiver'+method in name and '.' not in name)
-    voice.function(name)
+    voice.call(symbols[name],budget=1200000)
+    assert voice.u.reg_read(UC_ARM_REG_PC)==STOP,name
 # The direct-call model starts with zeroed RAM, so apply the C++ defaults.
 voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
 voice_call('11set_profile')
 voice.u.mem_write(0x20017b00,bytes(8))
 voice_call('6enable',1)
-for now in range(46):voice_call('4poll',now,0)
+for now in range(50):voice_call('4poll',now,0)
 voice_call('4tune',446081250,100)
 voice_call('4poll',101,0)
 assert not voice.odr[GPIO[1]]&1
@@ -663,7 +664,7 @@ voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
 voice_call('11set_profile')
 voice.u.mem_write(0x20017b00,bytes(8))
 voice_call('6enable',1)
-for now in range(46):voice_call('4poll',now,0)
+for now in range(50):voice_call('4poll',now,0)
 # AAPCS passes now, narrow and SQL in the stack slots of tune_profile.
 voice.u.mem_write(0x20017b00,struct.pack('<III',100,0,3))
 voice_call('12tune_profile',145500000,0,0)
@@ -683,7 +684,7 @@ voice=VoiceMachine()
 voice.reply_words=iter((0xa800,)+(0x4000,170)*3+(0x8000,170)*3)
 voice.function('board_init')
 voice_call('6enable',1)
-for now in range(46):voice_call('4poll',now,0)
+for now in range(50):voice_call('4poll',now,0)
 voice.u.mem_write(0x20017b00,struct.pack('<III',100,1,3))
 voice_call('12tune_profile',145500000,2|(106<<8),32) # D023I
 voice.u.mem_write(0x20017b00,bytes(12))
@@ -703,7 +704,7 @@ voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
 voice_call('11set_profile')
 voice.u.mem_write(0x20017b00,bytes(8))
 voice_call('6enable',1)
-for now in range(46):voice_call('4poll',now,0)
+for now in range(50):voice_call('4poll',now,0)
 voice_call('4tune',162550000,200)
 voice.u.mem_write(0x20017b00,struct.pack('<II',0,1)) # packet audio off, WX muted
 voice_call('4poll',201,0)

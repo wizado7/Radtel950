@@ -19,6 +19,7 @@
 #include "voice_battery_limits.hpp"
 #include "aprs_adc.hpp"
 #include "mcu_diagnostics.hpp"
+#include "ui.hpp"
 #include "voice_vox.hpp"
 #include "voice_mic_adc.hpp"
 #include "drivers/dma.h"
@@ -1183,7 +1184,7 @@ extern "C" int regression_tests() {
  CHECK(zones.zone_name(1)[0]=='8');
  zones.key(Key::DeleteChannel);zones.key(Key::Ok);zones.key(Key::Ok);
  CHECK(!zones.memory(0)->occupied && !zones.config().vfo[0].channel_mode);
- CHECK(zones.config().vfo[0].rx_hz==446006250 && zones.config().vfo[0].tx_hz==446006250);
+ CHECK(zones.config().vfo[0].rx_hz==446006250 && !zones.config().vfo[0].tx_hz);
  zones.key(Key::SelectZone);zones.key(Key::Up);zones.key(Key::Ok);
  CHECK(zones.active_zone()==0 && zones.channel_visible(1));
  auto &snapshot=regression_fixture;
@@ -1493,7 +1494,7 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  using namespace rt950::voice;
  BoardReceiver receiver;
  receiver.enable(true);
- for(uint32_t now=0;now<46;++now)receiver.poll(now,false);
+ for(uint32_t now=0;now<50;++now)receiver.poll(now,false);
  if(!receiver.status().ready)return 1;
  UhfCalibration factory;
  factory.pa[2][4]=(tone&0x80000u)?0xff:136;
@@ -1598,7 +1599,7 @@ extern "C" uint32_t voice_board_rx_tone_probe(uint32_t packed) {
  using namespace rt950;
  voice::BoardReceiver rx;
  rx.enable(true);
- for(uint32_t now=0;now<46;++now)rx.poll(now,false);
+ for(uint32_t now=0;now<50;++now)rx.poll(now,false);
  if(!rx.status().ready)return 1;
  const Tone tone{static_cast<ToneKind>((packed>>8)&0xffu),uint8_t(packed)};
  rx.set_profile(tone,47,100,(packed&0x10000u)==0);
@@ -1621,7 +1622,7 @@ extern "C" uint32_t voice_board_rx_tone_probe(uint32_t packed) {
 extern "C" uint32_t voice_board_monitor_probe() {
  using namespace rt950;
  voice::BoardReceiver rx;rx.enable(true);
- for(uint32_t now=0;now<46;++now)rx.poll(now,false);
+ for(uint32_t now=0;now<50;++now)rx.poll(now,false);
  if(!rx.status().ready)return 1;
  rx.set_profile({ToneKind::Ctcss,9},47,100,true,9);
  rx.tune(145500000,100);
@@ -1640,7 +1641,7 @@ extern "C" uint32_t voice_board_sql_probe() {
  using namespace rt950::voice;
  BoardReceiver rx;
  rx.enable(true);
- for(uint32_t now=0;now<46;++now)rx.poll(now,false);
+ for(uint32_t now=0;now<50;++now)rx.poll(now,false);
  if(!rx.status().ready)return 1;
  rx.set_profile({},0,100,true,9);
  rx.tune(145500000,100);
@@ -2269,6 +2270,26 @@ extern "C" int tx_readback_diagnostics_tests() {
   CHECK(!verify_voice_tx(board,values,0,TxActiveWord,&failed) && failed==reg && !board.bias_value);
   board.regs[reg]^=1;
  }
+ return 0;
+}
+
+extern "C" int signal_levels_tests() {
+ InputStatus input;
+ voice::VoiceStatus sample;
+ sample.ready=true;sample.sampled=true;sample.frequency=446018750;sample.rssi=140;
+ sample.sampled_at=0xfffffff0u;
+ input.observe_signal(1,sample,446018750,sample.sampled_at);
+ CHECK(input.slot_signal[1].bars(446018750,0)==4);
+ CHECK(!input.slot_signal[0].bars(446018750,0) && !input.slot_signal[2].bars(446018750,0));
+ CHECK(!input.slot_signal[1].bars(446018250,0) && !input.slot_signal[1].bars(446018750,2484));
+ input.observe_signal(0,sample,446018750,0);
+ CHECK(!input.slot_signal[0].frequency);
+ sample.sampled_at=10;sample.rssi=511;
+ input.observe_signal(0,sample,446018750,10);
+ CHECK(input.slot_signal[0].bars(446018750,10)==8 && input.slot_signal[1].bars(446018750,10)==4);
+ sample.sampled_at=11;sample.fault=true;
+ input.observe_signal(2,sample,446018750,11);
+ CHECK(!input.slot_signal[2].frequency);
  return 0;
 }
 

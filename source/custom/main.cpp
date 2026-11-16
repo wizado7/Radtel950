@@ -682,15 +682,15 @@ extern "C" int main(void) {
             voice_watch.poll(voice_rx,app.config(),now,!voice_rx.status().fault,input.ptt_mask!=0 || monitor);
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
             if(!input.ptt_mask) {
-                const auto slot=voice_watch.slot();
-                input.observe_signal(slot,voice_rx.status(),app.config().vfo[slot].rx_hz,now);
+                const auto measured_slot=voice_watch.slot();
+                input.observe_signal(measured_slot,voice_rx.status(),app.config().vfo[measured_slot].rx_hz,now);
             }
 #endif
 #ifdef RT950_MAIN_TX
             const auto &rx=voice_rx.status();
             if(voice_target && !ptt_down) {
-                const auto slot=voice_watch.slot();
-                input.observe_signal(slot,rx,config.vfo[slot].rx_hz,now);
+                const auto measured_slot=voice_watch.slot();
+                input.observe_signal(measured_slot,rx,config.vfo[measured_slot].rx_hz,now);
             }
             if(frequency_copy_open) {
                 app.frequency_copy_result(voice_rx.poll_frequency_copy(now));
