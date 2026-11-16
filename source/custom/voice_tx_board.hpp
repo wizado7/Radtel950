@@ -34,7 +34,9 @@ public:
     void select_measured_bias(uint32_t hz,uint8_t code) {if(!acquired_){bias_hz_=hz;bias_code_=code;}}
     uint8_t measured_bias() const {return bias_code_;}
     uint32_t measured_frequency() const {return bias_hz_;}
-    void select_bandwidth(bool narrow) {if(!acquired_)narrow_=narrow;}
+    void select_channel_check(bool narrow,uint8_t sql) {
+        if(!acquired_) {narrow_=narrow;sql_=sql;}
+    }
     void select_tone(Tone tone) {if(!acquired_)tone_=tone;}
     void select_microphone(MicGain gain) {
         if(!packet_ && !acquired_ && unsigned(gain)<=unsigned(MicGain::High))mic_gain_=gain;
@@ -57,7 +59,7 @@ private:
     uint16_t reg52_=0;
     bool reg52_valid_=false;
     TailFailure tail_failure_=TailFailure::None;
-    uint8_t selector_;
+    uint8_t selector_,sql_=3;
     bool packet_;
     bool narrow_=true;
     bool acquired_=false,tuned_=false,fault_=false,chip_started_=false;

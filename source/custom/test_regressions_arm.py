@@ -98,7 +98,7 @@ result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {
 print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
 for suite,description in (
  ('aprs_personal_tests','APRS inbox: callsign/SSID, unread, duplicates, Reply-ACK, control packets and navigation'),
- ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, invalid and stale data, six-digit field and AX.25 round trip'),
+ ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, fixed metres, six-digit field, AX.25 and snapshot migration'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
  ('spectrum_tests','RX spectrum: bounded grid, stale samples, timeout, PTT and measured frequency copied RX-only'),
  ('frequency_copy_tests','frequency copy: two fresh samples, OEM rounding, restart, band limits, timeout, fault, cancel, menu and RX-only VFO'),
@@ -271,7 +271,7 @@ class UploadSerial:
    self.at+=len(data);self.answer=b'CHECKED\n' if self.at==len(self.frame) else b'NEXT\n'
   return len(data)
 fake=UploadSerial(fixture);backup.upload_backup(fake,fixture,clock=fake.clock)
-assert fake.at==8140 and b''.join(fake.writes[1:])==fixture
+assert fake.at==8144 and b''.join(fake.writes[1:])==fixture
 fake=UploadSerial(fixture)
 try:backup.upload_backup(fake,fixture[:-1],clock=fake.clock)
 except ValueError:pass
@@ -291,26 +291,31 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['user_key_tests']|1,0x080ff000,count=6000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'user keys failed at C++ line {result}'
-print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1/v2/v3 and portable schema1/2 migration PASS')
+print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v4 and portable schema1/2 migration PASS')
 legacy=bytearray(fixture[:48+7992])
 import zlib
 struct.pack_into('<I',legacy,12,7992);struct.pack_into('<I',legacy,16,1)
 struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',legacy,44,zlib.crc32(legacy[:44]))
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
-assert backup.inspect_backup(fixture)['snapshot_schema']==3
+assert backup.inspect_backup(fixture)['snapshot_schema']==4
 v2=bytearray(fixture[:48+8008])
 struct.pack_into('<II',v2,12,8008,2)
 struct.pack_into('<I',v2,20,zlib.crc32(v2[48:]));struct.pack_into('<I',v2,44,zlib.crc32(v2[:44]))
 assert backup.inspect_backup(v2)['snapshot_schema']==2
 fake=UploadSerial(v2);backup.upload_backup(fake,v2,clock=fake.clock);assert fake.at==8056
+v3=bytearray(fixture[:48+8092])
+struct.pack_into('<II',v3,12,8092,3)
+struct.pack_into('<I',v3,20,zlib.crc32(v3[48:]));struct.pack_into('<I',v3,44,zlib.crc32(v3[:44]))
+assert backup.inspect_backup(v3)['snapshot_schema']==3
+fake=UploadSerial(v3);backup.upload_backup(fake,v3,clock=fake.clock);assert fake.at==8140
 scan_backup=bytearray(fixture)
 struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
-assert backup.inspect_backup(scan_backup)['snapshot_schema']==3
-fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8140
-print('HOST portable migration: schema1/2 upload retained and schema3 8140-byte container validated PASS')
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==4
+fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8144
+print('HOST portable migration: schema1/2/3 retained and schema4 8144-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
 print('ARM APRS TX framing: bounded NRZI encoder, FCS and round trip PASS')
@@ -1071,6 +1076,15 @@ if a.stock:
  assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
  assert word_read(ep+12)&0x7080==0x7080 and word_read(port+12)&3==3
  print('ARM board UHF PTT: PE15, zero-bias readback, four-step calibrated DAC and safe release PASS')
+ for sql,rssi,busy in ((1,100,True),(3,100,False),(0,100,False),(0,112,True)):
+  transfers.clear();power.clear();route.clear()
+  words=[iter((0xa800,0x0280,rssi)),iter(responses[1])]
+  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,((sql+1)<<26)|0x109,budget=16000000)
+  assert result==(2 if busy else 0),(sql,rssi,result)
+  assert any(power)==(not busy),(sql,rssi,power)
+  assert (0,0x38,44608125&0xffff,0) in transfers
+  assert (0,0x39,44608125>>16,0) in transfers
+ print('ARM voice BCL: selected TX frequency, configured SQL threshold, SQL 0 carrier fallback and PA guard PASS')
  for bad_readback in (0x30,0x38,0x39,0x36):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]

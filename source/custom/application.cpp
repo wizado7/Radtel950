@@ -216,13 +216,9 @@ uint32_t Application::base_tx(unsigned slot) const {
 }
 uint32_t Application::profile_tx_frequency() const {return base_tx(config_.active);}
 bool Application::reverse_active(unsigned slot) const {
-    return config_.vfo[slot].rx_hz!=base_rx(slot);
+    return radio_profile(slot).reverse && candidate_tx(slot);
 }
-uint32_t Application::candidate_tx(unsigned slot) const {
-    const auto &v=config_.vfo[slot];
-    const auto &profile=v.channel_mode?memories_[v.memory_channel].radio:vfo_profiles_[slot];
-    const uint32_t rx=base_rx(slot);
-    uint32_t tx=base_tx(slot);
+uint32_t Application::shifted_tx(uint32_t rx,uint32_t tx,const RadioProfile &profile) {
     if(tx && profile.shift!=Shift::None) {
         if(!profile.offset_hz)return 0;
         tx=profile.shift==Shift::Plus?rx+profile.offset_hz:rx-profile.offset_hz;
@@ -240,6 +236,18 @@ const char *Application::tx_status() const {
     if(profile.shift!=Shift::None && !profile.offset_hz)return "SET SHIFT AMOUNT";
     if(!candidate_tx(slot))return "TX OUT OF BAND";
     return "PROFILE READY";
+}
+uint32_t Application::candidate_tx(unsigned slot) const {
+    return shifted_tx(base_rx(slot),base_tx(slot),radio_profile(slot));
+}
+uint32_t Application::scan_channel_frequency(unsigned index) const {
+    const auto &m=memories_[index];
+    const auto tx=m.radio.reverse?shifted_tx(m.rx_hz,m.tx_hz,m.radio):0;
+    return tx?tx:m.rx_hz;
+}
+Tone Application::scan_channel_tone(unsigned index) const {
+    const auto &m=memories_[index];
+    return m.radio.heard_tone(m.radio.reverse && shifted_tx(m.rx_hz,m.tx_hz,m.radio));
 }
 void Application::sync_frequencies() {
     for(unsigned slot=0;slot<3;++slot) {
@@ -376,6 +384,11 @@ void Application::digit(unsigned d) {
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
     if(d>9)return;
     if(page_==Page::EditWaypoint) {write_waypoint_digit(d);return;}
+    if(page_==Page::BeaconAltitude) {
+        if(editor_digits_>=5){notify("TOO MANY DIGITS");return;}
+        beacon_altitude_clear_=false;
+        editor_value_=editor_value_*10u+d;++editor_digits_;notify("");return;
+    }
     if(page_==Page::Radio && config_.vfo[config_.active].channel_mode)key(Key::Channels);
     if(page_==Page::Channels || page_==Page::StoreChannel) {
         if(editor_digits_==2){editor_digits_=0;editor_value_=0;}
@@ -512,7 +525,7 @@ constexpr MenuEntry aprs_menu[]={
 #endif
 };
 constexpr MenuEntry aprs_rx_menu[]={{"APRS receive",Key::Menu,Option::AprsRx},{"RX frequency",Key::AprsRxFrequency},{"Background scan interval",Key::AprsScanInterval},{"Clear APRS list",Key::ClearAprs}};
-constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource}};
+constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource},{"Fixed beacon altitude",Key::BeaconAltitude}};
 constexpr MenuEntry aprs_route_menu[]={
     {"APRS relay (session)",Key::Menu,Option::AprsRelay},
     {"Relay routing",Key::RelayMode},{"Relay TX channel",Key::RelayChannel},{"Relay wait",Key::RelayDelay},
@@ -985,6 +998,24 @@ void Application::key(Key k) {
         if(k==Key::Ok) {
             aprs_messages_clear_=true;aprs_message_=0;
             page_=Page::AprsMessages;notify("APRS MESSAGES CLEARED");
+        }
+        return;
+    }
+    if(k==Key::BeaconAltitude) {
+        parent_=Page::Settings;page_=Page::BeaconAltitude;
+        editor_digits_=0;editor_value_=0;beacon_altitude_clear_=false;notify("");return;
+    }
+    if(page_==Page::BeaconAltitude) {
+        if(k==Key::Back || k==Key::Menu){page_=parent_;notify("");}
+        if(k==Key::Mode){beacon_altitude_clear_=true;editor_value_=0;editor_digits_=0;notify("");}
+        if(k==Key::Erase && editor_digits_){editor_value_/=10u;--editor_digits_;notify("");}
+        if(k==Key::Ok) {
+            if(editor_digits_ && editor_value_>MaxBeaconAltitudeMetres) {
+                notify("USE 0 TO 32767 M");return;
+            }
+            const auto code=uint16_t(beacon_altitude_draft()+1);
+            if(beacon_altitude_code_!=code && beacon_saved_point_)config_.beacon_on=false;
+            beacon_altitude_code_=code;page_=parent_;notify("SETTING APPLIED");
         }
         return;
     }

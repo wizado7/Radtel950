@@ -9,7 +9,7 @@ import zlib
 from oem_channels import CHANNELS, CHANNEL_BYTES, DUMP_BYTES, PER_ZONE, RECORD, frequency
 from settings_backup import HEADER, inspect_backup, load_backup, write_backup
 
-# Canonical word offsets in settings_snapshot.cpp, shared by schemas 1, 2 and 3.
+# Canonical word offsets in settings_snapshot.cpp, shared by schemas 1 through 4.
 VFO_BASE, VFO_WORDS = 29, 18
 CHANNEL_BASE, CHANNEL_WORDS, MEMORY_COUNT = 218, 26, 64
 SCAN_EXCLUDED = CHANNEL_BASE + MEMORY_COUNT * CHANNEL_WORDS + 3

@@ -242,6 +242,7 @@ extern "C" int main(void) {
         const auto &slot=config.vfo[tx_slot];
         const auto &profile=app.radio_profile(tx_slot);
 #ifdef RT950_MAIN_TX
+        const Tone tx_tone=profile.sent_tone(app.reverse_active(tx_slot));
         ble_export.enable(config.ble_on && !switch_off,now);
         const bool export_allowed=config.ble_on && config.ble_export && !switch_off;
         ble_export.poll(export_allowed,now);
@@ -313,7 +314,8 @@ extern "C" int main(void) {
             const auto &nav=*nav_get();
             const char symbol=beacon_symbols[app.beacon_symbol_index()].code;
             const bool encoded=saved_position?
-                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol,routing):
+                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol,routing,
+                    app.fixed_beacon_altitude_metres()):
                 aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
                     nav.lat,nav.ns[0],nav.lon,nav.ew[0],symbol,aprs::beacon_altitude(nav,now),routing);
             if(encoded)begin_packet(packet_hz,false);
@@ -324,7 +326,7 @@ extern "C" int main(void) {
         const bool vhf_tx=voice::vhf_tx_frequency(slot.tx_hz);
         const bool cb_tx=voice::cb_fm_frequency(slot.tx_hz);
         const bool frequency_allowed=cb_tx?
-            slot.rx_hz==slot.tx_hz && profile.shift==Shift::None && profile.power==TxPower::Low &&
+            slot.rx_hz==slot.tx_hz && !profile.reverse && profile.shift==Shift::None && profile.power==TxPower::Low &&
             profile.tx_tone.kind==ToneKind::Off && profile.rx_tone.kind==ToneKind::Off:
             vhf_tx?voice::vhf_tx_frequency(slot.rx_hz):
             voice::uhf_tx_frequency(slot.tx_hz) && voice::uhf_tx_frequency(slot.rx_hz);
@@ -375,16 +377,17 @@ extern "C" int main(void) {
 #endif
 #ifdef RT950_MAIN_TX
         if(ptt.state()==voice::Ptt::State::Idle) {
-            tx_board.select_tone(profile.tx_tone);
-            tx_board.select_bandwidth(profile.narrow);
+            tx_board.select_tone(tx_tone);
+            tx_board.select_channel_check(profile.narrow,profile.squelch);
             tx_board.select_microphone(app.mic_gain());
         }
 #endif
-        const bool tone_allowed=tx_board.permits_tone(profile.tx_tone)
-#ifndef RT950_MAIN_TX
-            && profile.rx_tone.kind==ToneKind::Off
+#ifdef RT950_MAIN_TX
+        const bool tone_allowed=tx_board.permits_tone(tx_tone);
+#else
+        const bool tone_allowed=!profile.reverse && tx_board.permits_tone(profile.tx_tone) &&
+            profile.rx_tone.kind==ToneKind::Off;
 #endif
-            ;
         const bool allowed=calibration_valid && voice_enabled &&
 #ifdef RT950_MAIN_TX
             app.voice_tx_page(power_probe) && power_tx_ok &&
@@ -398,7 +401,7 @@ extern "C" int main(void) {
             profile.narrow &&
 #endif
             !profile.tx_inhibit &&
-            !profile.reverse && tone_allowed &&
+            tone_allowed &&
 #ifdef RT950_MAIN_TX
             tx_board.microphone_gain()==app.mic_gain() &&
 #endif
@@ -488,7 +491,7 @@ extern "C" int main(void) {
         diagnostics.factory_limits=battery_limits_factory;
         diagnostics.profile_check=profile.tx_inhibit?"TX INHIBITED":!slot.tx_hz?"TX FREQ UNSET":
             !calibration_valid?calibration_error:!power_tx_ok?supply_fault_text(supply_fault):
-            !frequency_allowed?"TX OUT OF BAND":profile.reverse?"TX PROFILE BLOCKED":
+            !frequency_allowed?"TX OUT OF BAND":
             !tone_allowed?"TX TONE INVALID":!power_allowed?"POWER CALIBRATION NEEDED":
             cb_tx && !profile.narrow?"TX PROFILE BLOCKED":"STATIC CHECKS PASS";
         const bool packet_transmitting=packet_tx.transmitting();
@@ -543,15 +546,15 @@ extern "C" int main(void) {
             };
             if(voice_target) {
                 const auto &current=app.radio_profile(voice_watch.slot());
-                voice_rx.set_profile(current.rx_tone,tone_level(current.rx_tone),
-                    now,current.narrow,current.squelch);
+                const auto tone=current.heard_tone(app.reverse_active(voice_watch.slot()));
+                voice_rx.set_profile(tone,tone_level(tone),now,current.narrow,current.squelch);
             }
             // Switch the frequency and RX profile together, before polling audio.
             voice_watch.poll(voice_rx,config,now,voice_target && !voice_rx.status().fault,
                 ptt_down || monitor,[&](uint8_t rx_slot,uint32_t hz) {
                     const auto &rx_profile=app.radio_profile(rx_slot);
-                    if(hz)voice_rx.tune_profile(hz,rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
-                        now,rx_profile.narrow,rx_profile.squelch);
+                    const auto tone=rx_profile.heard_tone(app.reverse_active(rx_slot));
+                    if(hz)voice_rx.tune_profile(hz,tone,tone_level(tone),now,rx_profile.narrow,rx_profile.squelch);
                     else voice_rx.stop();
                 });
             bool tone_scan_fault=false;
@@ -567,8 +570,9 @@ extern "C" int main(void) {
             if(scan_has_target) {
                 const auto *memory=app.memory(scanned);
                 const auto &rx_profile=memory?memory->radio:app.scan_vfo_profile();
+                const Tone tone=memory?app.scan_channel_tone(scanned):rx_profile.rx_tone;
                 if(!scan_rx_owned || voice_rx.status().frequency!=channel_scan.frequency() || scanned!=previous_channel)
-                    voice_rx.tune_profile(channel_scan.frequency(),rx_profile.rx_tone,tone_level(rx_profile.rx_tone),
+                    voice_rx.tune_profile(channel_scan.frequency(),tone,tone_level(tone),
                         now,rx_profile.narrow,rx_profile.squelch);
             }
             if(spectrum_open) {

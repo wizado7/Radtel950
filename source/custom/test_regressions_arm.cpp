@@ -1114,6 +1114,11 @@ extern "C" int regression_tests() {
  repeater.key(Key::Back);repeater.key(Key::Back);repeater.key(Key::Back);repeater.key(Key::NextSlot);
  CHECK(!repeater.active_radio_profile().reverse && repeater.config().vfo[1].rx_hz==446018750);
  CHECK(repeater.recall(63) && repeater.config().vfo[1].rx_hz==145000000 && !repeater.config().vfo[1].tx_hz);
+ CHECK(repeater.scan_channel_frequency(63)==145000000 && repeater.reverse_active(1));
+ RadioProfile profile;profile.tx_tone={ToneKind::Dcs,1};profile.rx_tone={ToneKind::Ctcss,9};
+ CHECK(profile.sent_tone(repeater.reverse_active(1)).kind==ToneKind::Ctcss &&
+       profile.heard_tone(repeater.reverse_active(1)).kind==ToneKind::Dcs);
+ CHECK(profile.sent_tone(false).kind==ToneKind::Dcs && profile.heard_tone(false).kind==ToneKind::Ctcss);
  repeater.key(Key::Mode);CHECK(repeater.config().vfo[1].rx_hz==446018750);
  repeater.key(Key::TxFrequency);repeater.key(Key::Left);repeater.key(Key::Ok);
  CHECK(repeater.config().vfo[1].rx_hz==repeater.config().vfo[1].tx_hz);
@@ -1473,6 +1478,8 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  BoardUhfTx adapter(receiver,factory,2,nullptr,&vhf,&cb,(tone&0x10000u)!=0);
  const unsigned microphone_mode=(tone>>24)&3u;
  if(microphone_mode)adapter.select_microphone(static_cast<rt950::MicGain>(microphone_mode-1));
+ const unsigned squelch=(tone>>26)&15u;
+ adapter.select_channel_check(true,squelch?squelch-1:3);
  const unsigned power_mode=(tone>>20)&15u;
  if(power_mode)adapter.select_measured_bias(power_mode==3?hz+12500u:hz,power_mode==2?137:power_mode==4?0:42);
  const rt950::Tone selected{static_cast<rt950::ToneKind>((tone>>8)&0xffu),uint8_t(tone)};
@@ -2605,8 +2612,8 @@ extern "C" int compact_storage_tests() {
  CHECK(!source.save_compact_snapshot(roundtrip,size-1));
  CHECK(roundtrip[size-1]==0xa5 && roundtrip[size]==0xa5);
  CHECK(Application::snapshot_format_supported(packed,size) && Application::snapshot_format_supported(legacy,old_size));
- put(packed+4,4);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
- put(packed+4,3);
+ put(packed+4,5);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
+ put(packed+4,4);
  CHECK(restored.restore_snapshot(packed,size));CHECK(restored.save_snapshot(roundtrip,sizeof roundtrip)==old_size);
  for(size_t i=0;i<old_size;++i)CHECK(legacy[i]==roundtrip[i]);
  CHECK(restored.restore_snapshot(legacy,old_size));
@@ -2880,7 +2887,7 @@ extern "C" int user_key_tests() {
  portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
- const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==3);
+ const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==4);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
  dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
@@ -2890,15 +2897,15 @@ extern "C" int user_key_tests() {
  const auto scan_size=app.save_compact_snapshot(packed,sizeof packed);
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
- // All new routing fields and four key codes use one packed byte each.
- for(unsigned version=2;version>0;--version) {
-  const unsigned removed=version==2?21:4;
+ // Default altitude, routing fields and key codes each fit one packed byte.
+ for(unsigned version=3;version>0;--version) {
+  const unsigned removed=version==3?1:version==2?21:4;
   const auto old_encoded=word(packed+12)-removed,old_size=(20+old_encoded+3u)&~3u;
   put(packed+4,version);put(packed+8,word(packed+8)-removed);put(packed+12,old_encoded);
   for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
   put(packed+16,~crc_bytes(crc_bytes(0xffffffffu,packed,16),packed+20,old_encoded));
   CHECK(loaded.restore_snapshot(packed,old_size));
-  CHECK(loaded.key_action(0)==(version==2?KeyAction::ScanChannels:KeyAction::None));
+  CHECK(loaded.key_action(0)==(version>=2?KeyAction::ScanChannels:KeyAction::None));
   CHECK(loaded.key_action(2)==KeyAction::Fm && loaded.aprs_routing().beacon==aprs::BeaconPath::Direct);
  }
  app.key(Key::ResetSettings);app.key(Key::Down);app.key(Key::Ok);CHECK(app.key_action(0)==KeyAction::None && app.key_action(2)==KeyAction::Fm);
@@ -3267,6 +3274,43 @@ extern "C" int beacon_altitude_tests() {
      CHECK(capture.count==1 && capture.length==(fields[index][0]?48u:39u));
      for(unsigned i=0;fields[index][i];++i)CHECK(capture.kiss[38+i]==uint8_t(fields[index][i]));
  }
+ Application app(false),restored(false);
+ CHECK(app.fixed_beacon_altitude_metres()==-1);
+ app.key(Key::BeaconAltitude);app.digit(1);app.digit(2);app.digit(3);app.key(Key::Ok);
+ CHECK(app.fixed_beacon_altitude_metres()==123);
+ CHECK(aprs::encode_beacon(tx,call,9,GeoPoint{48117300,11516667,true},'>',{},app.fixed_beacon_altitude_metres()));
+ AprsCapture capture;
+ aprs::FrameReceiver rx;
+ bool previous=false;
+ for(size_t i=0;i<tx.size();++i) {
+     const bool current=tx.level(i);
+     rx.bit(current==previous,capture_aprs,&capture);
+     previous=current;
+ }
+ constexpr char fixed_field[]="/A=000404";
+ CHECK(capture.count==1 && capture.length==48);
+ for(unsigned i=0;i<sizeof fixed_field-1;++i)CHECK(capture.kiss[38+i]==uint8_t(fixed_field[i]));
+ app.key(Key::BeaconAltitude);app.key(Key::Mode);app.key(Key::Back);
+ CHECK(app.fixed_beacon_altitude_metres()==123);
+ app.key(Key::BeaconAltitude);
+ for(unsigned i=0;i<5;++i)app.digit(9);
+ app.key(Key::Ok);CHECK(app.page()==Page::BeaconAltitude && app.fixed_beacon_altitude_metres()==123);
+ app.key(Key::Back);
+ uint8_t data[Application::SnapshotCapacity];
+ const auto portable=app.save_portable_snapshot(data,sizeof data);
+ CHECK(portable==Application::PortableSize);
+ CHECK(restored.restore_portable_snapshot(data,portable,Application::PortableSchema) &&
+       restored.fixed_beacon_altitude_metres()==123 && !restored.enabled(Option::Beacon));
+ CHECK(restored.restore_portable_snapshot(data,portable-4,3) &&
+       restored.fixed_beacon_altitude_metres()==-1);
+ storage::put(data+portable-4,32769);
+ CHECK(!restored.restore_portable_snapshot(data,portable,Application::PortableSchema));
+ const auto compact=app.save_compact_snapshot(data,sizeof data);
+ CHECK(compact && restored.restore_snapshot(data,compact) && restored.fixed_beacon_altitude_metres()==123);
+ restored.key(Key::BeaconAltitude);restored.key(Key::Mode);restored.key(Key::Ok);
+ CHECK(restored.fixed_beacon_altitude_metres()==-1);
+ restored.key(Key::BeaconAltitude);restored.digit(0);restored.key(Key::Ok);
+ CHECK(restored.fixed_beacon_altitude_metres()==0);
  return 0;
 }
 
@@ -3495,6 +3539,11 @@ extern "C" int aprs_saved_point_tests() {
  CHECK(capture.count==1 && capture.length==39);
  for(unsigned i=0;expected[i];++i)CHECK(capture.kiss[18+i]==uint8_t(expected[i]));
  CHECK(!aprs::encode_beacon(tx,app.beacon_identity().callsign,0,GeoPoint{90000001,0,true},'>'));
+ app.key(Key::BeaconAltitude);app.digit(8);app.key(Key::Back);
+ CHECK(app.enabled(Option::Beacon) && app.fixed_beacon_altitude_metres()==-1);
+ app.key(Key::BeaconAltitude);app.digit(8);app.key(Key::Ok);
+ CHECK(app.beacon_saved_point() && app.fixed_beacon_altitude_metres()==8 && !app.enabled(Option::Beacon));
+ CHECK(app.set_option(Option::Beacon,true));
  uint8_t data[Application::SnapshotCapacity];const auto size=app.save_compact_snapshot(data,sizeof data);
  Application restored(false);CHECK(size && restored.restore_snapshot(data,size));
  CHECK(restored.waypoint().valid && !restored.beacon_saved_point() && !restored.enabled(Option::Beacon));

@@ -66,7 +66,7 @@ private:
         for(unsigned offset=0;offset<None;++offset) {
             const unsigned index=(start+(reverse?None-offset:offset))%None;
             if(app.scan_eligible(index)) {
-                channel_=index;frequency_=app.memory(index)->rx_hz;break;
+                channel_=index;frequency_=app.scan_channel_frequency(index);break;
             }
         }
     }

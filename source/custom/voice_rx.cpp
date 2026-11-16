@@ -245,14 +245,15 @@ bool BoardUhfTx::listen(uint32_t hz) {
 BoardUhfTx::Channel BoardUhfTx::channel(uint32_t now) {
     if(!healthy())return Channel::Failed;
     if(!tuned_) {
-        receiver_.tune(frequency_,now);
+        receiver_.tune_profile(frequency_,{},0,now,packet_?chip_!=0:narrow_,sql_);
         settled_at_=now+45u;tuned_=true;
     }
     receiver_.poll(now,true);
     if(receiver_.status().fault || receiver_.status().frequency!=frequency_)return Channel::Failed;
     if(!receiver_.status().ready || int32_t(now-settled_at_)<0 || !receiver_.has_sample())
         return Channel::Pending;
-    return receiver_.carrier()?Channel::Busy:Channel::Clear;
+    const bool occupied=packet_?receiver_.carrier():receiver_.carrier_at_squelch();
+    return occupied?Channel::Busy:Channel::Clear;
 }
 
 void BoardUhfTx::mute_receiver(){receiver_.stop();}

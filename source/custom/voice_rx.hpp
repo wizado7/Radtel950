@@ -57,6 +57,13 @@ public:
     enum class WeatherAudio : uint8_t {Off, Muted, Speaker};
     void poll(uint32_t now,bool ptt,bool monitor=false,bool packet_audio=false,WeatherAudio weather=WeatherAudio::Off);
     bool carrier() const {return carrier_;}
+    bool carrier_at_squelch() const {
+#ifdef RT950_MAIN_TX
+        return sql_?sql_open_:carrier_;
+#else
+        return carrier_;
+#endif
+    }
     bool has_sample() const {return status_.sampled;}
     const VoiceStatus &status() const {return status_;}
 private:

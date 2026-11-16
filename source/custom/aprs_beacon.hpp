@@ -71,12 +71,13 @@ inline void beacon_coordinate(int32_t microdegrees,unsigned digits,char *text) {
 }
 
 inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ssid,
-                          const GeoPoint &point,char symbol,const Routing &routing={}) {
+                          const GeoPoint &point,char symbol,const Routing &routing={},int32_t altitude_metres=-1) {
     if(!point.valid || !geo_valid(point))return false;
     char lat[8],lon[9];
     beacon_coordinate(point.latitude,2,lat);beacon_coordinate(point.longitude,3,lon);
     return encode_beacon(out,call,ssid,lat,point.latitude<0?'S':'N',
-        lon,point.longitude<0?'W':'E',symbol,-1,routing);
+        lon,point.longitude<0?'W':'E',symbol,
+        altitude_metres>=0 && altitude_metres<=304799?gps_altitude_display(altitude_metres*10,true):-1,routing);
 }
 
 // RF and DAC are separate so this state machine can be tested without MMIO.

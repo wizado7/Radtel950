@@ -18,6 +18,8 @@ struct RadioProfile {
     uint8_t squelch=3;
     TxPower power=TxPower::Low;
     bool narrow=true,busy_lock=true;
+    Tone heard_tone(bool reversed) const {return reversed?tx_tone:rx_tone;}
+    Tone sent_tone(bool reversed) const {return reversed?rx_tone:tx_tone;}
 };
 constexpr uint16_t tx_timeouts[]={0,15,30,60,120,180,300};
 uint16_t ctcss_frequency(Tone tone);

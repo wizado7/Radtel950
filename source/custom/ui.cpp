@@ -723,6 +723,18 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(8,info,force)){rect(8,273,224,16,bg);label(16,276,info,muted,bg);}
  } else if(a.page()==Page::ClearAprsMessages) {
   if(force){panel(52,46);label(16,63,"Clear APRS messages?",accent);label(16,79,"OK: CLEAR  BACK: CANCEL");}
+ } else if(a.page()==Page::BeaconAltitude) {
+  if(force) {
+   label(10,53,"Fixed beacon altitude",accent,bg);
+   label(10,132,"DIGITS: METRES",muted,bg);
+   label(10,150,"V/M: OMIT ALTITUDE",muted,bg);
+  }
+  char value[12];
+  const auto metres=a.beacon_altitude_draft();
+  if(metres<0)copy(value,"Off");
+  else num(value,unsigned(metres));
+  if(changed(1,value,force)){rect(8,76,224,36,card);label(16,88,value);}
+  if(changed(2,a.feedback(),force)){rect(8,264,224,20,bg);label(10,270,a.feedback(),muted,bg);}
  } else if(a.page()==Page::BeaconSource) {
   if(force)label(10,53,"Beacon position source",accent,bg);
   for(unsigned i=0;i<2;++i) {
@@ -1052,7 +1064,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V3 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V4 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";

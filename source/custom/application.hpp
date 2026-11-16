@@ -16,8 +16,8 @@ extern "C" {
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2 };
-enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint, FrequencyCopy, AprsRouteChoice, AprsHop1, AprsHop2 };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude };
+enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint, FrequencyCopy, AprsRouteChoice, AprsHop1, AprsHop2, BeaconAltitude };
 enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Spectrum, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
 enum class Option : uint8_t { Watch, Gps, AprsRx, Beacon, Ble, Export, SidePtt, SecondPtt, Tail, AprsRelay, Count };
@@ -95,6 +95,11 @@ public:
     bool take_aprs_messages_clear() {const bool pending=aprs_messages_clear_;aprs_messages_clear_=false;return pending;}
     bool beacon_saved_point() const {return beacon_saved_point_;}
     bool beacon_source_draft() const {return beacon_source_draft_;}
+    static constexpr unsigned MaxBeaconAltitudeMetres=32767;
+    int32_t fixed_beacon_altitude_metres() const {return int32_t(beacon_altitude_code_)-1;}
+    int32_t beacon_altitude_draft() const {
+        return beacon_altitude_clear_?-1:editor_digits_?int32_t(editor_value_):fixed_beacon_altitude_metres();
+    }
     Spectrum &spectrum() {return spectrum_;}
     const Spectrum &spectrum() const {return spectrum_;}
     void spectrum_ptt() {if(page_==Page::Spectrum || page_==Page::FrequencyCopy)page_=Page::Radio;}
@@ -125,9 +130,9 @@ public:
     static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA","RX spectrum"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
-    static constexpr unsigned PortableSchema=3,PortableSize=8092;
+    static constexpr unsigned PortableSchema=4,PortableSize=8096;
     static constexpr bool portable_layout_supported(size_t size,unsigned schema) {
-        return (schema==1 && size==7992) || (schema==2 && size==8008) ||
+        return (schema==1 && size==7992) || (schema==2 && size==8008) || (schema==3 && size==8092) ||
             (schema==PortableSchema && size==PortableSize);
     }
     size_t save_portable_snapshot(uint8_t *data,size_t capacity) const;
@@ -221,6 +226,8 @@ public:
     uint32_t profile_tx_frequency() const;
     const char *tx_status() const;
     bool reverse_active(unsigned slot) const;
+    uint32_t scan_channel_frequency(unsigned index) const;
+    Tone scan_channel_tone(unsigned index) const;
     unsigned editor_digits() const { return editor_digits_; }
     unsigned active_zone() const {return active_zone_;}
     unsigned zone_selection() const {return zone_selection_;}
@@ -325,6 +332,9 @@ private:
     uint8_t beacon_symbol_=0,beacon_symbol_draft_=0;
     bool aprs_clear_=false,tx_tail_=true;
     bool aprs_messages_clear_=false,beacon_saved_point_=false,beacon_source_draft_=false;
+    // Zero means omitted. Other codes represent metres plus one.
+    uint16_t beacon_altitude_code_=0;
+    bool beacon_altitude_clear_=false;
     Spectrum spectrum_{};
     voice::FrequencyCopy frequency_copy_{};
     bool frequency_copy_uhf_=false,frequency_copy_pending_=false;
@@ -395,6 +405,7 @@ private:
     uint32_t base_rx(unsigned slot) const;
     uint32_t base_tx(unsigned slot) const;
     uint32_t candidate_tx(unsigned slot) const;
+    static uint32_t shifted_tx(uint32_t rx,uint32_t tx,const RadioProfile &profile);
     void sync_frequencies();
     void reconcile_channels();
     void select_channel_for_list();
