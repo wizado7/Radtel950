@@ -409,6 +409,36 @@ void draw_broadcast_presets(const Application &a,bool force) {
    }
   }
 }
+__attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
+void draw_frequency_copy(const Application &a,bool force) {
+  using State=voice::FrequencyCopy::State;
+  const auto result=a.frequency_copy_result();
+  if(force)label(10,54,"Find signal frequency",accent,bg);
+  const char *band=a.frequency_copy_uhf()?"UHF":"VHF";
+  if(changed(1,band,force))stat(80,"Band",band);
+  const char *status=result.state==State::Found?"SIGNAL FOUND":
+      result.state==State::Fault?"RX BUS FAULT":result.state==State::Timeout?"NO STABLE SIGNAL":"SEARCHING SIGNAL";
+  if(changed(2,status,force)){rect(8,117,224,18,bg);label(10,120,status,muted,bg);}
+  char value[16]="---";
+  if(result.hz)freq(value,result.hz);
+  if(changed(3,value,force))stat(150,"MHz",value);
+  const char *hint=result.state==State::Found?"OK COPY TO VFO (RX)":
+      (result.state==State::Fault || result.state==State::Timeout)?"OK RETRY":"";
+  if(changed(4,hint,force)){rect(8,190,224,18,bg);label(10,193,hint,muted,bg);}
+}
+__attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
+void draw_aprs_route_choice(const Application &a,bool force) {
+ if(force)label(10,54,a.route_title(),accent,bg);
+ for(unsigned i=0;i<a.route_count();++i) {
+  const bool highlighted=i==a.route_draft(),applied=i==a.route_value();
+  const unsigned y=76+i*36;
+  const char key[]={char('0'+i),char('0'+highlighted),char('0'+applied),0};
+  if(!changed(i+1,key,force))continue;
+  const uint16_t fill=highlighted?selected:card;
+  rect(8,y,224,30,fill);label(17,y+10,a.route_label(i),ink,fill);
+  if(applied)label(212,y+10,"*",accent,fill);
+ }
+}
 // Confirmation is opt-in and rendered with the same bounded list layout.
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_reset(const Application &a,bool force) {
@@ -555,6 +585,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  const bool presets=a.page()==Page::FmPresets || a.page()==Page::AmPresets;
  const char *footer=a.page()==Page::Aprs && input.aprs_stations.at(0)?"ARROWS SELECT / OK DISTANCE":
      a.page()==Page::Spectrum?"ARROWS CURSOR / OK RESCAN":
+     a.page()==Page::FrequencyCopy?"LEFT/RIGHT BAND / BACK EXIT":
      a.page()==Page::AprsMessages?"* CLEAR MESSAGES / BACK":
      a.page()==Page::Timezone?"OK SAVE / BACK CANCEL":a.page()==Page::Weather?(a.weather().alerted()?"OK ACK / BACK EXIT":
      a.weather().scanning()?"OK LISTEN / BACK EXIT":"OK SCAN / BACK EXIT"):
@@ -562,7 +593,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  if(changed(10,footer,force)){rect(8,300,224,16,bg);label(10,304,footer,muted,bg);}
  const char *state=gps_state(a,now);char line[30];
  if(a.page()==Page::Settings) {
-  static constexpr const char *titles[]={"Settings","Radio","Channels & zones","GPS settings","APRS settings","Bluetooth settings","Display & power","System","Diagnostics","APRS RX Setup","Beacon Setup","Repeater","User keys"};
+  static constexpr const char *titles[]={"Settings","Radio","Channels & zones","GPS settings","APRS settings","Bluetooth settings","Display & power","System","Diagnostics","APRS RX Setup","Beacon Setup","Repeater","User keys","APRS routing"};
   static_assert(sizeof(titles)/sizeof(titles[0])==unsigned(MenuGroup::Count));
   copy(line,titles[unsigned(a.menu_group())]);
  } else if(a.page()==Page::PowerStatus)copy(line,"TX DISABLED ON THIS PAGE");
@@ -950,6 +981,8 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(5,hint,force)){rect(8,228,224,17,bg);label(10,232,hint,muted,bg);}
   const char *extra=a.feedback()[0]?a.feedback():!vfo_scan && a.scan_frequency()?"LEFT: EXCLUDE CHANNEL":"";
   if(changed(7,extra,force)){rect(8,248,224,17,bg);label(10,252,extra,muted,bg);}
+ } else if(a.page()==Page::FrequencyCopy) {
+  draw_frequency_copy(a,force);
  } else if(a.page()==Page::Spectrum) {
   const auto &sweep=a.spectrum();
   const auto selected_point=sweep.selected();
@@ -1019,7 +1052,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V2 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V3 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";
@@ -1133,14 +1166,19 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(2,adc,force))stat(88,"ADC 8BIT",adc);
   if(changed(3,errors,force))stat(124,"ERRORS",errors);
   if(force){panel(164,84);label(16,177,"ADC2 / PA1 / CHANNEL 1",muted);label(16,199,"OEM 0.29 VOLTAGE SCALE",muted);label(16,221,"ESTIMATE: 6.4V TO 8.32V",muted);}
- } else if(a.page()==Page::BeaconIdentity) {
+ } else if(a.page()==Page::AprsRouteChoice) {
+  draw_aprs_route_choice(a,force);
+ } else if(a.identity_page()) {
   const auto &id=a.identity_draft();
   char value[16];bool end=false;
   for(unsigned i=0;i<6;++i){if(!id.callsign[i])end=true;value[i]=end?'_':id.callsign[i];}
   value[6]='-';value[7]=char('0'+id.ssid/10);value[8]=char('0'+id.ssid%10);
   value[9]=char('0'+a.identity_cursor());value[10]=0;
   if(changed(1,value,force)) {
-   value[9]=0;panel(52,96);label(16,65,"BEACON CALLSIGN / SSID",accent);
+   value[9]=0;panel(52,96);
+   const char *title=a.page()==Page::AprsHop1?"Path hop 1 / SSID":
+       a.page()==Page::AprsHop2?"Path hop 2 / SSID":"BEACON CALLSIGN / SSID";
+   label(16,65,title,accent);
    lcd_draw_string_2x(16,96,value,ink,card);
    const unsigned cursor=a.identity_cursor();
    rect(16+(cursor==6?7:cursor)*16,116,cursor==6?32:16,2,accent);

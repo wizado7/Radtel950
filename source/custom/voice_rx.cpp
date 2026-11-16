@@ -30,6 +30,13 @@ struct Pins {
 };
 Pins pins;
 RegisterBus<Pins> bus(pins);
+#ifdef RT950_MAIN_TX
+struct FrequencyRegisters {
+    uint8_t chip;
+    bool write(uint8_t address,uint16_t value) {return bus.write(chip,address,value);}
+    bool read(uint8_t address,uint16_t &value) {return bus.read(chip,address,value);}
+};
+#endif
 // The stock AF helper uses 0xB00F | (level << 4). Start below the
 // previous maximum to leave headroom for the analog volume control.
 constexpr uint8_t VoiceAfLevel=35;
@@ -61,6 +68,10 @@ void BoardReceiver::enable(bool enabled) {
     active_=true;init_step_=0;
 }
 void BoardReceiver::stop() {
+#ifdef RT950_MAIN_TX
+    FrequencyRegisters regs{rx_chip_};
+    frequency_counter_.cancel(regs);
+#endif
     audio(false);
     if(status_.ready)bus.write(rx_chip_,0x30,0);
     gpio_set_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
@@ -68,6 +79,16 @@ void BoardReceiver::stop() {
     status_.frequency=0;status_.receiving=false;status_.rssi=0;status_.status=0;
     restart_=false;status_.sampled=false;carrier_=false;sql_open_=false;tone_matches_=0;
 }
+#ifdef RT950_MAIN_TX
+void BoardReceiver::start_frequency_copy(uint32_t hz,uint32_t now,bool narrow) {
+    tune_profile(hz,{},0,now,narrow,0);
+    frequency_counter_.begin(now,uhf_tx_frequency(hz));
+}
+FrequencyCopy BoardReceiver::poll_frequency_copy(uint32_t now) {
+    FrequencyRegisters regs{rx_chip_};
+    return frequency_counter_.poll(regs,now,status_.sampled,status_.fault);
+}
+#endif
 void BoardReceiver::tune(uint32_t hz,uint32_t now) {
     stop();
 #ifdef RT950_MAIN_TX

@@ -1420,6 +1420,24 @@ extern "C" [[gnu::aligned(16)]] uint32_t voice_tx_register_probe(uint32_t word,u
  return radio.count;
 }
 
+extern "C" uint32_t frequency_copy_board_probe(uint32_t hz,uint32_t cancel) {
+ using namespace rt950::voice;
+ BoardReceiver receiver;
+ receiver.enable(true);
+ receiver.start_frequency_copy(hz,0,true);
+ FrequencyCopy copy;
+ for(uint32_t now=0;now<160;++now) {
+     receiver.poll(now,true);
+     copy=receiver.poll_frequency_copy(now);
+     if(cancel && copy.state==FrequencyCopy::State::Searching) {
+         receiver.stop();
+         return receiver.status().frequency;
+     }
+     if(copy.hz)return copy.hz;
+ }
+ return 1;
+}
+
 extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  using namespace rt950::voice;
  BoardReceiver receiver;
@@ -2550,15 +2568,15 @@ extern "C" int compact_storage_tests() {
  uint8_t legacy[Application::SnapshotCapacity],packed[Application::SnapshotCapacity],roundtrip[Application::SnapshotCapacity];
  const size_t old_size=source.save_snapshot(legacy,sizeof legacy);
  const size_t size=source.save_compact_snapshot(packed,sizeof packed);
- CHECK(old_size+16==source.canonical_snapshot_size() && old_size==7992);
+ CHECK(source.canonical_snapshot_size()==Application::PortableSize && old_size==7992);
  CHECK(size && size<3000 && size%4==0 && size==source.compact_snapshot_size());
  CHECK(!source.save_compact_snapshot(nullptr,sizeof packed) && !source.save_compact_snapshot(roundtrip,19));
  for(auto &byte:roundtrip)byte=0xa5;
  CHECK(!source.save_compact_snapshot(roundtrip,size-1));
  CHECK(roundtrip[size-1]==0xa5 && roundtrip[size]==0xa5);
  CHECK(Application::snapshot_format_supported(packed,size) && Application::snapshot_format_supported(legacy,old_size));
- put(packed+4,3);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
- put(packed+4,2);
+ put(packed+4,4);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
+ put(packed+4,3);
  CHECK(restored.restore_snapshot(packed,size));CHECK(restored.save_snapshot(roundtrip,sizeof roundtrip)==old_size);
  for(size_t i=0;i<old_size;++i)CHECK(legacy[i]==roundtrip[i]);
  CHECK(restored.restore_snapshot(legacy,old_size));
@@ -2696,14 +2714,14 @@ extern "C" int settings_export_tests() {
  CHECK(service.sent()==service.total() && service.active() && !service.port().closes);
  service.port().tx_done=true;service.poll(800,true);
  CHECK(service.phase()==BackupPhase::Complete && !service.active() && service.port().closes==1);
- CHECK(!service.port().overflow && service.port().written==8056);
+ CHECK(!service.port().overflow && service.port().written==48+Application::PortableSize);
  const auto *wire=service.port().wire;
- CHECK(word(wire+8)==1 && word(wire+12)==8008 && word(wire+16)==2);
- CHECK(word(wire+20)==~crc_bytes(0xffffffffu,wire+48,8008));
+ CHECK(word(wire+8)==1 && word(wire+12)==Application::PortableSize && word(wire+16)==Application::PortableSchema);
+ CHECK(word(wire+20)==~crc_bytes(0xffffffffu,wire+48,Application::PortableSize));
  CHECK(word(wire+44)==~crc_bytes(0xffffffffu,wire,44));
  // The exported bytes are the complete existing canonical snapshot.
- uint8_t canonical[Application::SnapshotCapacity];CHECK(app.save_portable_snapshot(canonical,sizeof canonical)==8008);
- for(unsigned i=0;i<8008;++i)CHECK(wire[48+i]==canonical[i]);
+ uint8_t canonical[Application::SnapshotCapacity];CHECK(app.save_portable_snapshot(canonical,sizeof canonical)==Application::PortableSize);
+ for(unsigned i=0;i<Application::PortableSize;++i)CHECK(wire[48+i]==canonical[i]);
  backup_fixture_size=service.port().written;
  for(unsigned i=0;i<backup_fixture_size;++i)regression_fixture[i]=wire[i];
  service.begin(app,0xfffffff0u);service.poll(29983,true);CHECK(service.active());
@@ -2745,7 +2763,11 @@ extern "C" int settings_import_tests() {
   service.begin(now++);feed(reinterpret_cast<const uint8_t *>("RT950PUT\n"),9);
  };
  auto payload=[&](bool hold=false) {
-  for(unsigned at=48;at<8056;at+=32){if(hold && at+32>=8056)service.port().tx_done=false;feed(regression_fixture+at,8056-at<32?8056-at:32);}
+  constexpr unsigned total=48+Application::PortableSize;
+  for(unsigned at=48;at<total;at+=32) {
+   if(hold && at+32>=total)service.port().tx_done=false;
+   feed(regression_fixture+at,total-at<32?total-at:32);
+  }
  };
  CHECK(service.phase()==ImportPhase::Off && !service.active());
  app.key(Key::Import);CHECK(!app.voice_tx_page() && !app.import_confirm() && !app.import_ready());
@@ -2754,7 +2776,7 @@ extern "C" int settings_import_tests() {
  service.port().feed(regression_fixture,48);service.poll(now++,true);CHECK(service.received()==32);
  service.poll(now++,true);CHECK(service.received()==48);service.poll(now++,true);CHECK(service.port().written==5);
  payload(true);CHECK(service.active() && !service.port().closes);
- service.port().tx_done=true;service.poll(now++,true);CHECK(service.phase()==ImportPhase::Checked && !service.active() && service.received()==8056);
+ service.port().tx_done=true;service.poll(now++,true);CHECK(service.phase()==ImportPhase::Checked && !service.active() && service.received()==48+Application::PortableSize);
  CHECK(service.channels()==64 && service.port().closes==1 && !service.port().overflow);
  CHECK(app.memory(1)->rx_hz==145500000u && !app.memory(0)->occupied); // Not applied by upload.
  CHECK(!service.apply(app,now));app.import_ready(true);app.digit(1);CHECK(!app.import_confirm());
@@ -2775,7 +2797,7 @@ extern "C" int settings_import_tests() {
   app.key(Key::Import);start();
   regression_fixture[52]=99;
   if(kind) {
-   put(regression_fixture+20,~crc_bytes(0xffffffffu,regression_fixture+48,8008));
+   put(regression_fixture+20,~crc_bytes(0xffffffffu,regression_fixture+48,Application::PortableSize));
    put(regression_fixture+44,~crc_bytes(0xffffffffu,regression_fixture,44));
   }
   feed(regression_fixture,48);payload();CHECK(service.phase()==ImportPhase::Error);
@@ -2823,12 +2845,12 @@ extern "C" int user_key_tests() {
   CHECK(wrap.poll(uint8_t(raw),0xffffff1eu+700u)==(raw|128u));
  }
  uint8_t portable[Application::SnapshotCapacity],packed[Application::SnapshotCapacity];
- CHECK(app.save_portable_snapshot(portable,sizeof portable)==8008 && app.save_snapshot(packed,sizeof packed)==7992);
+ CHECK(app.save_portable_snapshot(portable,sizeof portable)==Application::PortableSize && app.save_snapshot(packed,sizeof packed)==7992);
  Application loaded(false);CHECK(loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(1)==KeyAction::Gps);
  portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
- const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==2);
+ const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==3);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
  dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
@@ -2838,13 +2860,17 @@ extern "C" int user_key_tests() {
  const auto scan_size=app.save_compact_snapshot(packed,sizeof packed);
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
- // Freeze the v1 decoder: remove exactly the four new one-byte fields.
- const auto encoded=word(packed+12);CHECK(encoded>=4);
- const auto old_encoded=encoded-4,old_size=(20+old_encoded+3u)&~3u;
- put(packed+4,1);put(packed+8,word(packed+8)-4);put(packed+12,old_encoded);
- for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
- put(packed+16,~crc_bytes(crc_bytes(0xffffffffu,packed,16),packed+20,old_encoded));
- CHECK(loaded.restore_snapshot(packed,old_size) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
+ // All new routing fields and four key codes use one packed byte each.
+ for(unsigned version=2;version>0;--version) {
+  const unsigned removed=version==2?21:4;
+  const auto old_encoded=word(packed+12)-removed,old_size=(20+old_encoded+3u)&~3u;
+  put(packed+4,version);put(packed+8,word(packed+8)-removed);put(packed+12,old_encoded);
+  for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
+  put(packed+16,~crc_bytes(crc_bytes(0xffffffffu,packed,16),packed+20,old_encoded));
+  CHECK(loaded.restore_snapshot(packed,old_size));
+  CHECK(loaded.key_action(0)==(version==2?KeyAction::ScanChannels:KeyAction::None));
+  CHECK(loaded.key_action(2)==KeyAction::Fm && loaded.aprs_routing().beacon==aprs::BeaconPath::Direct);
+ }
  app.key(Key::ResetSettings);app.key(Key::Down);app.key(Key::Ok);CHECK(app.key_action(0)==KeyAction::None && app.key_action(2)==KeyAction::Fm);
  return 0;
 }
@@ -2917,7 +2943,7 @@ extern "C" unsigned gps_timezone_tests() {
  uint8_t bytes[Application::SnapshotCapacity];
  const auto size=app.save_portable_snapshot(bytes,sizeof bytes);
  Application restored(false);
- CHECK(size==8008 && restored.restore_portable_snapshot(bytes,size,2));
+ CHECK(size==Application::PortableSize && restored.restore_portable_snapshot(bytes,size,Application::PortableSchema));
  CHECK(restored.timezone_minutes()==285);
  restored.key(Key::Timezone);
  for(unsigned i=0;i<12;++i)restored.key(Key::NextSlot);
@@ -3259,6 +3285,89 @@ extern "C" int spectrum_tests() {
  return 0;
 }
 
+extern "C" int frequency_copy_tests() {
+ using State=voice::FrequencyCopy::State;
+ struct Registers {
+     uint32_t word=0;
+     unsigned low_reads=0,on=0,off=0;
+     bool busy=false,fault=false,start_error=false;
+     bool read(uint8_t address,uint16_t &value) {
+         if(address==0x0d)value=fault?0xffff:uint16_t((word>>16)|(busy?0x8000:0));
+         else {++low_reads;value=uint16_t(word);}
+         return true;
+     }
+     bool write(uint8_t address,uint16_t value) {
+         if(address!=0x32)return false;
+         if(value==0x8245){++on;return !start_error;}
+         if(value==0x8244){++off;return true;}
+         return false;
+     }
+ } regs;
+ voice::FrequencyCounter counter;
+ counter.begin(0xfffffff0u,false);
+ CHECK(counter.poll(regs,0xfffffff0u,false,false).state==State::Starting && regs.on==0);
+ CHECK(counter.poll(regs,0xfffffff8u,true,false).state==State::Searching && regs.on==1);
+ regs.busy=true;
+ CHECK(counter.poll(regs,7,true,false).state==State::Searching && regs.low_reads==0);
+ regs.busy=false;regs.word=14550000;
+ CHECK(counter.poll(regs,22,true,false).state==State::Searching && regs.off==1 && regs.on==2);
+ regs.word=14550050; // Exactly 500 Hz apart starts a fresh pair.
+ CHECK(counter.poll(regs,37,true,false).state==State::Searching && regs.off==2 && regs.on==3);
+ regs.word=14550001; // 490 Hz apart. Floor average then use the OEM grid.
+ const auto found=counter.poll(regs,52,true,false);
+ CHECK(found.state==State::Found && found.hz==145500250 && regs.off==3 && regs.on==3);
+ CHECK(counter.poll(regs,70,true,false).hz==found.hz && regs.low_reads==3);
+
+ counter.begin(0,true);counter.poll(regs,0,true,false);
+ regs.word=14550000;counter.poll(regs,15,true,false);counter.poll(regs,30,true,false);
+ CHECK(counter.poll(regs,31,true,false).state==State::Searching);
+ regs.word=0x027fffff; // Low half 0xffff is a valid result.
+ CHECK(counter.poll(regs,45,true,false).state==State::Searching);
+ CHECK(counter.poll(regs,60,true,false).hz==419430500u);
+ counter.begin(0,true);counter.poll(regs,0,true,false);
+ const auto before_timeout=regs.off;
+ CHECK(counter.poll(regs,10000,true,false).state==State::Timeout && regs.off==before_timeout+1);
+ counter.begin(0,false);counter.poll(regs,0,true,false);regs.fault=true;
+ CHECK(counter.poll(regs,15,true,false).state==State::Fault && regs.off==before_timeout+2);
+ counter.begin(0,false);regs.start_error=true;
+ CHECK(counter.poll(regs,0,true,false).state==State::Fault && regs.off==before_timeout+3);
+ counter.begin(0,false);regs.start_error=false;counter.poll(regs,0,true,false);
+ counter.cancel(regs);counter.cancel(regs);
+ CHECK(regs.off==before_timeout+4);
+
+ Application app(false);
+ CHECK(app.set_frequency(446081250));
+ app.key(Key::Menu);
+ unsigned index=0;
+ while(index<app.menu_count() && app.menu_entry(index).group!=MenuGroup::Channels)++index;
+ CHECK(index<app.menu_count());
+ for(unsigned i=0;i<index;++i)app.key(Key::Down);
+ app.key(Key::Ok);CHECK(app.menu_group()==MenuGroup::Channels);
+ index=0;
+ while(index<app.menu_count() && app.menu_entry(index).action!=Key::FrequencyCopy)++index;
+ CHECK(index<app.menu_count());
+ for(unsigned i=0;i<index;++i)app.key(Key::Down);
+ app.key(Key::Ok);
+ CHECK(app.page()==Page::FrequencyCopy && !app.voice_tx_page() && app.frequency_copy_uhf());
+ CHECK(app.take_frequency_copy_start()==433000000 && !app.take_frequency_copy_start());
+ app.key(Key::Ok);CHECK(!app.take_frequency_copy_start());
+ app.frequency_copy_result({State::Timeout,0});
+ app.key(Key::Ok);CHECK(app.take_frequency_copy_start()==433000000);
+ app.frequency_copy_result({State::Found,446100000});
+ app.key(Key::Left);
+ CHECK(app.frequency_copy_result().state==State::Starting && app.take_frequency_copy_start()==145000000);
+ app.key(Key::Back);
+ CHECK(app.page()==Page::Settings && app.menu_group()==MenuGroup::Channels);
+ app.key(Key::Ok);app.spectrum_ptt();
+ CHECK(app.page()==Page::Radio && app.config().vfo[0].rx_hz==446081250);
+ app.key(Key::FrequencyCopy);app.take_frequency_copy_start();
+ app.frequency_copy_result({State::Found,446100000});
+ app.key(Key::Ok);
+ CHECK(app.page()==Page::Radio && app.config().vfo[0].rx_hz==446100000 &&
+       !app.config().vfo[0].tx_hz && app.active_radio_profile().tx_inhibit);
+ return 0;
+}
+
 extern "C" int manual_waypoint_tests() {
  Application app(false);nav_reset();
  CHECK(app.set_option(Option::Gps,false));
@@ -3302,7 +3411,7 @@ extern "C" int spectrum_binding_tests() {
  dispatch_key(app,128);CHECK(app.page()==Page::Radio);
  uint8_t data[Application::SnapshotCapacity];
  const size_t size=app.save_portable_snapshot(data,sizeof data);
- Application restored(false);CHECK(size && restored.restore_portable_snapshot(data,size,2));
+ Application restored(false);CHECK(size && restored.restore_portable_snapshot(data,size,Application::PortableSchema));
  CHECK(restored.key_action(1)==KeyAction::Spectrum);
  return 0;
 }
@@ -3339,6 +3448,159 @@ extern "C" int aprs_saved_point_tests() {
  CHECK(restored.waypoint().valid && !restored.beacon_saved_point() && !restored.enabled(Option::Beacon));
  app.key(Key::Waypoint);app.key(Key::Down);app.key(Key::Ok);app.key(Key::Ok);
  CHECK(!app.waypoint().valid && !app.beacon_saved_point() && !app.enabled(Option::Beacon));
+ return 0;
+}
+
+extern "C" int aprs_routing_tests() {
+ using namespace aprs;
+ const Address local{"N0CALL",3},remote{"N1ABC",7},wide1{"WIDE1",1},wide2{"WIDE2",2};
+ const Address wide2_left{"WIDE2",1};
+ uint8_t frame[FrameTransmitter::MaxFrame]{};
+ auto make_frame=[&](unsigned hops,char info='>') {
+  write_address(frame,Address{"APRS"},true);
+  write_address(frame+7,remote,false,!hops);
+  for(unsigned i=0;i<hops;++i)write_address(frame+14+i*7,i?wide1:wide2,false,i+1==hops);
+  const auto at=14+hops*7;
+  frame[at]=3;frame[at+1]=0xf0;frame[at+2]=uint8_t(info);
+  return at+3;
+ };
+ auto capture=[&](const FrameTransmitter &packet) {
+  AprsCapture decoded;
+  FrameReceiver receiver;
+  bool previous=false;
+  for(size_t i=0;i<packet.size();++i) {
+   const bool level=packet.level(i);
+   receiver.bit(level==previous,capture_aprs,&decoded);previous=level;
+  }
+  return decoded;
+ };
+ RelayQueue queue;
+ FrameTransmitter tx;
+ auto size=make_frame(1);
+ CHECK(!queue.receive(frame,size,local,RelayMode::FillIn,0,250));
+ CHECK(queue.receive(frame,size,local,RelayMode::Wide,0xfffffff0u,250));
+ CHECK(!queue.receive(frame,size,local,RelayMode::Wide,1,250));
+ CHECK(!queue.take(tx,233,true,true,32) && queue.pending());
+ CHECK(!queue.take(tx,234,true,false,32) && queue.pending());
+ CHECK(queue.take(tx,235,true,true,32) && !queue.pending());
+ auto decoded=capture(tx);
+ CHECK(decoded.count==1 && decoded.length==size+7+3 && decoded.offset==30);
+ CHECK(same_address(decoded.kiss+16,local) && decoded.kiss[22]==0xe6);
+ CHECK(same_address(decoded.kiss+23,wide2_left) && decoded.kiss[29]==0x63);
+ CHECK((decoded.kiss[15]&1)==0 && decoded.kiss[2+decoded.offset]=='>');
+
+ // Duplicate identity ignores the route. A packet through our used hop is
+ // rejected even after the fingerprint has expired.
+ write_address(frame+14,local,false,true);
+ CHECK(!queue.receive(frame,size,local,RelayMode::Addressed,240,250));
+ CHECK(!queue.receive(decoded.kiss+2,decoded.length-3,local,RelayMode::Wide,40000,250));
+ CHECK(queue.receive(frame,size,local,RelayMode::Addressed,40000,250));
+ CHECK(queue.take(tx,40250,true,true,16));
+ decoded=capture(tx);
+ CHECK(decoded.length==size+3 && decoded.kiss[22]==0xe7);
+ size=make_frame(1,'?');write_address(frame+14,wide1,false,true);
+ CHECK(queue.receive(frame,size,local,RelayMode::FillIn,40300,250));
+ CHECK(!queue.take(tx,40550,false,true,32) && !queue.pending());
+ CHECK(!queue.receive(frame,size,local,RelayMode::FillIn,40600,250));
+ size=make_frame(1,'<');write_address(frame+14,wide1,false,true);
+ CHECK(queue.receive(frame,size,local,RelayMode::Wide,40600,100));
+ CHECK(!queue.take(tx,42700,true,false,32) && !queue.pending());
+ CHECK(!queue.receive(frame,size,local,RelayMode::Wide,43000,100));
+
+ size=make_frame(1,'}');CHECK(!queue.receive(frame,size,local,RelayMode::Wide,44000,500));
+ size=make_frame(1);write_address(frame+7,local);
+ CHECK(!queue.receive(frame,size,local,RelayMode::Wide,44001,500));
+ size=make_frame(1);write_address(frame+14,Address{"N0CALL",2},false,true);
+ CHECK(!queue.receive(frame,size,local,RelayMode::Addressed,44002,500));
+ size=make_frame(2);frame[27]|=0x80;
+ CHECK(!queue.receive(frame,size,local,RelayMode::Wide,44003,500)); // Invalid H-bit order.
+ size=make_frame(2);write_address(frame+21,local,false,true);
+ CHECK(!queue.receive(frame,size,local,RelayMode::Wide,44004,500));
+ size=make_frame(8);CHECK(!queue.receive(frame,size,local,RelayMode::Wide,44005,500));
+ size=make_frame(1);
+ CHECK(!queue.receive(frame,sizeof frame,local,RelayMode::Wide,44006,500)); // No room for insertion.
+ CHECK(!queue.receive(frame,16,local,RelayMode::Wide,44007,500));
+
+ RelayQueue flood;
+ for(unsigned i=0;i<16;++i) {
+  size=make_frame(1,char('A'+i));write_address(frame+14,local,false,true);
+  CHECK(flood.receive(frame,size,local,RelayMode::Addressed,100+i,100));
+  CHECK(flood.take(tx,200+i,true,true,32));
+ }
+ size=make_frame(1,'Z');write_address(frame+14,local,false,true);
+ CHECK(!flood.receive(frame,size,local,RelayMode::Addressed,300,100));
+ CHECK(flood.receive(frame,size,local,RelayMode::Addressed,30100,100));
+
+ // Both relay and beacon use the same busy-lock, DAC and PTT preemption.
+ struct Audio {
+  enum class State { Running };
+  bool active=false;
+  bool begin(const FrameTransmitter &,uint32_t) {return active=true;}
+  State poll(uint32_t) const {return State::Running;}
+  void cancel(){active=false;}
+ } audio;
+ TxBackend radio;
+ BeaconSession<TxBackend,Audio> session(radio,audio);
+ CHECK(flood.take(tx,30200,true,true,32));
+ session.start(144800000,30200);radio.clear=false;session.poll(tx,30200,true);
+ CHECK(!session.active() && !radio.keys && !audio.active);
+ radio.clear=true;session.start(144800000,30300);session.poll(tx,30300,true);
+ CHECK(session.transmitting() && radio.keys==1 && audio.active);
+ session.poll(tx,30301,false);
+ CHECK(!session.active() && !audio.active && radio.stops==2);
+
+ Application app(false);
+ CHECK(!app.enabled(Option::AprsRelay) && !app.set_option(Option::AprsRelay,true));
+ app.key(Key::BeaconIdentity);app.digit(2);app.key(Key::Ok);
+ CHECK(app.set_option(Option::AprsRx,true) && app.set_option(Option::AprsRelay,true));
+ app.key(Key::AprsPath);app.key(Key::Down);app.key(Key::Back);
+ CHECK(app.enabled(Option::AprsRelay) && app.aprs_routing().beacon==BeaconPath::Direct);
+ app.key(Key::AprsPath);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(!app.enabled(Option::AprsRelay) && app.aprs_routing().beacon==BeaconPath::FillIn);
+ constexpr GeoPoint point{55000000,37000000,true};
+ const auto &id=app.beacon_identity();
+ CHECK(encode_beacon(tx,id.callsign,id.ssid,point,'>',app.aprs_routing()));
+ decoded=capture(tx);
+ CHECK(decoded.count==1 && decoded.offset==23 && same_address(decoded.kiss+16,wide1));
+ app.key(Key::AprsPath);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.aprs_routing().beacon==BeaconPath::Wide && app.set_option(Option::AprsRelay,true));
+ app.key(Key::RelayDelay);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(!app.enabled(Option::AprsRelay) && app.aprs_routing().delay==1);
+ app.key(Key::RelayMode);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.aprs_routing().relay==RelayMode::Wide);
+ app.key(Key::RelayChannel);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.aprs_routing().relay_use_beacon && !app.set_option(Option::AprsRelay,true));
+ CHECK(app.set_aprs_frequency(433800000) && app.set_option(Option::AprsRelay,true));
+ app.key(Key::AprsPreamble);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.aprs_routing().preamble==2 && !app.enabled(Option::AprsRelay));
+
+ CHECK(encode_beacon(tx,id.callsign,id.ssid,point,'>',app.aprs_routing()));
+ decoded=capture(tx);
+ CHECK(decoded.count==1 && decoded.offset==30 && same_address(decoded.kiss+16,wide1) &&
+       same_address(decoded.kiss+23,wide2_left));
+ app.key(Key::AprsPath);app.key(Key::Down);app.key(Key::Ok);
+ app.key(Key::AprsHop1);app.key(Key::Up);app.key(Key::Right);app.digit(5);
+ app.key(Key::NextSlot);app.key(Key::Down);app.key(Key::Ok);
+ app.key(Key::AprsHop2);app.digit(8);app.key(Key::NextSlot);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(encode_beacon(tx,id.callsign,id.ssid,point,'>',app.aprs_routing()));
+ decoded=capture(tx);
+ CHECK(decoded.count==1 && decoded.offset==30 &&
+       same_address(decoded.kiss+16,Address{"A5",15}) && same_address(decoded.kiss+23,Address{"8",1}));
+ CHECK(app.set_option(Option::AprsRelay,true));
+ uint8_t portable[Application::SnapshotCapacity];
+ const size_t bytes=app.save_portable_snapshot(portable,sizeof portable);
+ Application restored(false);
+ CHECK(bytes==Application::PortableSize && restored.restore_portable_snapshot(portable,bytes,Application::PortableSchema));
+ CHECK(!restored.enabled(Option::AprsRelay) && restored.aprs_routing().hops[0].ssid==15);
+ CHECK(restored.aprs_routing().relay_use_beacon && restored.aprs_routing().preamble==2);
+ portable[8008+16*4]=9;
+ CHECK(!restored.restore_portable_snapshot(portable,bytes,Application::PortableSchema));
+ CHECK(restored.aprs_routing().beacon==BeaconPath::Custom);
+ const size_t compact=app.save_compact_snapshot(portable,sizeof portable);
+ CHECK(compact && restored.restore_snapshot(portable,compact));
+ CHECK(restored.aprs_routing().relay==RelayMode::Wide && restored.aprs_routing().delay==1 &&
+       restored.aprs_routing().hops[1].callsign[0]=='8' && !restored.enabled(Option::AprsRelay));
+ CHECK(app.set_option(Option::AprsRx,false) && !app.enabled(Option::AprsRelay));
  return 0;
 }
 

@@ -112,7 +112,7 @@ void Application::tick(uint32_t now) {
  switch(page_) {
  case Page::Radio:case Page::Gps:case Page::Aprs:case Page::AprsMessages:
  case Page::Debug:case Page::Battery:case Page::LcdTest:case Page::FlashInfo:
- case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:case Page::Weather:case Page::Spectrum:
+ case Page::FmProbe:case Page::VoiceRx:case Page::ChannelScan:case Page::VfoScan:case Page::PowerStatus:case Page::About:case Page::Distance:case Page::Backup:case Page::Import:case Page::Weather:case Page::Spectrum:case Page::FrequencyCopy:
      menu_page=false;break;
  default:break;
  }
@@ -164,7 +164,8 @@ bool Application::set_frequency(uint32_t hz) {
 }
 bool Application::set_aprs_frequency(uint32_t hz) {
     if(hz<30000000u || !frequency_valid(hz)) return false;
-    config_.aprs_hz=hz; return true;
+    if(config_.aprs_hz!=hz)aprs_relay_armed_=false;
+    config_.aprs_hz=hz;return true;
 }
 bool Application::store(unsigned index) {
     if(index>=MemoryCount) return false;
@@ -301,6 +302,7 @@ bool Application::enabled(Option o) const {
     case Option::AprsRx:return config_.aprs_rx;
     case Option::Tail:return tx_tail_;
     case Option::Beacon:return config_.beacon_on;
+    case Option::AprsRelay:return aprs_relay_armed_;
     case Option::Ble:return config_.ble_on;
     case Option::Export:return config_.ble_export;
     default:return false;
@@ -312,12 +314,19 @@ bool Application::set_option(Option o,bool on) {
     if(on && o==Option::Beacon && (!beacon_identity_.callsign[0] ||
        !(beacon_saved_point_?waypoint_.valid:config_.gps_on)))return false;
     if(on && o==Option::Export && !config_.ble_on) return false;
+    if(on && o==Option::AprsRelay) {
+        const auto relay_hz=aprs_routing_.relay_use_beacon?config_.aprs_hz:config_.aprs_rx_hz;
+        if(!config_.aprs_rx || !aprs::valid_address(beacon_identity_) ||
+           !(voice::vhf_tx_frequency(relay_hz) || voice::uhf_tx_frequency(relay_hz)) || relay_hz%10u)
+            return false;
+    }
     switch(o) {
     case Option::SidePtt:aux_ptt_=uint8_t((aux_ptt_&2u)|(on?1u:0u));break;
     case Option::SecondPtt:aux_ptt_=uint8_t((aux_ptt_&1u)|(on?2u:0u));break;
     case Option::Watch:config_.watch_mode=!on?RT_WATCH_SINGLE:config_.watch_mask==7?RT_WATCH_ABC:RT_WATCH_MASK;break;
     case Option::Gps:config_.gps_on=on;if(!on && !beacon_saved_point_)config_.beacon_on=false;break;
-    case Option::AprsRx:config_.aprs_rx=on;break;
+    case Option::AprsRx:config_.aprs_rx=on;if(!on)aprs_relay_armed_=false;break;
+    case Option::AprsRelay:aprs_relay_armed_=on;break;
     case Option::Tail:tx_tail_=on;break;
     case Option::Beacon:config_.beacon_on=on;break;
     case Option::Ble:config_.ble_on=on;if(!on)config_.ble_export=false;break;
@@ -395,7 +404,7 @@ void Application::digit(unsigned d) {
         if(d<=9)name_draft_[name_cursor_]=char('0'+d);
         return;
     }
-    if(page_==Page::BeaconIdentity) {
+    if(identity_page()) {
         if(d<=9 && identity_cursor_<6)identity_draft_.callsign[identity_cursor_]=char('0'+d);
         return;
     }
@@ -486,7 +495,7 @@ constexpr MenuEntry channel_menu[]={
 #ifdef RT950_MAIN_TX
     {"Scan zone channels",Key::ChannelScan},{"Scan mode",Key::ScanMode},{"Scan VFO",Key::VfoScan},
     {"VFO scan lower limit",Key::ScanStart},{"VFO scan upper limit",Key::ScanEnd},
-    {"RX spectrum",Key::Spectrum},
+    {"RX spectrum",Key::Spectrum},{"Find signal frequency",Key::FrequencyCopy},
 #endif
 };
 constexpr MenuEntry gps_menu[]={{"GPS status",Key::Gps},{"GPS receiver",Key::Menu,Option::Gps},{"Time zone",Key::Timezone},{"Coordinate format",Key::CoordinateFormat},{"Speed units",Key::SpeedUnits},{"Altitude units",Key::AltitudeUnits},{"Distance units",Key::DistanceUnits},{"Saved GPS point",Key::Waypoint},{"Distance to point",Key::Distance}};
@@ -497,10 +506,19 @@ constexpr MenuEntry aprs_menu[]={
     {"Beacon Setup",Key::Menu,Option::Count,MenuGroup::Beacon},
     {"APRS receive",Key::Menu,Option::AprsRx},
     {"APRS RF beacon",Key::Menu,Option::Beacon},
-    {"APRS phone export",Key::Menu,Option::Export}
+    {"APRS phone export",Key::Menu,Option::Export},
+#ifdef RT950_MAIN_TX
+    {"APRS routing",Key::Menu,Option::Count,MenuGroup::AprsRouting}
+#endif
 };
 constexpr MenuEntry aprs_rx_menu[]={{"APRS receive",Key::Menu,Option::AprsRx},{"RX frequency",Key::AprsRxFrequency},{"Background scan interval",Key::AprsScanInterval},{"Clear APRS list",Key::ClearAprs}};
 constexpr MenuEntry beacon_menu[]={{"APRS beacon",Key::Menu,Option::Beacon},{"Beacon interval",Key::BeaconInterval},{"Beacon frequency",Key::BeaconFrequency},{"Callsign / SSID",Key::BeaconIdentity},{"Beacon symbol",Key::BeaconSymbol},{"Beacon position source",Key::BeaconSource}};
+constexpr MenuEntry aprs_route_menu[]={
+    {"APRS relay (session)",Key::Menu,Option::AprsRelay},
+    {"Relay routing",Key::RelayMode},{"Relay TX channel",Key::RelayChannel},{"Relay wait",Key::RelayDelay},
+    {"Beacon path",Key::AprsPath},{"Path hop 1 / SSID",Key::AprsHop1},{"Path hop 2 / SSID",Key::AprsHop2},
+    {"APRS TX preamble",Key::AprsPreamble}
+};
 constexpr MenuEntry ble_menu[]={{"Bluetooth",Key::Menu,Option::Ble},{"BLE export",Key::Menu,Option::Export}};
 constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery}};
 constexpr MenuEntry system_menu[]={{"CPU power save",Key::Mode},{"Language",Key::LanguageSelect},{"Menu timeout",Key::MenuTimeout},{"About firmware",Key::About},{"Export settings",Key::Backup},{"Auto keypad lock",Key::AutoLock},{"Reset settings",Key::ResetSettings},{"Reset all user data",Key::ResetAll},{"Import settings",Key::Import},{"User keys",Key::Menu,Option::Count,MenuGroup::UserKeys},{"Lock keypad",Key::KeypadLock}};
@@ -512,12 +530,72 @@ template<unsigned N>
 constexpr MenuList list(const MenuEntry (&entries)[N]) {return {entries,N};}
 constexpr MenuList menus[]={
     list(root_menu),list(radio_menu),list(channel_menu),list(gps_menu),list(aprs_menu),
-    list(ble_menu),list(display_menu),list(system_menu),list(diagnostics_menu),list(aprs_rx_menu),list(beacon_menu),list(repeater_menu),list(user_keys_menu)
+    list(ble_menu),list(display_menu),list(system_menu),list(diagnostics_menu),list(aprs_rx_menu),list(beacon_menu),list(repeater_menu),list(user_keys_menu),list(aprs_route_menu)
 };
 static_assert(sizeof(menus)/sizeof(menus[0])==unsigned(MenuGroup::Count));
 }
 unsigned Application::menu_count() const {return menus[unsigned(menu_group_)].count;}
 const MenuEntry &Application::menu_entry(unsigned index) const {return menus[unsigned(menu_group_)].entries[index];}
+
+namespace {
+struct RouteChoice {
+    const char *title;
+    unsigned count;
+    const char *labels[5];
+};
+constexpr RouteChoice route_choices[]={
+    {"Beacon path",4,{"Direct","WIDE1-1","WIDE1-1,WIDE2-1","Custom path"}},
+    {"Relay routing",3,{"Addressed only","Addressed + WIDE1-1","Addressed + WIDE1/2"}},
+    {"Relay TX channel",2,{"APRS RX channel","Beacon TX channel"}},
+    {"Relay wait",5,{"100 ms","250 ms","500 ms","1000 ms","2000 ms"}},
+    {"APRS TX preamble",4,{"16 flags","32 flags","48 flags","64 flags"}}
+};
+const RouteChoice &route_choice(Key key) {return route_choices[unsigned(key)-unsigned(Key::AprsPath)];}
+}
+const char *Application::route_title() const {return route_choice(route_setting_).title;}
+unsigned Application::route_count() const {return route_choice(route_setting_).count;}
+const char *Application::route_label(unsigned index) const {return route_choice(route_setting_).labels[index];}
+unsigned Application::route_value() const {
+    switch(route_setting_) {
+    case Key::AprsPath:return unsigned(aprs_routing_.beacon);
+    case Key::RelayMode:return unsigned(aprs_routing_.relay);
+    case Key::RelayChannel:return aprs_routing_.relay_use_beacon;
+    case Key::RelayDelay:return aprs_routing_.delay;
+    case Key::AprsPreamble:return aprs_routing_.preamble;
+    default:return 0;
+    }
+}
+void Application::apply_route_choice() {
+    if(route_value()==route_draft_)return;
+    aprs_relay_armed_=false;
+    switch(route_setting_) {
+    case Key::AprsPath:aprs_routing_.beacon=aprs::BeaconPath(route_draft_);config_.beacon_on=false;break;
+    case Key::RelayMode:aprs_routing_.relay=aprs::RelayMode(route_draft_);break;
+    case Key::RelayChannel:aprs_routing_.relay_use_beacon=route_draft_!=0;break;
+    case Key::RelayDelay:aprs_routing_.delay=route_draft_;break;
+    case Key::AprsPreamble:aprs_routing_.preamble=route_draft_;config_.beacon_on=false;break;
+    default:break;
+    }
+}
+void Application::apply_rx_frequency(uint32_t hz) {
+    const auto &rx=active_radio_profile();
+    auto &profile=vfo_profiles_[config_.active];
+    profile.narrow=rx.narrow;profile.squelch=rx.squelch;
+    profile.rx_tone={};profile.reverse=false;profile.shift=Shift::None;profile.offset_hz=0;
+    profile.tx_inhibit=true;
+    vfo_tx_hz_[config_.active]=0;
+    vfo_hz_[config_.active]=hz;
+    config_.vfo[config_.active].channel_mode=false;
+    sync_frequencies();
+    page_=Page::Radio;notify("FREQUENCY APPLIED");
+}
+
+uint32_t Application::take_frequency_copy_start() {
+    if(page_!=Page::FrequencyCopy || !frequency_copy_pending_)return 0;
+    frequency_copy_pending_=false;
+    // Use the existing RX route. The counter measures independently of VFO step.
+    return frequency_copy_uhf_?433000000u:145000000u;
+}
 
 void Application::key(Key k) {
     last_activity_=now_;
@@ -1135,13 +1213,31 @@ void Application::key(Key k) {
         if(k==Key::Ok){speed_unit_=speed_draft_;page_=parent_;notify("SETTING APPLIED");}
         return;
     }
+    if(k>=Key::AprsPath && k<=Key::AprsPreamble) {
+        parent_=Page::Settings;page_=Page::AprsRouteChoice;
+        route_setting_=k;route_draft_=uint8_t(route_value());notify("");return;
+    }
+    if(page_==Page::AprsRouteChoice) {
+        if(k==Key::Back || k==Key::Menu){page_=parent_;notify("");}
+        if(k==Key::Up || k==Key::Down) {
+            const unsigned count=route_count();
+            route_draft_=uint8_t((route_draft_+(k==Key::Up?count-1:1u))%count);
+        }
+        if(k==Key::Ok){apply_route_choice();page_=parent_;notify("SETTING APPLIED");}
+        return;
+    }
+    if(k==Key::AprsHop1 || k==Key::AprsHop2) {
+        parent_=Page::Settings;page_=k==Key::AprsHop1?Page::AprsHop1:Page::AprsHop2;
+        identity_draft_=aprs_routing_.hops[k==Key::AprsHop2];identity_cursor_=0;notify("");return;
+    }
     if(k==Key::BeaconIdentity || k==Key::CoordinateFormat) {
         parent_=Page::Settings;
         page_=k==Key::BeaconIdentity?Page::BeaconIdentity:Page::CoordinateFormat;
         identity_draft_=beacon_identity_;identity_cursor_=0;
         coordinate_draft_=uint8_t(coordinate_selection());notify("");return;
     }
-    if(page_==Page::BeaconIdentity && k!=Key::Back) {
+    if(identity_page() && k!=Key::Back) {
+        const bool hop=page_!=Page::BeaconIdentity;
         auto &id=identity_draft_;
         if(k==Key::NextSlot)identity_cursor_=identity_cursor_==6?0:6;
         else if(k==Key::Left && identity_cursor_>0) {
@@ -1161,8 +1257,12 @@ void Application::key(Key k) {
                 c=callsign_chars[index==36?(up?0:35):(index+(up?1:35))%36];
             }
         } else if(k==Key::Ok) {
-            if(!id.callsign[0]){notify("ENTER A CALLSIGN");return;}
-            beacon_identity_=id;page_=parent_;notify("SETTING APPLIED");
+            if(hop && !id.callsign[0])id.ssid=0;
+            if(!aprs::valid_address(id,hop)){notify("ENTER A CALLSIGN");return;}
+            if(hop)aprs_routing_.hops[page_==Page::AprsHop2]=id;
+            else beacon_identity_=id;
+            aprs_relay_armed_=false;config_.beacon_on=false;
+            page_=parent_;notify("SETTING APPLIED");
         } else if(k==Key::Menu) {
             page_=Page::Settings;menu_group_=MenuGroup::Root;notify("");
         }
@@ -1182,22 +1282,28 @@ void Application::key(Key k) {
         if(k==Key::Ok){scan_mode_=scan_mode_draft_;page_=parent_;notify("SETTING APPLIED");}
         return;
     }
+    if(k==Key::FrequencyCopy || page_==Page::FrequencyCopy) {
+        using State=voice::FrequencyCopy::State;
+        if(page_!=Page::FrequencyCopy) {
+            parent_=page_;page_=Page::FrequencyCopy;
+            frequency_copy_uhf_=voice::uhf_tx_frequency(config_.vfo[config_.active].rx_hz);
+        } else if(k==Key::Back || k==Key::Menu) {
+            page_=parent_;return;
+        } else if(k==Key::Ok) {
+            if(frequency_copy_.state==State::Found){apply_rx_frequency(frequency_copy_.hz);return;}
+            if(frequency_copy_.state==State::Starting || frequency_copy_.state==State::Searching)return;
+        } else if(k==Key::Left || k==Key::Right) {
+            frequency_copy_uhf_=!frequency_copy_uhf_;
+        } else return;
+        frequency_copy_={};frequency_copy_pending_=true;
+        notify("");return;
+    }
     if(k==Key::Spectrum || page_==Page::Spectrum) {
         if(page_==Page::Spectrum && (k==Key::Back || k==Key::Menu)){page_=parent_;return;}
         if(page_==Page::Spectrum && k==Key::NextSlot) {
             const unsigned point=spectrum_.selected();
             if(spectrum_.sample(point)==Spectrum::Unmeasured){notify("SELECT A MEASURED FREQUENCY");return;}
-            const auto hz=spectrum_.frequency(point);
-            const auto &rx=active_radio_profile();
-            auto &profile=vfo_profiles_[config_.active];
-            profile.narrow=rx.narrow;profile.squelch=rx.squelch;
-            profile.rx_tone={};profile.reverse=false;profile.shift=Shift::None;profile.offset_hz=0;
-            profile.tx_inhibit=true;
-            vfo_tx_hz_[config_.active]=0;
-            vfo_hz_[config_.active]=hz;
-            config_.vfo[config_.active].channel_mode=false;
-            sync_frequencies();
-            page_=Page::Radio;notify("FREQUENCY APPLIED");return;
+            apply_rx_frequency(spectrum_.frequency(point));return;
         }
         if(k==Key::Left || k==Key::Right){spectrum_.select(k==Key::Right);notify("");}
         if(k!=Key::Spectrum && k!=Key::Ok)return;
@@ -1287,11 +1393,11 @@ void Application::key(Key k) {
     if(k==Key::Back) {
         if(page_==Page::ManageChannel){page_=Page::Settings;notify("");return;}
         if(page_==Page::Settings && menu_group_!=MenuGroup::Root) {
-            menu_group_=menu_group_==MenuGroup::Repeater?MenuGroup::Radio:(menu_group_==MenuGroup::Beacon || menu_group_==MenuGroup::AprsRx)?MenuGroup::Aprs:MenuGroup::Root;
+            menu_group_=menu_group_==MenuGroup::Repeater?MenuGroup::Radio:(menu_group_==MenuGroup::Beacon || menu_group_==MenuGroup::AprsRx || menu_group_==MenuGroup::AprsRouting)?MenuGroup::Aprs:MenuGroup::Root;
             notify("");return;
         }
         if(digits_ && page_==Page::Radio) {entry_khz_/=10;--digits_;invalid_=false;notify("");}
-        else {page_=(page_==Page::Gps || page_==Page::Aprs || page_==Page::AprsMessages || page_==Page::Debug || page_==Page::Channels || page_==Page::Battery || page_==Page::StoreChannel || page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::LcdTest || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || page_==Page::WatchSlots || scan_page() || page_==Page::ScanMode || page_==Page::BeaconSymbol || page_==Page::ClearAprs || frequency_editor() || page_==Page::BeaconIdentity || page_==Page::CoordinateFormat || page_==Page::SpeedUnits || page_==Page::AltitudeUnits || page_==Page::LanguageSelect || page_==Page::VfoStep || page_==Page::MenuTimeout || page_==Page::RadioOptions || page_==Page::FlashInfo || page_==Page::FmProbe)?parent_:Page::Radio;invalid_=false;notify("");}
+        else {page_=(page_==Page::Gps || page_==Page::Aprs || page_==Page::AprsMessages || page_==Page::Debug || page_==Page::Channels || page_==Page::Battery || page_==Page::StoreChannel || page_==Page::Brightness || page_==Page::ScreenTimer || page_==Page::LcdTest || page_==Page::BeaconInterval || page_==Page::AprsScanInterval || watch_timer_editor() || page_==Page::WatchSlots || scan_page() || page_==Page::ScanMode || page_==Page::BeaconSymbol || page_==Page::ClearAprs || frequency_editor() || identity_page() || page_==Page::CoordinateFormat || page_==Page::SpeedUnits || page_==Page::AltitudeUnits || page_==Page::LanguageSelect || page_==Page::VfoStep || page_==Page::MenuTimeout || page_==Page::RadioOptions || page_==Page::FlashInfo || page_==Page::FmProbe)?parent_:Page::Radio;invalid_=false;notify("");}
         return;
     }
     if(page_==Page::TxFrequency && k==Key::Left) {
@@ -1324,7 +1430,10 @@ void Application::key(Key k) {
                        (hz<30000000u && (!tx_editor || !voice::cb_fm_frequency(hz))))) {
                         notify("FREQUENCY OUT OF BAND");return;
                     }
-                    if(page_==Page::AprsRxFrequency)config_.aprs_rx_hz=hz;
+                    if(page_==Page::AprsRxFrequency) {
+                        if(config_.aprs_rx_hz!=hz)aprs_relay_armed_=false;
+                        config_.aprs_rx_hz=hz;
+                    }
                     else if(page_==Page::BeaconFrequency)set_aprs_frequency(hz);
                     else {
                         const unsigned slot=config_.active;

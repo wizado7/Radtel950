@@ -515,7 +515,7 @@ print('ARM autosave: no startup write, debounce, PTT guard, shutdown flush and r
 # the last usable old slot to be erased during migration.
 import zlib
 legacy_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8008
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8092
 legacy_size=7992 # Immutable prefix; the unused legacy helper is now linker-GC'd.
 legacy_payload=bytes(fm.u.mem_read(0x20015000,legacy_size))
 def storage_record(payload,sequence):
@@ -534,7 +534,7 @@ assert read_string(flash_call(save,fresh,0))==b'STORAGE FORMAT NEWER'
 assert len(fm.erased)==old_erases and len(fm.programmed)==old_programmed
 seed_records()
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==legacy_size+16
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8092
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 fm.erased.clear();fm.programmed.clear()
 assert read_string(flash_call(save,fresh,0))==b'SETTINGS SAVED'
@@ -543,7 +543,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 assert fm.get(0x08012000+24)==0x32535452 and fm.get(0x08012000+12)<3000
 assert fm.programmed[-1]==0x08012000+20
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==legacy_size+16
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8092
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 # Cut the migrated write before its commit, then boot a fresh MCU model.
 seed_records();fm.erased.clear();fm.programmed.clear();cut_writes=[]
@@ -558,7 +558,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 interrupted_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,interrupted_slots)
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==legacy_size+16
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8092
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 print('ARM compact migration: unknown version write guard, legacy fallback, invalid newer record overwritten first, old copy preserved, commit last and power-cut reboot PASS')
 
@@ -991,10 +991,10 @@ print('ARM GPS navigation UI: km/mi/nm lists, fresh point capture, confirm/cance
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('FlashInfo')
 menu_ui.u.mem_write(0x1ffff7e0,struct.pack('<H',1024));menu_draw()
-assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V2 / AUTO SAVE','8008'))
-assert '2028' in menu_ui.texts and '6140' in menu_ui.texts
+assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V3 / AUTO SAVE','8092'))
+assert '2052' in menu_ui.texts and '6116' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('FlashInfo');menu_draw()
-assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V2 / АВТОЗАПИСЬ'))
+assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V3 / АВТОЗАПИСЬ'))
 print('ARM storage format UI: actual compact/canonical bytes, free slot capacity, read-only RU/EN and LCD bounds PASS')
 
 # UART4 driver and the exact production export service, with RX IRQ delivery.
@@ -1046,8 +1046,8 @@ backup_receive(b'RT950CFG\n')
 for now in range(3,9000):
     backup_machine.u.mem_write(0x40004c00,struct.pack('<I',128))
     backup_call(backup_poll,backup_object,now,1)
-    if len(backup_machine.wire)==8056:break
-assert len(backup_machine.wire)==8056 and backup_reg(0x40004c0c)!=0 # wait for TC
+    if len(backup_machine.wire)==8140:break
+assert len(backup_machine.wire)==8140 and backup_reg(0x40004c0c)!=0 # wait for TC
 backup_machine.u.mem_write(0x40004c00,struct.pack('<I',192));backup_call(backup_poll,backup_object,now+1,1)
 assert not backup_reg(0x40004c0c) and backup_reg(GPIO[2]+4)==backup_crh
 assert backup_machine.odr[GPIO[2]]==backup_odr
@@ -1098,8 +1098,8 @@ menu_key('Ok');menu_draw();assert 'Export settings' in menu_ui.texts
 for phase,label in enumerate(('Export not started','Waiting for computer','Exporting settings','Backup exported','Export cancelled','Export timed out','Export error')):
     menu_ui.u.mem_write(0x20015000+backup_offsets[0],bytes([phase]))
     menu_ui.u.mem_write(0x20015000+backup_offsets[1],struct.pack('<I',32))
-    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8056))
-    menu_draw();assert label in menu_ui.texts and '32/8056' in menu_ui.texts
+    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8140))
+    menu_draw();assert label in menu_ui.texts and '32/8140' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Backup');menu_draw()
 assert all(label in menu_ui.texts for label in ('Экспорт настроек','ОШИБКА ЭКСПОРТА','PTT ОТМЕНЯЕТ ЭКСПОРТ','ТОЛЬКО ЧТЕНИЕ / БЕЗ ЗАПИСИ'))
 print('ARM backup UI: System entry, every session state, progress, manual start/cancel hints, RU/EN and LCD bounds PASS')
@@ -1177,7 +1177,7 @@ for russian in (False,True):
  menu_key('Import')
  for phase,label in ((0,'Import not started'),(1,'Waiting for computer'),(2,'Receiving settings'),(5,'Import cancelled'),(6,'Import timed out'),(7,'Import rejected')):
   menu_ui.u.mem_write(0x20015000+import_offsets[1],bytes([phase]))
-  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8056))
+  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8140))
   menu_draw()
   assert backup_module is not None
   assert (('Импорт настроек' if russian else 'Import settings') in menu_ui.texts)
@@ -1271,13 +1271,13 @@ for _ in range(5):flash_call(app_key,fresh,logical_keys['Down'])
 flash_call(app_key,fresh,logical_keys['Ok'])
 assert not poll_auto(250) and not poll_auto(2000)
 assert read_string(poll_auto(2250))==b'SETTINGS SAVED'
-assert fm.get(0x08010000+28)==2
+assert fm.get(0x08010000+28)==3
 key_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,key_slots);flash_call(ctor,fresh,0);flash_call(load,fresh)
 portable_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(portable_dump,fresh,0x20015000,8192)==8008
+assert flash_call(portable_dump,fresh,0x20015000,8192)==8092
 assert struct.unpack('<4I',bytes(fm.u.mem_read(0x20015000+7992,16)))==(0,5,2,0)
-print('ARM user keys autosave: binding-only edit triggers debounce, compact v2 commit and fresh MCU reload preserves all four assignments PASS')
+print('ARM user keys autosave: binding-only edit triggers debounce, compact v3 commit and fresh MCU reload preserves all four assignments PASS')
 
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('Weather');menu_draw()
@@ -1387,6 +1387,12 @@ for russian in (False,True):
     assert ('Обзор спектра RX' if russian else 'RX spectrum') in menu_ui.texts and '145.50000' in menu_ui.texts
     menu_key('Right');menu_draw()
     assert '145.51250' in menu_ui.texts
+    menu_key('Back');menu_key('FrequencyCopy');menu_draw()
+    assert ('Поиск частоты сигнала' if russian else 'Find signal frequency') in menu_ui.texts
+    assert ('ПОИСК СИГНАЛА' if russian else 'SEARCHING SIGNAL') in menu_ui.texts
+    assert 'VHF' in menu_ui.texts
+    menu_key('Right');menu_draw()
+    assert 'UHF' in menu_ui.texts
     menu_key('Back');menu_key('BeaconSource');menu_key('Down');menu_key('Ok');menu_draw()
     assert ('Сохранённая GPS-точка' if russian else 'Saved GPS point') in menu_ui.texts
     assert ('GPS-ТОЧКА НЕ ЗАДАНА' if russian else 'NO SAVED GPS POINT') in menu_ui.texts
@@ -1394,7 +1400,7 @@ for russian in (False,True):
     assert ('Очистить сообщения APRS?' if russian else 'Clear APRS messages?') in menu_ui.texts
     menu_key('Back');menu_key('Erase');menu_key('Ok');menu_draw()
     assert ('СООБЩЕНИЯ APRS ОЧИЩЕНЫ' if russian else 'APRS MESSAGES CLEARED') in menu_ui.texts
-print('ARM spectrum, beacon source and APRS clear UI: bilingual labels, cursor and confirmation PASS')
+print('ARM spectrum and frequency copy, beacon source and APRS clear UI: bilingual labels, cursor and confirmation PASS')
 
 for russian in (False,True):
     menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
@@ -1436,3 +1442,23 @@ for russian in (False,True):
     menu_key('Back');gps_draw_at(4000)
     assert any(s.startswith('> N0CALL') for s in menu_ui.texts)
 print('ARM APRS distance UI: selected report, fresh/stale GPS and return in both languages PASS')
+
+for russian in (False,True):
+    menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+    if russian:
+        menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back')
+    menu_key('Menu')
+    for _ in range(3):menu_key('Down')
+    menu_key('Ok');menu_key('Up');menu_key('Ok');menu_draw()
+    assert ('Маршруты APRS' if russian else 'APRS routing') in menu_ui.texts
+    assert ('Ретрансляция (сеанс)' if russian else 'APRS relay (session)') in menu_ui.texts
+    menu_key('Ok');menu_draw()
+    assert ('ПУНКТ НЕДОСТУПЕН' if russian else 'OPTION UNAVAILABLE') in menu_ui.texts
+    for _ in range(4):menu_key('Down')
+    menu_key('Ok');menu_draw()
+    assert ('Путь маяка' if russian else 'Beacon path') in menu_ui.texts
+    assert all(s in menu_ui.texts for s in (('Без ретрансляторов','Свой путь') if russian else ('Direct','Custom path')))
+    menu_key('Back');menu_key('Down');menu_key('Ok');menu_draw()
+    assert ('Узел 1 / SSID' if russian else 'Path hop 1 / SSID') in menu_ui.texts
+    assert '______-00' in menu_ui.texts
+print('ARM APRS routing UI: real APRS menu, explicit enable, route choices and hop editor in RU/EN PASS')

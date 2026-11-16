@@ -14,7 +14,8 @@ REQUEST = MAGIC + b'\n'
 HEADER = 48
 MAX_PAYLOAD = 8192
 CANONICAL_SIZE = 7992
-PORTABLE_SIZE = 8008
+KEYS_SIZE = 8008
+PORTABLE_SIZE = 8092
 KEY_ACTION_COUNT = 12
 
 
@@ -22,7 +23,7 @@ def parse_header(header):
     if len(header) != HEADER or header[:8] != MAGIC:
         raise ValueError('not a Custom UI settings backup')
     protocol, size, schema, payload_crc = struct.unpack_from('<4I', header, 8)
-    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, PORTABLE_SIZE)):
+    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, PORTABLE_SIZE)):
         raise ValueError('unsupported backup protocol, schema or payload length')
     if struct.unpack_from('<I', header, 40)[0] != 0:
         raise ValueError('unsupported backup flags')
@@ -46,8 +47,19 @@ def inspect_backup(data):
         raise ValueError('backup payload CRC mismatch')
     words = struct.unpack('<' + str(size//4) + 'I', payload)
     schema = struct.unpack_from('<I', data, 16)[0]
-    if schema == 2 and any(action >= KEY_ACTION_COUNT for action in words[CANONICAL_SIZE//4:]):
+    if schema >= 2 and any(action >= KEY_ACTION_COUNT for action in words[CANONICAL_SIZE//4:KEYS_SIZE//4]):
         raise ValueError('invalid user key action')
+    if schema == 3:
+        routing = words[KEYS_SIZE//4:]
+        for at in (0, 8):
+            chars, ssid = routing[at:at+7], routing[at+7]
+            if ssid > 15 or chars[-1] or any(c > 127 for c in chars):
+                raise ValueError('invalid APRS path address')
+            call = bytes(chars).rstrip(b'\0')
+            if (not call and ssid) or (call and not re.fullmatch(rb'[A-Z0-9]+', call)):
+                raise ValueError('invalid APRS path address')
+        if any(value > limit for value, limit in zip(routing[16:], (3, 2, 1, 4, 3))):
+            raise ValueError('invalid APRS routing setting')
     if words[0] not in (0, 1):
         raise ValueError('invalid language field')
     # Canonical v1: 29 base words, 3 VFOs x18, 15 zones x9, 64 memories x26.

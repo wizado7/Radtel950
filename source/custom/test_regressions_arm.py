@@ -4,7 +4,7 @@ from unicorn import *
 from unicorn.arm_const import *
 p=argparse.ArgumentParser();p.add_argument('--prefix',required=True);p.add_argument('--stock',type=Path);p.add_argument('--calibration-dump',type=Path);a=p.parse_args();r=Path(__file__).resolve().parent;o=r/'build'
 def run(cmd):return subprocess.check_output([str(x) for x in cmd],cwd=r,text=True)
-flags=['-mcpu=cortex-m4','-mthumb','-mfloat-abi=hard','-mfpu=fpv4-sp-d16','-Os','-ffreestanding','-fno-builtin','-fno-exceptions','-fno-rtti','-std=c++17','-Wall','-Wextra','-Werror','-I../include']
+flags=['-mcpu=cortex-m4','-mthumb','-mfloat-abi=hard','-mfpu=fpv4-sp-d16','-Os','-ffreestanding','-fno-builtin','-fno-exceptions','-fno-rtti','-std=c++17','-DRT950_MAIN_TX','-Wall','-Wextra','-Werror','-I../include']
 run([a.prefix+'g++',*flags,'-fno-if-conversion','-fno-if-conversion2','-c','test_regressions_arm.cpp','-o',o/'regressions.o'])
 ld=o/'logic.ld';ld.write_text('MEMORY { FLASH (rx) : ORIGIN = 0x08003000, LENGTH = 244K RAM (rwx) : ORIGIN = 0x20000000, LENGTH = 96K }\nSECTIONS { .text : { *(.text*) *(.rodata*) } > FLASH .data : { *(.data*) } > RAM AT> FLASH .bss : { *(.bss*) } > RAM }')
 elf=o/'logic.elf';run([a.prefix+'g++',*flags,'-nostdlib','-T',ld,'-Wl,-e,regression_tests',o/'regressions.o',o/'application.o',o/'controls.o',o/'core.o',o/'runtime.o',o/'nmea_status.o',o/'gps_view.o',o/'gps_navigation.o',o/'radio_settings.o',o/'settings_snapshot.o',o/'voice_factory_board.o',o/'aprs_dac.o',o/'voice_rx.o',o/'gpio.o','-o',elf])
@@ -101,10 +101,12 @@ for suite,description in (
  ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, invalid and stale data, six-digit field and AX.25 round trip'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
  ('spectrum_tests','RX spectrum: bounded grid, stale samples, timeout, PTT and measured frequency copied RX-only'),
+ ('frequency_copy_tests','frequency copy: two fresh samples, OEM rounding, restart, band limits, timeout, fault, cancel, menu and RX-only VFO'),
  ('manual_waypoint_tests','manual GPS point: decimal input, hemisphere, range, cancel, snapshot and beacon revocation'),
  ('spectrum_binding_tests','spectrum PF binding: open/close, PTT C priority and portable storage'),
  ('aprs_distance_tests','GPS APRS distance: selection from visible reports, target isolation, return and RX-only page'),
  ('aprs_saved_point_tests','APRS saved position: explicit source, no GPS dependency, coordinate rounding, AX.25 and startup defaults'),
+ ('aprs_routing_tests','APRS routing: AX.25 paths and SSIDs, hop and duplicate bounds, TX waits, voice priority, manual permit and storage'),
  ('aprs_clear_messages_tests','APRS clear messages: cancel, confirm, clear unread and receive again'),
  ('monitor_hold_tests','momentary monitor: hold threshold, contact bounce, release, latched monitor and PF1/PTT interlock')):
  u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
@@ -201,7 +203,7 @@ for original in (fixture,):
  assert backup.inspect_backup(converted)['occupied_channels']==64
  frame=converted[48:]
  u.mem_write(symbols['regression_fixture'],frame)
- for reg,value in ((UC_ARM_REG_R0,symbols['regression_fixture']),(UC_ARM_REG_R1,len(frame)),(UC_ARM_REG_R2,2),
+ for reg,value in ((UC_ARM_REG_R0,symbols['regression_fixture']),(UC_ARM_REG_R1,len(frame)),(UC_ARM_REG_R2,backup.inspect_backup(converted)["snapshot_schema"]),
                    (UC_ARM_REG_SP,0x20017000),(UC_ARM_REG_LR,0x080ff001)):
   u.reg_write(reg,value)
  u.emu_start(symbols['oem_channel_import_probe']|1,0x080ff000,count=5000000)
@@ -269,7 +271,7 @@ class UploadSerial:
    self.at+=len(data);self.answer=b'CHECKED\n' if self.at==len(self.frame) else b'NEXT\n'
   return len(data)
 fake=UploadSerial(fixture);backup.upload_backup(fake,fixture,clock=fake.clock)
-assert fake.at==8056 and b''.join(fake.writes[1:])==fixture
+assert fake.at==8140 and b''.join(fake.writes[1:])==fixture
 fake=UploadSerial(fixture)
 try:backup.upload_backup(fake,fixture[:-1],clock=fake.clock)
 except ValueError:pass
@@ -289,21 +291,26 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['user_key_tests']|1,0x080ff000,count=6000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'user keys failed at C++ line {result}'
-print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1/v2 and portable schema1/2 migration PASS')
+print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1/v2/v3 and portable schema1/2 migration PASS')
 legacy=bytearray(fixture[:48+7992])
 import zlib
 struct.pack_into('<I',legacy,12,7992);struct.pack_into('<I',legacy,16,1)
 struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',legacy,44,zlib.crc32(legacy[:44]))
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
-assert backup.inspect_backup(fixture)['snapshot_schema']==2
+assert backup.inspect_backup(fixture)['snapshot_schema']==3
+v2=bytearray(fixture[:48+8008])
+struct.pack_into('<II',v2,12,8008,2)
+struct.pack_into('<I',v2,20,zlib.crc32(v2[48:]));struct.pack_into('<I',v2,44,zlib.crc32(v2[:44]))
+assert backup.inspect_backup(v2)['snapshot_schema']==2
+fake=UploadSerial(v2);backup.upload_backup(fake,v2,clock=fake.clock);assert fake.at==8056
 scan_backup=bytearray(fixture)
 struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
-assert backup.inspect_backup(scan_backup)['snapshot_schema']==2
-fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8056
-print('HOST portable migration: schema1 8040-byte backup/upload retained, schema2 8056-byte container validated PASS')
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==3
+fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8140
+print('HOST portable migration: schema1/2 upload retained and schema3 8140-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
 print('ARM APRS TX framing: bounded NRZI encoder, FCS and round trip PASS')
@@ -664,6 +671,47 @@ if a.stock:
   except UcError as error:raise AssertionError(f"{pc:#x} stopped at {machine.reg_read(UC_ARM_REG_PC):#x}") from error
   assert machine.reg_read(UC_ARM_REG_PC)==0x080ff000
   return machine.reg_read(UC_ARM_REG_R0)
+ # Run the stock frequency counter and spectrum helpers against mocked RF reads.
+ reads=[]
+ def counter_read(machine,address,size,_):
+  reg=machine.reg_read(UC_ARM_REG_R0)
+  reads.append(reg)
+  machine.reg_write(UC_ARM_REG_R0,counter_values[reg])
+  return_from_hook(machine,address,size,_)
+ oracle.mem_write(0x20000c74,struct.pack('<I',0x080fe109))
+ counter_hook=oracle.hook_add(UC_HOOK_CODE,counter_read,begin=0x080fe108,end=0x080fe108)
+ startup.clear()
+ call_tx(oracle,0x0801e94c)
+ call_tx(oracle,0x0801e93c)
+ assert startup==[(0x32,0x8245),(0x32,0x8244)]
+ counter_values={0xd:0x8100,0xe:0xfedc,0x65:0xfe55,0x67:0xfe34}
+ assert call_tx(oracle,0x0801e5f0)==0 and reads==[0xd]
+ counter_values[0xd]=0x31ab
+ reads.clear()
+ assert call_tx(oracle,0x0801e5f0)==0x1abfedc and reads==[0xd,0xe]
+ reads.clear()
+ assert call_tx(oracle,0x08023d70)==0x34 and call_tx(oracle,0x08023d5c)==0x55
+ assert reads==[0x67,0x65]
+ # Run state 1 for three VHF samples through the 500 Hz boundary and state 2 rounding.
+ oracle.mem_write(0x2000a3fd,bytes([4]))
+ state=0x2000b208
+ oracle.mem_write(state,bytes([1])+bytes(39))
+ startup.clear()
+ for word in (14550005,14550055,14550006):
+  counter_values.update({0xd:word>>16,0xe:word&0xffff})
+  call_tx(oracle,0x08022510)
+ assert startup==[(0x32,0x8244),(0x32,0x8245)]*2+[(0x32,0x8244)]
+ assert oracle.mem_read(state,1)==bytes([2])
+ assert struct.unpack('<I',oracle.mem_read(state+4,4))[0]==14550030
+ tuner=oracle.hook_add(UC_HOOK_CODE,return_from_hook,begin=0x0801e6f4,end=0x0801e6f4)
+ drawing=oracle.hook_add(UC_HOOK_CODE,return_from_hook,begin=0x08022408,end=0x08022408)
+ call_tx(oracle,0x08022510)
+ assert struct.unpack('<I',oracle.mem_read(state+4,4))[0]==14550025
+ oracle.mem_write(0x2000a3fd,bytes(1))
+ oracle.hook_del(tuner);oracle.hook_del(drawing)
+ oracle.hook_del(counter_hook)
+ oracle.mem_write(0x20000c74,struct.pack('<I',0x080fe101))
+ print('OEM 0.29 RX frequency counter: enable/disable, ready bit, 27-bit word, 500 Hz boundary and grid; spectrum RSSI and noise register masks PASS')
  # Battery classification and its TX consumer from 0.29.
  sample=[0]
  def battery_read(machine,address,size,data):
@@ -965,17 +1013,39 @@ if a.stock:
   if high and value&0x400 and selected_chip is not None:
    bits.append(int(bool(prior&0x800)))
  forbid_active_reads=False
+ register_response=None
  def trace_voice_read(machine,access,address,size,value,_):
   global sample_bit,sample_value
   if address!=ep+8 or selected_chip is None:return
   assert not forbid_active_reads or not power or power[-1]==0,'serial read while PA active'
   if not sample_bit:
-   sample_value=next(words[selected_chip])
+   if register_response is None:sample_value=next(words[selected_chip])
+   else:
+    register=int(''.join(map(str,bits[:8])),2)&0x7f
+    sample_value=register_response(register)
    sample_bit=16
   sample_bit-=1
   word_write(address,((sample_value>>sample_bit)&1)<<11)
  u.hook_add(UC_HOOK_MEM_WRITE,trace_voice_write)
  u.hook_add(UC_HOOK_MEM_READ,trace_voice_read)
+ for hz,anchor,cancel in ((145512500,145000000,False),(433075000,433000000,False),(145512500,145000000,True)):
+  transfers.clear();power.clear();route.clear()
+  samples=iter((0x8000,hz//10>>16,hz//10>>16))
+  def register_response(register):
+   if register==0x0d:return next(samples)
+   return {0x0c:0,0x40:0xa800,0x67:70,0x0e:hz//10&0xffff}[register]
+  result=call_tx(u,symbols['frequency_copy_board_probe'],anchor,int(cancel),budget=6000000)
+  assert result==(0 if cancel else hz),result
+  counter_writes=[(chip,value,bias) for chip,reg,value,bias in transfers if reg==0x32]
+  assert counter_writes==[(0,0x8245,0),(0,0x8244,0)]*(1 if cancel else 2),counter_writes
+  assert not power and not any(addr==ep+20 and pins&0x4080 or addr==port+20 and pins&2
+                               for addr,pins,_ in route),route
+  if cancel:
+   assert transfers.index((0,0x32,0x8244,0))<len(transfers)-1
+   assert transfers[-1]==(0,0x30,0,0)
+ register_response=None
+ transfers.clear();power.clear();route.clear()
+ print('ARM board frequency counter: VHF/UHF RX routes, chip 0, PA idle and stop before receiver release PASS')
  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=6000000)
  assert result==0,result
  assert (1,0x30,0xc1fe,0) in transfers

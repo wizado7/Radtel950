@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include "radio_settings.hpp"
 #include "voice_sql.hpp"
+#ifdef RT950_MAIN_TX
+#include "frequency_counter.hpp"
+#endif
 
 namespace rt950::voice {
 struct RegisterValue { uint8_t address;uint16_t value; };
@@ -44,6 +47,10 @@ public:
     void tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql);
 
     void stop();
+#ifdef RT950_MAIN_TX
+    void start_frequency_copy(uint32_t hz,uint32_t now,bool narrow);
+    FrequencyCopy poll_frequency_copy(uint32_t now);
+#endif
     void set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow=true,uint8_t sql=3);
     void use_sql_calibration(const SqlCalibration &calibration) {sql_calibration_=&calibration;}
     bool squelch_open(uint32_t now);
@@ -54,6 +61,9 @@ public:
     const VoiceStatus &status() const {return status_;}
 private:
     VoiceStatus status_{};
+#ifdef RT950_MAIN_TX
+    FrequencyCounter frequency_counter_{};
+#endif
     uint32_t due_=0,next_sample_=0;
     unsigned init_step_=0;
     uint8_t rx_chip_=0;

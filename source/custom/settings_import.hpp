@@ -83,8 +83,8 @@ private:
         constexpr char magic[]="RT950CFG";
         for(unsigned i=0;i<8;++i)if(header_[i]!=uint8_t(magic[i]))return false;
         payload_size_=uint16_t(storage::word(header_+12));schema_=uint8_t(storage::word(header_+16));
-        if(storage::word(header_+8)!=1 || !((storage::word(header_+12)==7992 && storage::word(header_+16)==1) ||
-           (storage::word(header_+12)==Application::PortableSize && storage::word(header_+16)==Application::PortableSchema)) || storage::word(header_+40) ||
+        if(storage::word(header_+8)!=1 || !Application::portable_layout_supported(
+           storage::word(header_+12),storage::word(header_+16)) || storage::word(header_+40) ||
            storage::word(header_+44)!=~storage::crc_bytes(0xffffffffu,header_,44))return false;
         unsigned dots=0;
         bool ended=false,has_digit=false;

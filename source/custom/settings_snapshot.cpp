@@ -24,12 +24,12 @@ struct Reader {
 };
 // Compact container v1: magic, version, canonical word count, encoded length,
 // CRC32 over the first 16 header bytes and encoded bytes, then zero alignment.
-constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=2;
+constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=3;
 constexpr size_t PackedHeader=20;
 // Changing array capacities requires a separate historical decoder, not a
 // silent reinterpretation of the released v1/v2 canonical field order.
 static_assert(Application::MemoryCount==64 && Application::ZoneCount==15 && Application::BroadcastCount==8);
-static_assert(Application::PortableSize==7992+4*4);
+static_assert(Application::PortableSize==8008+21*4);
 struct WordCounter {
     size_t words=0;
     template<class T> void field(T){++words;}
@@ -156,19 +156,31 @@ void Application::portable_snapshot_fields(Archive &archive,App &s) {
     full_snapshot_fields(archive,s);
     for(auto &action:s.key_actions_)archive.field(action);
 }
+template<class Archive,class App>
+void Application::aprs_routing_fields(Archive &archive,App &s) {
+    auto &routing=s.aprs_routing_;
+    for(auto &hop:routing.hops) {
+        for(auto &ch:hop.callsign)archive.field(ch);
+        archive.field(hop.ssid);
+    }
+    archive.field(routing.beacon);archive.field(routing.relay);
+    archive.field(routing.relay_use_beacon);
+    archive.field(routing.delay);archive.field(routing.preamble);
+}
 size_t Application::save_portable_snapshot(uint8_t *data,size_t capacity) const {
     if(!data)return 0;
-    Writer writer{data,capacity};portable_snapshot_fields(writer,*this);
+    Writer writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
     return writer.good?writer.pos:0;
 }
 bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema) {
-    if(!data || !((schema==1 && size==7992) || (schema==2 && size==PortableSize)) || storage::word(data)>1u)return false;
+    if(!data || !portable_layout_supported(size,schema) || storage::word(data)>1u)return false;
     Application candidate(false);
     if(!candidate.restore_snapshot(data,7992))return false;
-    if(schema==2) {
-        Reader reader{data+7992,16};
+    if(schema>=2) {
+        Reader reader{data+7992,size-7992};
         for(auto &action:candidate.key_actions_)reader.field(action);
-        if(!reader.good || !candidate.valid_snapshot())return false;
+        if(schema==PortableSchema)aprs_routing_fields(reader,candidate);
+        if(!reader.good || reader.pos!=reader.capacity || !candidate.valid_snapshot())return false;
     }
     *this=candidate;return true;
 }
@@ -178,16 +190,16 @@ size_t Application::save_snapshot(uint8_t *data,size_t capacity) const {
     return writer.good?writer.pos:0;
 }
 size_t Application::canonical_snapshot_size() const {
-    WordCounter counter;portable_snapshot_fields(counter,*this);return counter.words*4u;
+    WordCounter counter;portable_snapshot_fields(counter,*this);aprs_routing_fields(counter,*this);return counter.words*4u;
 }
 size_t Application::compact_snapshot_size() const {
-    PackedWriter writer{nullptr,SnapshotCapacity};portable_snapshot_fields(writer,*this);
+    PackedWriter writer{nullptr,SnapshotCapacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     return writer.good && size<=SnapshotCapacity?size:0;
 }
 size_t Application::save_compact_snapshot(uint8_t *data,size_t capacity) const {
     if(!data || capacity<PackedHeader)return 0;
-    PackedWriter writer{data,capacity};portable_snapshot_fields(writer,*this);
+    PackedWriter writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     if(!writer.good || size>capacity)return 0;
     storage::put(data,PackedMagic);storage::put(data+4,PackedVersion);
@@ -199,20 +211,22 @@ size_t Application::save_compact_snapshot(uint8_t *data,size_t capacity) const {
 
 bool Application::snapshot_format_supported(const uint8_t *data,size_t size) {
     return data && size>=4 && (storage::word(data)!=PackedMagic ||
-        (size>=8 && (storage::word(data+4)==1 || storage::word(data+4)==PackedVersion)));
+        (size>=8 && storage::word(data+4)>=1 && storage::word(data+4)<=PackedVersion));
 }
 bool Application::restore_snapshot(const uint8_t *data,size_t size) {
     if(!data || size>SnapshotCapacity)return false;
     Application candidate(false);
     if(size>=4 && storage::word(data)==PackedMagic) {
-        if(size<PackedHeader || size%4 || (storage::word(data+4)!=1 && storage::word(data+4)!=PackedVersion))return false;
+        if(size<PackedHeader || size%4 || !snapshot_format_supported(data,size))return false;
+        const auto version=storage::word(data+4);
         const size_t encoded=storage::word(data+12);
         if(encoded>size-PackedHeader || size!=((PackedHeader+encoded+3u)&~size_t(3)) ||
            storage::word(data+16)!=packed_checksum(data,encoded))return false;
         for(size_t i=PackedHeader+encoded;i<size;++i)if(data[i])return false;
         PackedReader reader{data,PackedHeader+encoded};
-        if(storage::word(data+4)==1)full_snapshot_fields(reader,candidate);
+        if(version==1)full_snapshot_fields(reader,candidate);
         else portable_snapshot_fields(reader,candidate);
+        if(version==PackedVersion)aprs_routing_fields(reader,candidate);
         if(!reader.good || reader.pos!=reader.end || reader.words!=storage::word(data+8) || !candidate.valid_snapshot())return false;
         candidate.config_.ble_export=false;candidate.reconcile_channels();
         if(!rt_config_valid(&candidate.config_))return false;
@@ -283,6 +297,10 @@ bool Application::import_snapshot(const uint8_t *data,size_t size,uint32_t now,u
 
 bool Application::valid_snapshot() const {
     for(auto action:key_actions_)if(unsigned(action)>=unsigned(KeyAction::Count))return false;
+    for(const auto &hop:aprs_routing_.hops)if(!aprs::valid_address(hop,true))return false;
+    if(aprs_routing_.beacon>aprs::BeaconPath::Custom || aprs_routing_.relay>aprs::RelayMode::Wide ||
+       aprs_routing_.delay>=sizeof aprs::relay_delays/sizeof *aprs::relay_delays ||
+       aprs_routing_.preamble>=sizeof aprs::tx_flags/sizeof *aprs::tx_flags)return false;
     if(unsigned(distance_unit_)>unsigned(DistanceUnit::NauticalMiles) || !geo_valid(waypoint_))return false;
     if(fm_step_>=sizeof fm_steps/sizeof fm_steps[0] || am_step_>=sizeof am_steps/sizeof am_steps[0] ||
        (decimal_coordinates_ && dms_coordinates_))return false;
