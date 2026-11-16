@@ -754,14 +754,19 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(force){panel(52,46);label(16,63,"Clear APRS list",accent);label(16,79,"OK: CLEAR  BACK: CANCEL");}
  } else if(a.page()==Page::BeaconSymbol) {
   if(force)label(10,52,"Beacon symbol",accent,bg);
-  for(unsigned i=0;i<sizeof beacon_symbols/sizeof beacon_symbols[0];++i) {
-   const bool highlight=i==a.beacon_symbol_draft();
-   char signature[]={char('0'+i),char(highlight?'1':'0'),0};
-   if(!changed(i+1,signature,force))continue;
-   const unsigned y=72+36*i;
-   const uint16_t fill=highlight?selected:card;
-   rect(8,y,224,30,fill);label(17,y+11,beacon_symbols[i].label,ink,fill);
-   if(i==a.beacon_symbol_index())label(212,y+11,"*",accent,fill);
+  const unsigned draft=a.beacon_symbol_draft();
+  const auto symbol=beacon_symbol(draft);
+  const bool custom=draft>=BeaconPresetCount;
+  const char pair[]={symbol.table,symbol.code,0};
+  const char signature[]={symbol.table,symbol.code,char(custom?'C':'P'),0};
+  if(changed(1,signature,force)) {
+   rect(8,76,224,40,card);
+   label(16,89,symbol.label,ink,card);label(184,89,pair,accent,card);
+   if(draft==a.beacon_symbol_index())label(212,89,"*",accent,card);
+   rect(8,132,224,70,bg);
+   label(16,138,custom?"UP/DOWN: SYMBOL":"UP/DOWN: PRESET",muted,bg);
+   if(custom)label(16,157,"LEFT/RIGHT: TABLE",muted,bg);
+   label(16,176,custom?"V/M: PRESETS":"V/M: CUSTOM SYMBOL",muted,bg);
   }
  } else if(a.page()==Page::KeyBinding) {
   draw_key_binding(a,force);
@@ -1064,7 +1069,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V4 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V5 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";

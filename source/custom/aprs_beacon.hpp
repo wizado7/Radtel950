@@ -13,8 +13,8 @@ inline int32_t beacon_altitude(const nav_status_t &nav,uint32_t now) {
 
 inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ssid,
                           const char *lat,char ns,const char *lon,char ew,char symbol='>',
-                          int32_t altitude_feet=-1,const Routing &routing={}) {
-    if(!lat || !lon || symbol<'!' || symbol>'~' ||
+                          int32_t altitude_feet=-1,const Routing &routing={},char symbol_table='/') {
+    if(!lat || !lon || symbol<'!' || symbol>'~' || (symbol_table!='/' && symbol_table!='\\') ||
        routing.preamble>=sizeof tx_flags/sizeof *tx_flags)return false;
     Address source{};
     for(unsigned i=0;i<7;++i)source.callsign[i]=call[i];
@@ -40,7 +40,7 @@ inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ss
     frame[size++]=3;frame[size++]=0xf0;frame[size++]='!';
     const size_t position=size;
     for(unsigned i=0;i<7;++i){if(!lat[i])return false;frame[size++]=uint8_t(lat[i]);}
-    frame[size++]=uint8_t(ns);frame[size++]='/';
+    frame[size++]=uint8_t(ns);frame[size++]=uint8_t(symbol_table);
     for(unsigned i=0;i<8;++i){if(!lon[i])return false;frame[size++]=uint8_t(lon[i]);}
     frame[size++]=uint8_t(ew);
     int32_t ignored=0;
@@ -71,13 +71,13 @@ inline void beacon_coordinate(int32_t microdegrees,unsigned digits,char *text) {
 }
 
 inline bool encode_beacon(FrameTransmitter &out,const char (&call)[7],uint8_t ssid,
-                          const GeoPoint &point,char symbol,const Routing &routing={},int32_t altitude_metres=-1) {
+                          const GeoPoint &point,char symbol,const Routing &routing={},int32_t altitude_metres=-1,char symbol_table='/') {
     if(!point.valid || !geo_valid(point))return false;
     char lat[8],lon[9];
     beacon_coordinate(point.latitude,2,lat);beacon_coordinate(point.longitude,3,lon);
     return encode_beacon(out,call,ssid,lat,point.latitude<0?'S':'N',
         lon,point.longitude<0?'W':'E',symbol,
-        altitude_metres>=0 && altitude_metres<=304799?gps_altitude_display(altitude_metres*10,true):-1,routing);
+        altitude_metres>=0 && altitude_metres<=304799?gps_altitude_display(altitude_metres*10,true):-1,routing,symbol_table);
 }
 
 // RF and DAC are separate so this state machine can be tested without MMIO.

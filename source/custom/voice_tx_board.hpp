@@ -25,6 +25,7 @@ public:
     void bias(uint8_t value);
     bool configure_voice(const UhfTxValues &values);
     bool finish_voice();
+    bool configure_signal(const TxSignal &signal);
     bool start_tail();
     TailFailure tail_failure() const {return tail_failure_;}
     bool healthy() const {return acquired_ && !fault_ && (!hold_check_ || hold_check_());}
@@ -62,6 +63,6 @@ private:
     uint8_t selector_,sql_=3;
     bool packet_;
     bool narrow_=true;
-    bool acquired_=false,tuned_=false,fault_=false,chip_started_=false;
+    bool acquired_=false,tuned_=false,fault_=false,chip_started_=false,signal_used_=false;
 };
 }

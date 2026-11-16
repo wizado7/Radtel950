@@ -345,6 +345,11 @@ bool BoardUhfTx::configure_voice(const UhfTxValues &values) {
 }
 
 bool BoardUhfTx::finish_voice(){return healthy() && finish_voice_tx(*this,selector_);}
+bool BoardUhfTx::configure_signal(const TxSignal &signal) {
+    if(!healthy() || packet_ || cb_fm_frequency(frequency_))return false;
+    signal_used_=true;
+    return configure_keyed_signal(*this,signal,narrow_);
+}
 
 bool BoardUhfTx::start_tail() {
     tail_failure_=TailFailure::State;
@@ -363,6 +368,7 @@ void BoardUhfTx::restore_rx() {
     clear_board_pa_bias();
     if(chip_started_) {
         bus.write(chip_,0x30,0);
+        if(signal_used_)bus.write(chip_,0x70,0);
         bus.write(chip_,0x37,0x1d00);
     }
     gpio_set_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
@@ -371,6 +377,6 @@ void BoardUhfTx::restore_rx() {
         receiver_.enable(false);
         receiver_.enable(true);
     } else receiver_.stop();
-    acquired_=false;tuned_=false;chip_started_=false;reg52_valid_=false;
+    signal_used_=false;acquired_=false;tuned_=false;chip_started_=false;reg52_valid_=false;
 }
 }

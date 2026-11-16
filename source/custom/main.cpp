@@ -122,6 +122,8 @@ extern "C" int main(void) {
 #endif
 #ifdef RT950_MAIN_TX
     uint32_t release_notice_since=0;
+    voice::KeyedSignal tx_signal;
+    bool suppress_signal_key=false;
 #endif
 #ifdef RT950_MAIN_TX
     bool weather_previous=false,frequency_copy_previous=false;
@@ -162,11 +164,23 @@ extern "C" int main(void) {
             app.update_monitor_hold(keys.accepted());
             if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
             keys_awake=wake_keys.poll(input.sampled,now);
+#ifdef RT950_MAIN_TX
+            const auto voice_keys=uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u));
+            if((raw_ptt&voice_keys) && app.page()==Page::Radio && voice::ptt_signal(input.sampled))
+                suppress_signal_key=true;
+#endif
             if(code!=255) {
                 input.last=uint8_t(code&127u);++input.presses;
                 const bool select_during_ptt=raw_ptt && code==5 && app.page()==Page::Radio;
-                if(keys_awake && !select_during_ptt)dispatch_key(app,code);
+                if(keys_awake && !select_during_ptt
+#ifdef RT950_MAIN_TX
+                   && !suppress_signal_key
+#endif
+                )dispatch_key(app,code);
             }
+#ifdef RT950_MAIN_TX
+            if(input.sampled==255 && keys.accepted()==255)suppress_signal_key=false;
+#endif
         }
         if(uint32_t(now-last_encoder)>=1u) {
             last_encoder=now;const int8_t dir=encoder_poll();
@@ -312,12 +326,12 @@ extern "C" int main(void) {
         if(beacon_due && supply_ready) {
             last_beacon=now;
             const auto &nav=*nav_get();
-            const char symbol=beacon_symbols[app.beacon_symbol_index()].code;
+            const auto symbol=beacon_symbol(app.beacon_symbol_index());
             const bool encoded=saved_position?
-                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol,routing,
-                    app.fixed_beacon_altitude_metres()):
+                aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,app.waypoint(),symbol.code,routing,
+                    app.fixed_beacon_altitude_metres(),symbol.table):
                 aprs::encode_beacon(packet_frame,identity.callsign,identity.ssid,
-                    nav.lat,nav.ns[0],nav.lon,nav.ew[0],symbol,aprs::beacon_altitude(nav,now),routing);
+                    nav.lat,nav.ns[0],nav.lon,nav.ew[0],symbol.code,aprs::beacon_altitude(nav,now),routing,symbol.table);
             if(encoded)begin_packet(packet_hz,false);
         }
         if(packet_tx.active())packet_tx.poll(packet_frame,now,packet_is_relay?relay_allowed:beacon_allowed);
@@ -434,8 +448,17 @@ extern "C" int main(void) {
             ptt.state()==voice::Ptt::State::Ending;
 #endif
         if(!waiting_for_battery && (!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready))
-            ptt.poll(transmitter,request,now,pressed);
+            ptt.poll(transmitter,request,now,pressed
 #ifdef RT950_MAIN_TX
+                ,!tx_signal.active()
+#endif
+            );
+#ifdef RT950_MAIN_TX
+        const bool signal_keyed=pressed && ptt.state()==voice::Ptt::State::Transmitting;
+        const bool signal_allowed=app.page()==Page::Radio && !app.keypad_locked() && !cb_tx && !numeric;
+        if(!tx_signal.poll(now,signal_keyed,signal_allowed,input.sampled,keys.accepted(),
+            [&](const voice::TxSignal &tone){return transmitter.set_signal(tone);}))
+            ptt.poll(transmitter,request,now,pressed,false);
         if(!pressed && was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
             release_notice_since=now;
 #endif
@@ -444,7 +467,7 @@ extern "C" int main(void) {
         tx_owns_radio=transmitting || ptt.state()==voice::Ptt::State::Preparing;
 #ifdef RT950_MAIN_TX
         constexpr const char *tx_labels[]={"TX SLOT A","TX SLOT B","TX SLOT C"};
-        const char *tx_on=power_probe?"POWER TEST / UNMEASURED":tx_labels[tx_slot];
+        const char *tx_on=power_probe?"POWER TEST / UNMEASURED":tx_signal.active()?"TX SIGNAL":tx_labels[tx_slot];
 #else
         constexpr const char *tx_on="BENCH TX ON";
 #endif

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "voice_tx_values.hpp"
+#include "voice_signal.hpp"
 
 namespace rt950::voice {
 // OEM 0.29 0x080168C8 selects chip 1 and route 1 for UHF 400-470 MHz.
@@ -8,7 +9,7 @@ constexpr uint8_t uhf_tx_chip=1;
 
 // OEM 0.29 0x0801E510 and 0x0801ED50 take the slot bandwidth, not the chip.
 constexpr uint16_t fm_filter_word(bool narrow) {return narrow?0x4008:0x3028;}
-inline constexpr uint16_t TxActiveWord=0xc1fe;
+inline constexpr uint16_t TxActiveWord=0xc1fe,TxSignalWord=0xc3fa;
 constexpr uint16_t fm_start_word(bool narrow) {return narrow?0:0x0200;}
 
 
@@ -103,12 +104,31 @@ bool finish_voice_tx(Radio &radio,uint8_t selector) {
 
 // Keep the DAC at zero throughout readback. Verify the registers set here.
 template<class Radio>
-bool verify_voice_tx(Radio &radio,const UhfTxValues &values,uint8_t selector) {
+bool verify_voice_tx(Radio &radio,const UhfTxValues &values,uint8_t selector,uint16_t mode=TxActiveWord) {
     const auto matches=[&radio](uint8_t address,uint16_t expected) {
         uint16_t actual=0;
         return radio.read(address,actual) && actual==expected;
     };
-    return selector<3 && matches(0x30,TxActiveWord) && matches(0x38,values.frequency_low) &&
+    return selector<3 && matches(0x30,mode) && matches(0x38,values.frequency_low) &&
            matches(0x39,values.frequency_high) && matches(0x36,pa_control_word(selector));
+}
+
+// BK4829 26 MHz family, rounded to the nearest register unit.
+constexpr uint16_t generator_word(uint16_t hz) {
+    return uint16_t((uint32_t(hz)*1032444u+50000u)/100000u);
+}
+
+// Voice/tone modulation transition. The board keeps external PA bias at zero.
+template<class Radio>
+bool configure_keyed_signal(Radio &radio,const TxSignal &signal,bool narrow) {
+    uint16_t deviation=0;
+    if(!radio.read(0x40,deviation) || !radio.write(0x30,fm_start_word(narrow)))return false;
+    radio.delay_us(50);
+    if(signal && (!radio.write(0x71,generator_word(signal.first)) ||
+                  !radio.write(0x72,generator_word(signal.second))))return false;
+    return radio.write(0x70,signal?(signal.second?0xc5c5:0x9700):0) &&
+           radio.write(0x40,(deviation&0xf000u)|(signal?0x043c:0x050a)) &&
+           radio.write(0x47,signal?0x6042:0x6142) &&
+           radio.write(0x30,signal?TxSignalWord:TxActiveWord);
 }
 }

@@ -1500,8 +1500,15 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  const auto active_microphone=adapter.microphone_gain();
  adapter.select_microphone(active_microphone==rt950::MicGain::Low?rt950::MicGain::High:rt950::MicGain::Low);
  if(adapter.microphone_gain()!=active_microphone)return 8;
- ptt.poll(transmitter,request,184,false);
- if(tail) {
+ const bool signals=tone&(1u<<30),interrupt=tone&(1u<<31);
+ if(signals) {
+  if(!transmitter.set_signal(dtmf_pair('5')))return adapter.healthy()?9:13;
+  if(!transmitter.set_signal({}))return 10;
+  if(!transmitter.set_signal({1750,0}))return 11;
+  if(!interrupt && !transmitter.set_signal({}))return 12;
+ }
+ ptt.poll(transmitter,request,184,false,!interrupt);
+ if(tail && !interrupt) {
   if(ptt.state()!=Ptt::State::Ending)return 6;
   ptt.poll(transmitter,request,583,false);
   if(ptt.state()!=Ptt::State::Ending)return 7;
@@ -2612,8 +2619,8 @@ extern "C" int compact_storage_tests() {
  CHECK(!source.save_compact_snapshot(roundtrip,size-1));
  CHECK(roundtrip[size-1]==0xa5 && roundtrip[size]==0xa5);
  CHECK(Application::snapshot_format_supported(packed,size) && Application::snapshot_format_supported(legacy,old_size));
- put(packed+4,5);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
- put(packed+4,4);
+ put(packed+4,6);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
+ put(packed+4,5);
  CHECK(restored.restore_snapshot(packed,size));CHECK(restored.save_snapshot(roundtrip,sizeof roundtrip)==old_size);
  for(size_t i=0;i<old_size;++i)CHECK(legacy[i]==roundtrip[i]);
  CHECK(restored.restore_snapshot(legacy,old_size));
@@ -2887,7 +2894,7 @@ extern "C" int user_key_tests() {
  portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
- const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==4);
+ const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==5);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
  dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
@@ -2898,8 +2905,8 @@ extern "C" int user_key_tests() {
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
  // Default altitude, routing fields and key codes each fit one packed byte.
- for(unsigned version=3;version>0;--version) {
-  const unsigned removed=version==3?1:version==2?21:4;
+ for(unsigned version=4;version>0;--version) {
+  const unsigned removed=version==4?0:version==3?1:version==2?21:4;
   const auto old_encoded=word(packed+12)-removed,old_size=(20+old_encoded+3u)&~3u;
   put(packed+4,version);put(packed+8,word(packed+8)-removed);put(packed+12,old_encoded);
   for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
@@ -3185,6 +3192,72 @@ extern "C" unsigned am_seek_tests() {
   app.fm_seek_result(found);CHECK(app.fm_request()==plan.high && !app.fm_seek());
   app.key(Key::Left);app.key(Key::Right);CHECK(!app.fm_seek());
  }
+ return 0;
+}
+
+extern "C" int voice_signal_tests() {
+ using namespace rt950::voice;
+ constexpr char keys[]="123A456B789C*0#D";
+ constexpr unsigned rows[]={697,770,852,941},cols[]={1209,1336,1477,1633};
+ for(unsigned i=0;i<16;++i) {
+  const auto tone=dtmf_pair(keys[i]);
+  CHECK(tone.first==rows[i/4] && tone.second==cols[i%4]);
+ }
+ CHECK(!dtmf_pair('?') && ptt_signal(2).first==1750 && ptt_signal(3).first==1000 &&
+       ptt_signal(4).first==1450 && ptt_signal(5).first==2100);
+ CHECK(ptt_signal(17).first==941 && ptt_signal(21).second==1477);
+ CHECK(generator_word(1750)==18068);
+ KeyedSignal state;
+ unsigned starts=0,restores=0;
+ auto apply=[&](TxSignal tone) {if(tone)++starts;else ++restores;return true;};
+ CHECK(state.poll(0,false,true,10,10,apply) && !starts);
+ CHECK(state.poll(10,true,true,10,10,apply) && !starts);
+ CHECK(state.poll(20,true,true,255,255,apply));
+ CHECK(state.poll(30,true,true,10,255,apply) && !starts);
+ CHECK(state.poll(40,true,true,10,10,apply) && starts==1 && state.active());
+ CHECK(state.poll(289,true,true,10,10,apply) && !restores);
+ CHECK(state.poll(290,true,true,10,10,apply) && restores==1 && !state.active());
+ CHECK(state.poll(500,true,true,10,10,apply) && starts==1);
+ CHECK(state.poll(0xffffff00,true,true,255,255,apply));
+ CHECK(state.poll(0xffffff10,true,true,2,2,apply) && starts==2 && state.active());
+ CHECK(state.poll(109,true,true,2,2,apply) && restores==1);
+ CHECK(state.poll(110,true,true,2,2,apply) && restores==2);
+ CHECK(state.poll(200,true,true,255,255,apply));
+ CHECK(state.poll(210,true,true,3,3,apply) && starts==3);
+ CHECK(state.poll(220,false,true,3,3,apply) && !state.active() && restores==2);
+ CHECK(state.poll(230,true,true,255,255,apply));
+ CHECK(state.poll(240,true,true,4,4,apply) && starts==4);
+ CHECK(state.poll(245,true,false,4,4,apply) && !state.active() && restores==3);
+ return 0;
+}
+
+extern "C" int aprs_symbols_tests() {
+ Application app(false),loaded(false);
+ CHECK(BeaconPresetCount==10 && beacon_symbol(0).code=='>' && beacon_symbol(3).code=='b');
+ app.key(Key::BeaconSymbol);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(beacon_symbol(app.beacon_symbol_index()).code=='s');
+ app.key(Key::BeaconSymbol);app.key(Key::Mode);app.key(Key::Right);app.key(Key::Down);app.key(Key::Back);
+ CHECK(beacon_symbol(app.beacon_symbol_index()).code=='s');
+ app.key(Key::BeaconSymbol);app.key(Key::Mode);app.key(Key::Right);app.key(Key::Down);app.key(Key::Ok);
+ const auto symbol=beacon_symbol(app.beacon_symbol_index());
+ CHECK(symbol.table==92 && symbol.code=='t');
+ uint8_t packed[Application::SnapshotCapacity];
+ const auto bytes=app.save_compact_snapshot(packed,sizeof packed);
+ CHECK(bytes && loaded.restore_snapshot(packed,bytes) && loaded.beacon_symbol_index()==app.beacon_symbol_index());
+ const auto size=app.save_portable_snapshot(packed,sizeof packed);
+ CHECK(size && loaded.restore_portable_snapshot(packed,size,Application::PortableSchema) &&
+       loaded.beacon_symbol_index()==app.beacon_symbol_index());
+ const char call[7]="N0CALL";
+ aprs::FrameTransmitter tx;
+ CHECK(!aprs::encode_beacon(tx,call,0,"4807.038",'N',"01131.000",'E','>',-1,{},'!'));
+ CHECK(aprs::encode_beacon(tx,call,0,GeoPoint{48117300,11516667,true},symbol.code,{},-1,symbol.table));
+ AprsCapture capture;
+ aprs::FrameReceiver rx;
+ bool previous=false;
+ for(size_t i=0;i<tx.size();++i) {
+  const bool level=tx.level(i);rx.bit(level==previous,capture_aprs,&capture);previous=level;
+ }
+ CHECK(capture.count==1 && capture.kiss[27]==92 && capture.kiss[37]=='t');
  return 0;
 }
 

@@ -992,10 +992,10 @@ print('ARM GPS navigation UI: km/mi/nm lists, fresh point capture, confirm/cance
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('FlashInfo')
 menu_ui.u.mem_write(0x1ffff7e0,struct.pack('<H',1024));menu_draw()
-assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V4 / AUTO SAVE','8096'))
+assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V5 / AUTO SAVE','8096'))
 assert '2052' in menu_ui.texts and '6116' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('FlashInfo');menu_draw()
-assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V4 / АВТОЗАПИСЬ'))
+assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V5 / АВТОЗАПИСЬ'))
 print('ARM storage format UI: actual compact/canonical bytes, free slot capacity, read-only RU/EN and LCD bounds PASS')
 
 # UART4 driver and the exact production export service, with RX IRQ delivery.
@@ -1272,13 +1272,13 @@ for _ in range(5):flash_call(app_key,fresh,logical_keys['Down'])
 flash_call(app_key,fresh,logical_keys['Ok'])
 assert not poll_auto(250) and not poll_auto(2000)
 assert read_string(poll_auto(2250))==b'SETTINGS SAVED'
-assert fm.get(0x08010000+28)==4
+assert fm.get(0x08010000+28)==5
 key_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,key_slots);flash_call(ctor,fresh,0);flash_call(load,fresh)
 portable_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
 assert flash_call(portable_dump,fresh,0x20015000,8192)==8096
 assert struct.unpack('<4I',bytes(fm.u.mem_read(0x20015000+7992,16)))==(0,5,2,0)
-print('ARM user keys autosave: binding-only edit triggers debounce, compact v4 commit and fresh MCU reload preserves all four assignments PASS')
+print('ARM user keys autosave: binding-only edit triggers debounce, compact v5 commit and fresh MCU reload preserves all four assignments PASS')
 
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('Weather');menu_draw()
@@ -1402,6 +1402,13 @@ for russian in (False,True):
     assert ('ЦИФРЫ: МЕТРЫ' if russian else 'DIGITS: METRES') in menu_ui.texts
     assert ('V/M: УБРАТЬ ВЫСОТУ' if russian else 'V/M: OMIT ALTITUDE') in menu_ui.texts
     menu_key('Mode');menu_key('Ok')
+    menu_key('BeaconSymbol');menu_draw()
+    assert ('Значок маяка' if russian else 'Beacon symbol') in menu_ui.texts
+    assert ('V/M: СВОЙ ЗНАЧОК' if russian else 'V/M: CUSTOM SYMBOL') in menu_ui.texts
+    menu_key('Mode');menu_key('Right');menu_draw()
+    assert ('Свой значок' if russian else 'Custom symbol') in menu_ui.texts
+    assert chr(92)+'>' in menu_ui.texts
+    menu_key('Back')
     menu_key('AprsMessages');menu_key('Erase');menu_draw()
     assert ('Очистить сообщения APRS?' if russian else 'Clear APRS messages?') in menu_ui.texts
     menu_key('Back');menu_key('Erase');menu_key('Ok');menu_draw()

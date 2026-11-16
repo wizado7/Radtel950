@@ -97,6 +97,8 @@ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
 print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
 for suite,description in (
+ ('voice_signal_tests','voice signals: all DTMF pairs, four burst keys, debounce, bounded duration and cancellation'),
+ ('aprs_symbols_tests','APRS symbols: presets, custom table and code, cancellation, snapshots and decoded frame'),
  ('aprs_personal_tests','APRS inbox: callsign/SSID, unread, duplicates, Reply-ACK, control packets and navigation'),
  ('beacon_altitude_tests','APRS beacon altitude: fresh GGA, fixed metres, six-digit field, AX.25 and snapshot migration'),
  ('fm_native_seek_tests','FM native seek: command 0x21, valid and invalid replies, wrap, cancellation, timeout and retune'),
@@ -291,14 +293,14 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['user_key_tests']|1,0x080ff000,count=6000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'user keys failed at C++ line {result}'
-print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v4 and portable schema1/2 migration PASS')
+print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v5 and portable schema1/2 migration PASS')
 legacy=bytearray(fixture[:48+7992])
 import zlib
 struct.pack_into('<I',legacy,12,7992);struct.pack_into('<I',legacy,16,1)
 struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',legacy,44,zlib.crc32(legacy[:44]))
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
-assert backup.inspect_backup(fixture)['snapshot_schema']==4
+assert backup.inspect_backup(fixture)['snapshot_schema']==5
 v2=bytearray(fixture[:48+8008])
 struct.pack_into('<II',v2,12,8008,2)
 struct.pack_into('<I',v2,20,zlib.crc32(v2[48:]));struct.pack_into('<I',v2,44,zlib.crc32(v2[:44]))
@@ -313,9 +315,14 @@ scan_backup=bytearray(fixture)
 struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
-assert backup.inspect_backup(scan_backup)['snapshot_schema']==4
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==5
 fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8144
-print('HOST portable migration: schema1/2/3 retained and schema4 8144-byte container validated PASS')
+v4=bytearray(fixture)
+struct.pack_into('<I',v4,16,4)
+struct.pack_into('<I',v4,44,zlib.crc32(v4[:44]))
+assert backup.inspect_backup(v4)['snapshot_schema']==4
+fake=UploadSerial(v4);backup.upload_backup(fake,v4,clock=fake.clock);assert fake.at==8144
+print('HOST portable migration: schema1–4 retained and schema5 8144-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
 print('ARM APRS TX framing: bounded NRZI encoder, FCS and round trip PASS')
@@ -994,6 +1001,7 @@ if a.stock:
  words=[iter(responses[0]),iter(responses[1])]
  tx_registers=[{},{}]
  bad_readback=None
+ bad_signal_readback=False
  pa_routes=[]
  expected_pa_route=None
  bits=[]
@@ -1037,9 +1045,10 @@ if a.stock:
   if not sample_bit:
    register=int(''.join(map(str,bits[:8])),2)&0x7f
    regs=tx_registers[selected_chip]
-   if register in (0x30,0x36,0x38,0x39) and regs.get(0x30)==0xc1fe:
+   if register in (0x30,0x36,0x38,0x39) and regs.get(0x30) in (0xc1fe,0xc3fa):
     assert not power or power[-1]==0
-    sample_value=regs[register] ^ int(register==bad_readback)
+    sample_value=regs[register] ^ int(register==bad_readback or
+                                      (bad_signal_readback and register==0x30 and regs[0x30]==0xc3fa))
    elif register_response is None:sample_value=next(words[selected_chip])
    else:sample_value=register_response(register)
    sample_bit=16
@@ -1085,6 +1094,26 @@ if a.stock:
   assert (0,0x38,44608125&0xffff,0) in transfers
   assert (0,0x39,44608125>>16,0) in transfers
  print('ARM voice BCL: selected TX frequency, configured SQL threshold, SQL 0 carrier fallback and PA guard PASS')
+ # RF register transitions must occur with the PA off and preserve the selected route.
+ for outcome in ('voice','release','fault'):
+  transfers.clear();power.clear();route.clear()
+  words=[iter(responses[0]),iter(responses[1]+(0xa800,)*4)]
+  bad_signal_readback=outcome=='fault'
+  profile=(1<<30) | ((1<<31)|(1<<17) if outcome=='release' else 0)
+  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,profile,budget=40000000)
+  assert result==(13 if bad_signal_readback else 0),(outcome,result)
+  assert (1,0x70,0xc5c5,0) in transfers and (1,0x30,0xc3fa,0) in transfers
+  assert (1,0x71,(770*1032444+50000)//100000,0) in transfers
+  assert (1,0x72,(1336*1032444+50000)//100000,0) in transfers
+  assert power[-1]==0
+  ramps={'voice':5,'release':4,'fault':1}[outcome]
+  assert [v for v in power if v]==[34,68,102,136]*ramps,(outcome,power)
+  if outcome!='fault':
+   assert (1,0x70,0x9700,0) in transfers and (1,0x71,18068,0) in transfers
+   assert (1,0x40,0xa43c,0) in transfers and (1,0x40,0xa50a,0) in transfers
+  assert (1,0x70,0,0) in transfers[transfers.index((1,0x30,0xc3fa,0))+1:]
+ bad_signal_readback=False
+ print('ARM board TX tones: DTMF and 1750 Hz, zero-bias transitions, readback refusal, PTT release and microphone restore PASS')
  for bad_readback in (0x30,0x38,0x39,0x36):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]

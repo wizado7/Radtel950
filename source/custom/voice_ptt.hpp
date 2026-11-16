@@ -28,7 +28,7 @@ public:
     bool blocked_by_carrier() const {return state_==State::WaitRelease && blocked_by_carrier_;}
 
     template<class Backend>
-    void poll(Backend &backend,const TxRequest &request,uint32_t now,bool pressed) {
+    void poll(Backend &backend,const TxRequest &request,uint32_t now,bool pressed,bool allow_tail=true) {
         if(state_==State::Ending) {
             if(!request.authorized)release_error_=ReleaseError::Permission;
             else if(!same_target(request))release_error_=ReleaseError::Changed;
@@ -40,7 +40,7 @@ public:
         }
         if(!pressed) {
             blocked_by_carrier_=false;
-            if(state_==State::Transmitting && target_.tail) {
+            if(state_==State::Transmitting && target_.tail && allow_tail) {
                 if(!request.authorized)release_error_=ReleaseError::Permission;
                 else if(!same_target(request))release_error_=ReleaseError::Changed;
                 else if(uint32_t(now-since_)>=uint32_t(target_.timeout_seconds)*1000u)

@@ -1047,10 +1047,21 @@ void Application::key(Key k) {
         beacon_symbol_draft_=beacon_symbol_;notify("");return;
     }
     if(page_==Page::BeaconSymbol && k!=Key::Back && k!=Key::Menu) {
-        constexpr unsigned count=sizeof beacon_symbols/sizeof beacon_symbols[0];
-        if(k==Key::Up || k==Key::Down)
-            beacon_symbol_draft_=uint8_t((beacon_symbol_draft_+(k==Key::Down?1:count-1))%count);
-        if(k==Key::Ok) {
+        const bool custom=beacon_symbol_draft_>=BeaconPresetCount;
+        if(k==Key::Mode) {
+            const auto symbol=beacon_symbol(beacon_symbol_draft_);
+            beacon_symbol_draft_=custom?0:uint8_t(BeaconPresetCount+symbol.code-'!');
+        } else if(k==Key::Up || k==Key::Down) {
+            const unsigned count=custom?BeaconTableSize:BeaconPresetCount;
+            const unsigned current=custom?beacon_symbol_draft_-BeaconPresetCount:beacon_symbol_draft_;
+            const unsigned table=custom?BeaconPresetCount+(current/count)*count:0;
+            const unsigned delta=k==Key::Down?1:count-1;
+            beacon_symbol_draft_=uint8_t(table+(current%count+delta)%count);
+        } else if(custom && (k==Key::Left || k==Key::Right)) {
+            const unsigned current=beacon_symbol_draft_-BeaconPresetCount;
+            beacon_symbol_draft_=uint8_t(BeaconPresetCount+(current+BeaconTableSize)%(2*BeaconTableSize));
+        } else if(k==Key::Ok) {
+            if(beacon_symbol_!=beacon_symbol_draft_)config_.beacon_on=false;
             beacon_symbol_=beacon_symbol_draft_;page_=parent_;notify("SETTING APPLIED");
         }
         return;

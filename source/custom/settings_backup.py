@@ -24,7 +24,7 @@ def parse_header(header):
     if len(header) != HEADER or header[:8] != MAGIC:
         raise ValueError('not a Custom UI settings backup')
     protocol, size, schema, payload_crc = struct.unpack_from('<4I', header, 8)
-    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, PORTABLE_SIZE)):
+    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, PORTABLE_SIZE), (5, PORTABLE_SIZE)):
         raise ValueError('unsupported backup protocol, schema or payload length')
     if struct.unpack_from('<I', header, 40)[0] != 0:
         raise ValueError('unsupported backup flags')

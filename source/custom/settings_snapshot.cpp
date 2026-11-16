@@ -24,7 +24,7 @@ struct Reader {
 };
 // Compact container v1: magic, version, canonical word count, encoded length,
 // CRC32 over the first 16 header bytes and encoded bytes, then zero alignment.
-constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=4;
+constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=5;
 constexpr size_t PackedHeader=20;
 // Changing array capacities requires a separate historical decoder, not a
 // silent reinterpretation of the released v1/v2 canonical field order.
@@ -317,7 +317,7 @@ bool Application::valid_snapshot() const {
     if(unsigned(mic_gain_)>unsigned(MicGain::High))return false;
     for(const auto &point:measured_power_.points)if(!MeasuredPower::valid(point))return false;
     if(menu_timeout_>=sizeof menu_timeouts/sizeof menu_timeouts[0])return false;
-    if(beacon_symbol_>=sizeof beacon_symbols/sizeof beacon_symbols[0])return false;
+    if(beacon_symbol_>=BeaconSymbolCount)return false;
     if(aux_ptt_>3 || scan_mode_>ScanMode::Search || !valid_scan_bounds(scan_start_,scan_end_))return false;
     if(fm_memory_ && (fm_memory_<6500 || fm_memory_>10800))return false;
     if(unsigned(language_)>unsigned(Language::Russian) || brightness_<1 || brightness_>4 ||

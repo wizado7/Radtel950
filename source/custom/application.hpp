@@ -31,8 +31,20 @@ struct MenuEntry {
 };
 inline constexpr uint8_t watch_masks[]={0,7,3,5,6};
 
-struct BeaconSymbol {const char *label;char code;};
-inline constexpr BeaconSymbol beacon_symbols[]={{"Car",'>'},{"Person",'['},{"House",'-'},{"Bicycle",'b'}};
+struct BeaconSymbol {const char *label;char code,table='/';};
+inline constexpr BeaconSymbol beacon_symbols[]={
+    {"Car",'>'},{"Person",'['},{"House",'-'},{"Bicycle",'b'},
+    {"Jeep",'j'},{"Truck",'k'},{"Van",'v'},{"Motorhome",'R'},{"Motorcycle",'<'},{"Boat",'s'}
+};
+inline constexpr unsigned BeaconPresetCount=sizeof beacon_symbols/sizeof beacon_symbols[0];
+inline constexpr unsigned BeaconTableSize=94,BeaconSymbolCount=BeaconPresetCount+2*BeaconTableSize;
+static_assert(BeaconSymbolCount<=256);
+
+constexpr BeaconSymbol beacon_symbol(unsigned index) {
+    if(index<BeaconPresetCount)return beacon_symbols[index];
+    const unsigned code=index-BeaconPresetCount;
+    return {"Custom symbol",char('!'+code%BeaconTableSize),code<BeaconTableSize?'/':'\\'};
+}
 using BeaconIdentity=aprs::Address;
 enum class ScanMode : uint8_t { Time, Carrier, Search };
 struct Memory {
@@ -130,10 +142,10 @@ public:
     static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA","RX spectrum"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
-    static constexpr unsigned PortableSchema=4,PortableSize=8096;
+    static constexpr unsigned PortableSchema=5,PortableSize=8096;
     static constexpr bool portable_layout_supported(size_t size,unsigned schema) {
         return (schema==1 && size==7992) || (schema==2 && size==8008) || (schema==3 && size==8092) ||
-            (schema==PortableSchema && size==PortableSize);
+            ((schema==4 || schema==PortableSchema) && size==PortableSize);
     }
     size_t save_portable_snapshot(uint8_t *data,size_t capacity) const;
     bool restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema);

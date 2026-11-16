@@ -55,6 +55,26 @@ public:
             board_.set(TxRoutePin::Pb1,true);
             board_.set(TxRoutePin::Pe14,false);
         } else select_uhf_tx_route(board_);
+        return raise_bias();
+    }
+    bool set_signal(const TxSignal &signal) {
+        if(!active_ || !values_.pa_bias)return false;
+        board_.bias(0);
+        if(healthy() && board_.configure_signal(signal) &&
+           verify_voice_tx(board_,values_,board_.power_selector(),signal?TxSignalWord:TxActiveWord) &&
+           raise_bias())return true;
+        stop();
+        return false;
+    }
+    bool start_tail() {return active_ && board_.start_tail();}
+    void stop() {
+        if(!active_)return;
+        board_.bias(0);
+        board_.restore_rx();
+        active_=false;clear_=false;values_={};
+    }
+private:
+    bool raise_bias() {
         constexpr unsigned steps=4;
         for(unsigned step=1;step<=steps;++step) {
             if(!healthy()) {
@@ -68,14 +88,6 @@ public:
         board_.bias(0);
         return false;
     }
-    bool start_tail() {return active_ && board_.start_tail();}
-    void stop() {
-        if(!active_)return;
-        board_.bias(0);
-        board_.restore_rx();
-        active_=false;clear_=false;values_={};
-    }
-private:
     Board &board_;
     UhfTxValues values_{};
     uint32_t frequency_=0;
