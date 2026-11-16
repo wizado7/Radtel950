@@ -2,7 +2,7 @@
  * lcd.c - 8080-parallel LCD driver for the RT-950 Pro
  *
  * ST7789-compatible 240x320 panel (silicon ID has not been read).
- * Init parameters, reset and bus protocol checked against raw OEM 0.29.
+ * Custom UI uses the Ferrite reset, ST7789 startup and 8080 timings.
  * Legacy V0.27 comments below are historical; see LCD-AUDIT-029-RU.md.
  *
  * Bus wiring (ALL on GPIOD, verified from firmware):
@@ -26,6 +26,28 @@
 
 extern void delay_ms(uint32_t ms);
 
+#ifdef RT950_CUSTOM
+/* Drive the upper byte and assert WR together. Read back GPIO after each
+ * change to drain the peripheral write, then wait 10/8 cycles at 120 MHz.
+ * SCR clear bits only affect data and WR, leaving the keypad inputs alone. */
+static inline void lcd_strobe(uint8_t byte)
+{
+    LCD_DATA_PORT->SCR=((uint32_t)byte<<8) | ((uint32_t)(uint8_t)~byte<<24) | (1u<<16);
+    (void)LCD_DATA_PORT->ODR;
+    __asm volatile("nop\n nop\n nop\n nop\n nop\n nop\n nop\n nop\n nop\n nop\n");
+    LCD_WR_PORT->SCR=LCD_WR_PIN;
+    (void)LCD_DATA_PORT->ODR;
+    __asm volatile("nop\n nop\n nop\n nop\n nop\n nop\n nop\n nop\n");
+}
+static void lcd_write_byte(uint8_t byte,uint8_t data)
+{
+    if(data)gpio_set_pin(LCD_DC_PORT,LCD_DC_PIN);
+    else gpio_clear_pin(LCD_DC_PORT,LCD_DC_PIN);
+    gpio_clear_pin(LCD_CS_PORT,LCD_CS_PIN);
+    lcd_strobe(byte);
+    gpio_set_pin(LCD_CS_PORT,LCD_CS_PIN);
+}
+#else
 /* Internal: put 8-bit value on data bus (PD8-PD15) ------------------ */
 static inline void lcd_set_data(uint8_t byte)
 {
@@ -54,8 +76,11 @@ static void lcd_write_byte(uint8_t byte,uint8_t data)
     __asm volatile("nop\n nop\n nop\n nop\n nop\n nop\n");
     gpio_set_pin(LCD_CS_PORT,LCD_CS_PIN);
 }
+#endif
 void lcd_write_command(uint8_t cmd){lcd_write_byte(cmd,0);}
 void lcd_write_data(uint8_t data){lcd_write_byte(data,1);}
+void lcd_display_on(uint8_t on){lcd_write_command(on?0x29:0x28);}
+void lcd_sleep(uint8_t sleeping){lcd_write_command(sleeping?0x10:0x11);}
 
 /* ========================================================================
  *  lcd_set_window - Set column and row address range for pixel writes.
@@ -99,7 +124,11 @@ void lcd_panel_reset(void)
     gpio_set_pin(LCD_RST_PORT, LCD_RST_PIN);       /* start HIGH */
     delay_ms(1);                                    /* V0.27: movs r0, 1 */
     gpio_clear_pin(LCD_RST_PORT, LCD_RST_PIN);     /* assert reset */
-    delay_ms(1);                                    /* V0.27: movs r0, 1 */
+#ifdef RT950_CUSTOM
+    delay_ms(10);
+#else
+    delay_ms(1);
+#endif
     gpio_set_pin(LCD_RST_PORT, LCD_RST_PIN);       /* release reset */
     delay_ms(120);                                  /* V0.27: movs r0, 0x78 */
 }
@@ -139,10 +168,18 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t colo
     uint8_t hi = color >> 8;
     uint8_t lo = color & 0xFF;
 
-    for (uint32_t i = 0; i < total; i++) {
-        lcd_write_data(hi);
-        lcd_write_data(lo);
+#ifdef RT950_CUSTOM
+    gpio_set_pin(LCD_DC_PORT,LCD_DC_PIN);
+    gpio_clear_pin(LCD_CS_PORT,LCD_CS_PIN);
+    for (uint32_t i=0;i<total;++i) {
+        lcd_strobe(hi);lcd_strobe(lo);
     }
+    gpio_set_pin(LCD_CS_PORT,LCD_CS_PIN);
+#else
+    for (uint32_t i=0;i<total;++i) {
+        lcd_write_data(hi);lcd_write_data(lo);
+    }
+#endif
 }
 
 /* ========================================================================
@@ -409,6 +446,18 @@ void lcd_init(void)
     /* Hardware reset - V0.27 @ 0x08026954: PD2 HIGH->LOW(1ms)->HIGH(120ms) */
     lcd_panel_reset();
 
+#ifdef RT950_CUSTOM
+    lcd_write_command(0x01); // Software reset
+    delay_ms(150);
+    lcd_sleep(0);
+    delay_ms(120);
+    lcd_write_command(0x3a);lcd_write_data(0x55); // RGB565
+    lcd_write_command(0x36);lcd_write_data(0xc0); // 180 degrees
+    lcd_write_command(0x21); // Inversion
+    lcd_write_command(0x13); // Normal mode
+    lcd_fill_rect(0,0,LCD_WIDTH,LCD_HEIGHT,0);
+    lcd_display_on(1);
+#else
     /* ST7789V init sequence (V0.27 @ 0x08026982) ------------------- */
 
     lcd_write_command(0x11);    /* Sleep Out */
@@ -519,5 +568,6 @@ void lcd_init(void)
     lcd_write_command(0x29);
     delay_ms(20);
 
+#endif
     /* Foreground reveals a complete boot frame at the saved brightness. */
 }

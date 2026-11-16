@@ -40,12 +40,12 @@ public:
 
     void stop() {
         if(state_!=State::Idle) {
-            TIM2->CR1=0;
+            TIM4->CR1=0;
             ADC1->CR2=0;
             DMA1_CH(1)->CCR=0;
             DMA1->IFCR=DMA_IFCR_ALL(1);
             GPIOA->CRL=(GPIOA->CRL&~(15u<<8))|(uint32_t(pin_mode_)<<8);
-            CRM->APB1EN&=~(CRM_APB1EN_TIM2EN&~timer_clock_);
+            CRM->APB1EN&=~(CRM_APB1EN_TIM4EN&~timer_clock_);
             CRM->APB2EN&=~(CRM_APB2EN_ADC1EN&~adc_clock_);
             CRM->AHBEN&=~(CRM_AHBEN_DMA1EN&~dma_clock_);
             demod_.reset();
@@ -59,14 +59,14 @@ private:
     static constexpr uint32_t Events=DMA_ISR_HTIF(1)|DMA_ISR_TCIF(1)|DMA_ISR_TEIF(1);
 
     void start(uint32_t now) {
-        timer_clock_=CRM->APB1EN&CRM_APB1EN_TIM2EN;
+        timer_clock_=CRM->APB1EN&CRM_APB1EN_TIM4EN;
         adc_clock_=CRM->APB2EN&CRM_APB2EN_ADC1EN;
         dma_clock_=CRM->AHBEN&CRM_AHBEN_DMA1EN;
-        CRM->APB1EN|=CRM_APB1EN_TIM2EN;
+        CRM->APB1EN|=CRM_APB1EN_TIM4EN;
         CRM->APB2EN|=CRM_APB2EN_ADC1EN;
         CRM->AHBEN|=CRM_AHBEN_DMA1EN;
-        if((TIM2->CR1&1u) || TIM2->DIER || ADC1->CR2 || (DMA1_CH(1)->CCR&15u)) {
-            CRM->APB1EN&=~(CRM_APB1EN_TIM2EN&~timer_clock_);
+        if((TIM4->CR1&1u) || TIM4->DIER || ADC1->CR2 || (DMA1_CH(1)->CCR&15u)) {
+            CRM->APB1EN&=~(CRM_APB1EN_TIM4EN&~timer_clock_);
             CRM->APB2EN&=~(CRM_APB2EN_ADC1EN&~adc_clock_);
             CRM->AHBEN&=~(CRM_AHBEN_DMA1EN&~dma_clock_);
             retry_=true;since_=now;return;
@@ -81,11 +81,12 @@ private:
     }
 
     void run(uint32_t now) {
-        // OEM 0.29 0x08005FD8: TIM2 CH2, ADC1 channel 2, DMA1 CH1.
-        TIM2->CR1=0;TIM2->CR2=0;TIM2->SMCR=0;
-        TIM2->PSC=0;TIM2->ARR=12500;TIM2->CCR2=255;
-        TIM2->CCMR1=0x6000;TIM2->CCER=0x10;
-        TIM2->EGR=1;TIM2->SR=0;
+        // Ferrite uses TIM4 CH4 to free the keypad PWM timer.
+        // ADC1 CH2, DMA1 CH1 and 120 MHz / 12501 remain as in OEM 0.29.
+        TIM4->CR1=0;TIM4->CR2=0;TIM4->SMCR=0;
+        TIM4->PSC=0;TIM4->ARR=12500;TIM4->CCR4=6250;
+        TIM4->CCMR2=0x6000;TIM4->CCER=0x1000;
+        TIM4->EGR=1;TIM4->SR=0;
         auto *dma=DMA1_CH(1);
         DMA1->IFCR=DMA_IFCR_ALL(1);
         dma->CPAR=ADC1_BASE+0x4cu;
@@ -94,9 +95,9 @@ private:
         dma->CCR=DMA_CCR_CIRC|DMA_CCR_MINC|DMA_CCR_PSIZE_16|
             DMA_CCR_MSIZE_16|DMA_CCR_PL_HIGH|DMA_CCR_EN;
         ADC1->SR=0;
-        ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA|ADC_CR2_EXTTRIG|0x60000u;
+        ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA|ADC_CR2_EXTTRIG|(5u<<17);
         next_half_=0;since_=now;state_=State::Running;
-        TIM2->CR1=1;
+        TIM4->CR1=1;
     }
 
     void consume(uint32_t now,FrameReceiver::Handler handler,void *context) {

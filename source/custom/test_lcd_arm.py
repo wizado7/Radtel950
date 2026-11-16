@@ -10,7 +10,7 @@ for line in subprocess.check_output([a.prefix+'nm','-n',str(r/'build/rt950-custo
  t=line.split()
  if len(t)==3:syms[t[2]]=int(t[0],16)
 u=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)
-for addr,size in [(0x08000000,0x100000),(0x20000000,0x18000),(0x40010000,0x3000),(0x40020000,0x4000)]:u.mem_map(addr,size)
+for addr,size in [(0x08000000,0x100000),(0x20000000,0x18000),(0x40010000,0x4000),(0x40020000,0x4000),(0x40000000,0x1000)]:u.mem_map(addr,size)
 u.mem_write(0x08003000,(a.raw or r/'build/rt950-custom-ui.bin').read_bytes())
 ports={p:0xffff for p in (0x40010800,0x40010c00,0x40011000,0x40011400,0x40011800)}
 trace=[];delays=[];led_on=[];bus_events=[];reset_delays=[];backlight_high=[]
@@ -22,7 +22,7 @@ def write(u,access,addr,size,value,data):
   if addr==port+12:ports[port]=value
   if addr==port+20:ports[port]&=~value
   if addr==port+16:
-   old=ports[port];ports[port]|=value
+   old=ports[port];ports[port]=(old&~(value>>16))|(value&0xffff)
    if port==0x40011400 and value&1 and not old&1 and not ports[port]&2:
     trace.append((bool(ports[port]&8),(ports[port]>>8)&255))
 
@@ -36,11 +36,12 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(syms['lcd_init']|1,0x080ff000,count=60000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000,'init did not return'
 cmd=[v for data,v in trace if not data]
-assert cmd==[0x11,0xb2,0xb7,0xc0,0xc2,0xc3,0xc4,0xc6,0xd0,0xe8,0xe9,0xbb,0xe0,0xe1,0x36,0x3a,0x21,0x2a,0x2b,0x2c,0x29],cmd[:30]
+assert cmd==[0x01,0x11,0x3a,0x36,0x21,0x13,0x2a,0x2b,0x2c,0x29],cmd[:30]
 start=trace.index((False,0x2c))+1;end=trace.index((False,0x29))
 assert trace[start:end]==[(True,0)]*(240*320*2),'full black GRAM clear missing'
-assert delays[:4]==[1,1,120,120]
-assert reset_delays[:3]==[(True,1),(False,1),(True,120)]
+assert delays==[1,10,120,150,120]
+assert trace[:8]==[(False,1),(False,0x11),(False,0x3a),(True,0x55),(False,0x36),(True,0xc0),(False,0x21),(False,0x13)]
+assert reset_delays[:3]==[(True,1),(False,10),(True,120)]
 assert not backlight_high,'init must remain dark until a complete foreground frame'
 assert u.mem_read(0x40011404,4)==bytes.fromhex('22222222')
 assert int.from_bytes(u.mem_read(0x40011400,4),'little')&0xffff==0x2222
@@ -78,7 +79,7 @@ stock=a.stock.read_bytes()
 assert hashlib.sha256(stock).hexdigest()=='025bc583802a96911836e274cdfdf3ce05d9919bc77451b7f7f1573fb5571907'
 def oracle():
  v=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)
- for addr,size in [(0x08000000,0x100000),(0x20000000,0x18000),(0x40010000,0x3000),(0x40020000,0x4000)]:v.mem_map(addr,size)
+ for addr,size in [(0x08000000,0x100000),(0x20000000,0x18000),(0x40010000,0x4000),(0x40020000,0x4000)]:v.mem_map(addr,size)
  v.mem_write(0x08003000,stock)
  return v
 v=oracle();oem_trace=[];oem_delays=[];oem_reset=[];oem_gpio=[]
@@ -97,11 +98,11 @@ def invoke(v,address):
  v.reg_write(UC_ARM_REG_SP,0x20017000);v.reg_write(UC_ARM_REG_LR,0x080ff001)
  v.emu_start(address|1,0x080ff000,count=1000000)
  assert v.reg_read(UC_ARM_REG_PC)==0x080ff000
-# The sole intentional extra command block clears the visible GRAM.
-clear_start=custom_init.index((False,0x2a));clear_end=custom_init.index((False,0x29))
-init_trace=custom_init[:clear_start]+custom_init[clear_end:]
+# Verify the deliberate differences against the executed OEM sequence.
 invoke(v,0x0802a770)
-assert init_trace==oem_trace,'OEM/custom init parameters differ'
+for cmd,value in ((0x3a,0x05),(0x36,0xc0),(0xbb,0x3f)):
+ assert oem_trace[oem_trace.index((False,cmd))+1]==(True,value)
+assert all((False,cmd) in oem_trace and (False,cmd) not in custom_init for cmd in (0xbb,0xe0,0xe1))
 assert oem_delays==[1,1,120,120] and oem_reset==[True,False,True]
 invoke(v,0x08016a84)
 assert (0x40011400,struct.pack('<HBB',0xff0f,2,0x10)) in oem_gpio
@@ -116,45 +117,48 @@ for color in (0,0xf800,0x07e0,0x001f,0xffff,0x1234):
  oem_trace.clear();v.reg_write(UC_ARM_REG_R0,color);invoke(v,0x080266a8)
  assert oem_trace==[(True,color>>8),(True,color&255)]
 print('ARM LCD window: actual OEM inclusive/exclusive conversion, four edge rectangles and RGB565 high-byte-first oracle PASS')
-print('ARM LCD OEM 0.29: exact complete init command/data stream, reset polarity/delays, GPIO speed 2 and full GRAM clear addition PASS')
-# Probe every byte in command/data mode and require the same control ordering.
-# Canonical bus events: CS low, DC mode, WR low, data ODR, WR high, CS high.
-bus_oracle=oracle();oem_bus=[]
-def bus_write(v,access,address,size,value,data):
- if address in (0x4001140c,0x40011410,0x40011414):
-  oem_bus.append((address,value&0xffff))
-  old=int.from_bytes(v.mem_read(0x4001140c,4),'little')
-  if address!=0x4001140c:v.mem_write(0x4001140c,struct.pack('<I',(old|value) if address==0x40011410 else old&~value))
-bus_oracle.hook_add(UC_HOOK_MEM_WRITE,bus_write)
+print('ARM LCD OEM 0.29: raw verified, original VCOM/gamma/COLMOD contrasted with Ferrite startup, GPIO speed and pixels checked PASS')
+# Every byte must be on the bus at WR rising, with other port pins preserved.
 for data_mode,name in ((False,'lcd_write_command'),(True,'lcd_write_data')):
  for byte in range(256):
   initial=ports[0x40011400]
   bus_events.clear();trace.clear();u.reg_write(UC_ARM_REG_R0,byte)
   invoke(u,syms[name])
   assert trace==[(data_mode,byte)]
-  assert bus_events[0]==(0x40011414,2)
-  assert bus_events[1]==(0x40011410 if data_mode else 0x40011414,8)
-  assert bus_events[2]==(0x40011414,1)
-  assert bus_events[3][0]==0x4001140c and (bus_events[3][1]>>8)&255==byte
-  assert bus_events[4:]==[(0x40011410,1),(0x40011410,2)]
-  oem_bus.clear();bus_oracle.mem_write(0x4001140c,struct.pack('<I',initial))
-  bus_oracle.reg_write(UC_ARM_REG_R0,byte);invoke(bus_oracle,0x0802a634 if data_mode else 0x0802a5d4)
-  assert [(a,v&0xffff) for a,v in bus_events]==oem_bus
+  assert bus_events==[
+   (0x40011410 if data_mode else 0x40011414,8),(0x40011414,2),
+   (0x40011410,(byte<<8)|((byte^255)<<24)|(1<<16)),
+   (0x40011410,1),(0x40011410,2)]
+  assert (ports[0x40011400]^initial)&0xf4==0
 print('ARM LCD bus: all 256 command/data values, CS/DC/WR/data order, RGB565 window/GRAM and preserved matrix pins PASS')
-# Foreground owns brightness/reveal; sleep/wake must leave panel registers alone.
-trace.clear();backlight_high.clear();invoke(u,syms['board_display_init'])
-for _ in range(16):invoke(u,syms['board_display_tick'])
-assert not backlight_high and not trace
-u.reg_write(UC_ARM_REG_R0,1);invoke(u,syms['board_display_brightness'])
-for _ in range(8):invoke(u,syms['board_display_tick'])
-assert backlight_high
-trace.clear();invoke(u,syms['board_display_sleep']);invoke(u,syms['board_display_begin_wake'])
-assert not trace and not ports[0x40011000]&64 and not ports[0x40010c00]&8
-u.reg_write(UC_ARM_REG_R0,2);invoke(u,syms['board_display_brightness'])
-for _ in range(8):invoke(u,syms['board_display_tick'])
-invoke(u,syms['board_display_shutdown']);backlight_high.clear()
-# Even a stale foreground brightness call cannot rearm shutdown PWM.
-u.reg_write(UC_ARM_REG_R0,4);invoke(u,syms['board_display_brightness'])
-for _ in range(32):invoke(u,syms['board_display_tick'])
-assert not backlight_high and not trace
-print('ARM LCD power: dark init, saved-level reveal, backlight-only sleep/wake and latched-off PWM after shutdown PASS')
+# The foreground may reveal the backlight only after a complete frame.
+def call(name,r0=0,r1=0):
+ u.reg_write(UC_ARM_REG_R0,r0);u.reg_write(UC_ARM_REG_R1,r1);invoke(u,syms[name])
+ return u.reg_read(UC_ARM_REG_R0)
+def get(addr):return int.from_bytes(u.mem_read(addr,4),'little')
+trace.clear();backlight_high.clear();call('board_display_init',0xfffffff0)
+assert not backlight_high and not trace and get(0x40013434)==0
+call('board_display_brightness',250)
+assert get(0x40013434)==1200
+assert not call('board_display_poll',0,50) and not trace and get(0x40013434)==0
+assert not call('board_display_poll',0,104)
+assert trace==[(False,0x28),(False,0x10)]
+assert not call('board_display_poll',1,223) and len(trace)==2
+assert not call('board_display_poll',1,224) and trace[-1]==(False,0x11)
+call('board_display_brightness',500)
+assert get(0x40013434)==0
+assert not call('board_display_poll',1,343) and len(trace)==3
+assert call('board_display_poll',1,344)==1 and trace[-1]==(False,0x29)
+call('board_display_brightness',500)
+assert get(0x40013434)==2400 and get(0x40000038)==1200
+# A wake cancelled while the panel settles returns it to sleep without revealing it.
+assert not call('board_display_poll',0,345)
+assert not call('board_display_poll',1,465)
+assert not call('board_display_poll',0,584)
+assert not call('board_display_poll',0,585) and trace[-2:]==[(False,0x28),(False,0x10)]
+call('board_display_shutdown')
+call('board_display_brightness',1000)
+assert not call('board_display_poll',1,5000)
+assert get(0x40013400)==get(0x40000000)==get(0x40013434)==get(0x40000038)==0
+assert not backlight_high
+print('ARM LCD power: dark boot, sleep/wake command order, 120 ms guards, wrap, cancelled wake and latched-off hardware PWM PASS')

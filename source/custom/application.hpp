@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "voice_vox.hpp"
 #include <stdint.h>
 #include "locale.hpp"
 #include "gps_navigation.hpp"
@@ -16,7 +17,7 @@ extern "C" {
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude, BeaconFormat, BeaconMode, BeaconOverlay, BeaconNow };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude, BeaconFormat, BeaconMode, BeaconOverlay, BeaconNow, VoxSwitch, VoxLevel, VoxDelay };
 enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint, FrequencyCopy, AprsRouteChoice, AprsHop1, AprsHop2, BeaconAltitude };
 enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Spectrum, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
@@ -72,10 +73,17 @@ public:
     bool keypad_locked() const {return keypad_locked_;}
     bool lcd_test_gray() const { return lcd_test_gray_; }
     unsigned brightness() const { return brightness_; }
+    uint16_t brightness_permille() const {return BrightnessDuty[brightness_-1u];}
+    // Keep the four existing serialized IDs in place.
+    static constexpr uint16_t BrightnessDuty[]={250,500,710,1000,45,65,90,125,180,355};
+    static constexpr unsigned BrightnessCount=sizeof BrightnessDuty/sizeof *BrightnessDuty;
     unsigned screen_seconds() const { return screen_seconds_; }
     inline static constexpr uint16_t menu_timeouts[]={0,10,30,60,120};
     inline static constexpr const char *menu_timeout_labels[]={"OFF","10 seconds","30 seconds","60 seconds","120 seconds"};
     MicGain mic_gain() const {return mic_gain_;}
+    bool vox_on() const {return vox_on_;}
+    unsigned vox_level() const {return vox_level_;}
+    uint16_t vox_delay() const {return voice::VoxDelays[vox_delay_];}
     MicGain mic_gain_draft() const {return mic_gain_draft_;}
     unsigned power_status_page() const {return power_status_page_;}
     TxPower band_power() const {return band_power_;}
@@ -156,10 +164,10 @@ public:
     static constexpr const char *key_action_labels[]={"OFF","Monitor","FM radio","Next slot","VFO / Channel","GPS status","APRS status","Channel list","Scan zone channels","Scan VFO","NOAA","RX spectrum"};
     static constexpr const char *key_binding_labels[]={"PF1 short","PF1 hold","PF2 short","PF2 hold"};
     static_assert(sizeof(key_action_labels)/sizeof(key_action_labels[0])==unsigned(KeyAction::Count));
-    static constexpr unsigned PortableSchema=6,PortableSize=8108;
+    static constexpr unsigned PortableSchema=8,PortableSize=8116;
     static constexpr bool portable_layout_supported(size_t size,unsigned schema) {
         return (schema==1 && size==7992) || (schema==2 && size==8008) || (schema==3 && size==8092) ||
-            ((schema==4 || schema==5) && size==8096) || (schema==PortableSchema && size==PortableSize);
+            ((schema==4 || schema==5) && size==8096) || (schema==6 && size==8108) || ((schema==7 || schema==PortableSchema) && size==PortableSize);
     }
     size_t save_portable_snapshot(uint8_t *data,size_t capacity) const;
     bool restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema);
@@ -286,7 +294,7 @@ public:
     }
     Key channel_action() const {return channel_action_;}
     unsigned channel_command() const {return channel_command_;}
-    static constexpr const char *channel_commands[]={"Rename channel","Move channel","Delete channel","Copy to VFO"};
+    static constexpr const char *channel_commands[]={"Rename channel","Move channel","Delete channel","Set channel TX","Copy to VFO"};
     static constexpr unsigned ChannelCommandCount=sizeof channel_commands/sizeof channel_commands[0];
     const char *name_draft() const {return name_draft_;}
     unsigned name_cursor() const {return name_cursor_;}
@@ -345,6 +353,8 @@ private:
     uint8_t watch_slots_draft_=0;
     uint8_t aux_ptt_=0;
     MicGain mic_gain_=MicGain::High,mic_gain_draft_=MicGain::High;
+    uint8_t vox_level_=5,vox_delay_=3;
+    bool vox_on_=false;
     MeasuredPower measured_power_{};
     TxPower band_power_=TxPower::Pmr500mW;
     uint8_t band_channel_=1,power_status_page_=0;
@@ -419,6 +429,7 @@ private:
     char zone_names_[ZoneCount][9]{},name_draft_[9]{};
     Key channel_action_=Key::Channels;
     uint8_t channel_command_=0;
+    bool channel_tx_edit_=false;
     bool channel_context_=false;
     void notify(const char *message);
     uint8_t menu_selection_[unsigned(MenuGroup::Count)]{};
@@ -429,7 +440,7 @@ private:
     bool power_save_ = true,screen_awake_=true;
     bool keypad_locked_=false; // Runtime lock; reboot always starts unlocked.
     uint8_t auto_lock_=0,auto_lock_draft_=0; // Same duration list as menu timeout; default OFF.
-    unsigned brightness_=4,screen_seconds_=60,editor_value_=0,editor_digits_=0;
+    unsigned brightness_=10,screen_seconds_=60,editor_value_=0,editor_digits_=0;
     int timezone_minutes_=180,timezone_draft_=180;
     uint32_t last_activity_=0;
     RadioProfile &editable_radio_profile();
@@ -439,6 +450,7 @@ private:
     static uint32_t shifted_tx(uint32_t rx,uint32_t tx,const RadioProfile &profile);
     void sync_frequencies();
     void reconcile_channels();
+    void upgrade_pmr_presets();
     void select_channel_for_list();
     void open_name_editor(const char *name);
     void change_waypoint(GeoPoint point);
@@ -450,6 +462,7 @@ private:
     template<class Archive,class App> static void portable_snapshot_fields(Archive &,App &);
     template<class Archive,class App> static void aprs_routing_fields(Archive &,App &);
     template<class Archive,class App> static void beacon_fields(Archive &,App &);
+    template<class Archive,class App> static void vox_fields(Archive &,App &);
     bool valid_snapshot() const;
 };
 } // namespace rt950

@@ -34,7 +34,7 @@ class Machine:
         self.u=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)
         self.u.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_M4)
         for start,length in [(0x08000000,0x100000),(0x20000000,0x18000),(0x1ffff000,0x1000),
-                             (0x40000000,0x10000),(0x40010000,0x3000),
+                             (0x40000000,0x10000),(0x40010000,0x4000),
                              (0x40020000,0x4000),(0xe000e000,0x2000)]:
             self.u.mem_map(start,length)
         self.u.reg_write(UC_ARM_REG_C1_C0_2,0xF00000)
@@ -70,7 +70,7 @@ class Machine:
             self.feeds+=1
             if self.cut:u.emu_stop()
         for p in GPIO:
-            if address==p+16:self.odr[p] |= value
+            if address==p+16:self.odr[p]=(self.odr[p]&~(value>>16))|(value&0xffff)
             elif address==p+20:
                 self.odr[p] &= ~value
                 if p==GPIO[4] and value & 0x7080:self.route_clear.append(value)
@@ -282,22 +282,40 @@ for mv in range(6400,8320,13):
     assert previous<=value<=100 and value==min(99,((mv-6400)*100+960)//1920);previous=value
 print('Battery display estimate: 6.4..8.32V clamp, unknown sentinel, monotonic 1-percent steps PASS')
 
-m=Machine(raw);m.function('board_init');m.function('board_display_init')
-for level in range(1,5):
-    m.u.reg_write(UC_ARM_REG_R0,level);m.function('board_display_brightness');high=0
-    for _ in range(16):m.function('board_display_tick');high+=bool(m.odr[GPIO[2]]&(1<<6));assert bool(m.odr[GPIO[2]]&(1<<6))==bool(m.odr[GPIO[1]]&8)
-    assert high==4*level,(level,high)
-assert not m.odr[GPIO[1]]&(1<<9) # Bluetooth starts off
-m.odr[GPIO[1]]|=1<<9 # Simulate the enabled module before sleeping.
-m.u.mem_write(0x4000480c,struct.pack('<I',0x202c));m.function('board_display_sleep')
-assert not m.odr[GPIO[2]]&(1<<6) and not m.odr[GPIO[1]]&8
+m=Machine(raw);m.function('board_init')
+def display_call(name,r0,r1=0):
+    m.u.reg_write(UC_ARM_REG_R0,r0);m.u.reg_write(UC_ARM_REG_R1,r1)
+    return m.function(name)
+def reg(address):return struct.unpack('<I',m.u.mem_read(address,4))[0]
+display_call('board_display_init',0)
+assert reg(0x4001342c)==reg(0x4000002c)==4799
+assert reg(0x40013418)==0x68 and reg(0x40000018)==0x6800
+assert reg(0x40013420)==1 and reg(0x40000020)==0x10
+assert reg(0x40013444)==0x8000 and reg(0x40010004)&0x07000300==0x02000100
+assert reg(GPIO[2])>>24&15==11 and reg(GPIO[1])>>12&15==11
+display_call('board_gps_enable',1)
+assert reg(0x40010004)&0x07000300==0x02000100
+for permille in (45,65,90,125,180,250,355,500,710,1000):
+    display_call('board_display_brightness',permille)
+    assert reg(0x40013434)==permille*4800//1000
+    assert reg(0x40000038)==permille*4800//2000
+assert not m.odr[GPIO[1]]&(1<<9)
+m.odr[GPIO[1]]|=1<<9
+m.u.mem_write(0x4000480c,struct.pack('<I',0x202c))
+assert not display_call('board_display_poll',0,1000)
+assert reg(0x40013434)==reg(0x40000038)==0
 assert m.odr[GPIO[0]]&(1<<11) and m.odr[GPIO[1]]&(1<<9)
-assert struct.unpack('<I',m.u.mem_read(0x4000480c,4))[0]==0x202c
-m.function('board_display_begin_wake');m.u.reg_write(UC_ARM_REG_R0,4);m.function('board_display_brightness');m.function('board_display_tick')
-assert m.odr[GPIO[2]]&(1<<6)
+assert reg(0x4000480c)==0x202c
+assert not display_call('board_display_poll',1,1120)
+assert not display_call('board_display_poll',1,1239)
+display_call('board_display_brightness',1000)
+assert reg(0x40013434)==0
+assert display_call('board_display_poll',1,1240)==1
+display_call('board_display_brightness',1000)
+assert reg(0x40013434)==4800
 for rx,tx,want in [(1,0,0x4000),(0,1,0x6000),(0,0,0)]:
     m.u.reg_write(UC_ARM_REG_R0,rx);m.u.reg_write(UC_ARM_REG_R1,tx);m.function('board_radio_led');assert m.odr[GPIO[2]]&0x6000==want
-print('ARM display: four PWM duties, screen off/wake preserves GPS/power, green/red+green outputs PASS')
+print('ARM display: ten hardware PWM duties, screen off/wake preserves GPS/power, green/red+green outputs PASS')
 
 class Foreground(Machine):
     """Real main/application/input code; synthetic tick and text LCD sink."""
@@ -445,14 +463,12 @@ class BusyFlashModel(FlashModel):
             self.edges.append((address,value))
 
 fm=BusyFlashModel()
-flash_call('board_display_init');flash_call('board_display_brightness',2);flash_call('board_display_tick')
+flash_call('board_display_init',0);flash_call('board_display_brightness',500)
 fm.edges.clear()
 assert flash_call(operation,0x08010000,0,1)
-off=[(GPIO[2]+20,64),(GPIO[1]+20,8)]
-on=[(GPIO[2]+16,64),(GPIO[1]+16,8)]
-assert fm.edges==off+on+off+on
-assert fm.odr[GPIO[2]]&64 and fm.odr[GPIO[1]]&8
-print('ARM flash busy: backlight PWM continues and resumes at the original output state PASS')
+assert not fm.edges and fm.get(0x40013434)==2400 and fm.get(0x40000038)==1200
+assert fm.get(0x40013400)==fm.get(0x40000000)==0x81
+print('ARM flash busy: hardware timers remain enabled with unchanged light duties and no GPIO write PASS')
 fm=FlashModel()
 for address,erase in ((0x08000000,1),(0x08002ffc,0),(0x08003000,1),(0x0800fffc,0),
                       (0x08010001,0),(0x08010004,1),(0x08013ffc,1),(0x08014000,0),
@@ -516,7 +532,7 @@ print('ARM autosave: no startup write, debounce, PTT guard, shutdown flush and r
 # the last usable old slot to be erased during migration.
 import zlib
 legacy_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8108
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
 legacy_size=7992 # Immutable prefix; the unused legacy helper is now linker-GC'd.
 legacy_payload=bytes(fm.u.mem_read(0x20015000,legacy_size))
 def storage_record(payload,sequence):
@@ -535,7 +551,7 @@ assert read_string(flash_call(save,fresh,0))==b'STORAGE FORMAT NEWER'
 assert len(fm.erased)==old_erases and len(fm.programmed)==old_programmed
 seed_records()
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8108
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 fm.erased.clear();fm.programmed.clear()
 assert read_string(flash_call(save,fresh,0))==b'SETTINGS SAVED'
@@ -544,7 +560,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 assert fm.get(0x08012000+24)==0x32535452 and fm.get(0x08012000+12)<3000
 assert fm.programmed[-1]==0x08012000+20
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8108
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 # Cut the migrated write before its commit, then boot a fresh MCU model.
 seed_records();fm.erased.clear();fm.programmed.clear();cut_writes=[]
@@ -559,7 +575,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 interrupted_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,interrupted_slots)
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8108
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 print('ARM compact migration: unknown version write guard, legacy fallback, invalid newer record overwritten first, old copy preserved, commit last and power-cut reboot PASS')
 
@@ -992,14 +1008,14 @@ print('ARM GPS navigation UI: km/mi/nm lists, fresh point capture, confirm/cance
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('FlashInfo')
 menu_ui.u.mem_write(0x1ffff7e0,struct.pack('<H',1024));menu_draw()
-assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V6 / AUTO SAVE','8108'))
+assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V8 / AUTO SAVE','8116'))
 compact_size_symbol=next(n for n in symbols if 'Application21compact_snapshot_size' in n)
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app)
 compact_size=menu_ui.function(compact_size_symbol)
 assert 0<compact_size<3000 and compact_size%4==0
 assert str(compact_size) in menu_ui.texts and str(8168-compact_size) in menu_ui.texts,menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('FlashInfo');menu_draw()
-assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V6 / АВТОЗАПИСЬ'))
+assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V8 / АВТОЗАПИСЬ'))
 print('ARM storage format UI: actual compact/canonical bytes, free slot capacity, read-only RU/EN and LCD bounds PASS')
 
 # UART4 driver and the exact production export service, with RX IRQ delivery.
@@ -1007,7 +1023,6 @@ class BackupMachine(Machine):
     def __init__(self):
         self.wire=[];self.flash_writes=[]
         super().__init__(raw)
-        self.u.mem_map(0x40013000,0x1000)
     def read(self,u,access,address,size,value,data):
         if address==0x40004c04:
             status=struct.unpack('<I',u.mem_read(0x40004c00,4))[0]
@@ -1051,8 +1066,8 @@ backup_receive(b'RT950CFG\n')
 for now in range(3,9000):
     backup_machine.u.mem_write(0x40004c00,struct.pack('<I',128))
     backup_call(backup_poll,backup_object,now,1)
-    if len(backup_machine.wire)==8156:break
-assert len(backup_machine.wire)==8156 and backup_reg(0x40004c0c)!=0 # wait for TC
+    if len(backup_machine.wire)==8164:break
+assert len(backup_machine.wire)==8164 and backup_reg(0x40004c0c)!=0 # wait for TC
 backup_machine.u.mem_write(0x40004c00,struct.pack('<I',192));backup_call(backup_poll,backup_object,now+1,1)
 assert not backup_reg(0x40004c0c) and backup_reg(GPIO[2]+4)==backup_crh
 assert backup_machine.odr[GPIO[2]]==backup_odr
@@ -1103,8 +1118,8 @@ menu_key('Ok');menu_draw();assert 'Export settings' in menu_ui.texts
 for phase,label in enumerate(('Export not started','Waiting for computer','Exporting settings','Backup exported','Export cancelled','Export timed out','Export error')):
     menu_ui.u.mem_write(0x20015000+backup_offsets[0],bytes([phase]))
     menu_ui.u.mem_write(0x20015000+backup_offsets[1],struct.pack('<I',32))
-    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8156))
-    menu_draw();assert label in menu_ui.texts and '32/8156' in menu_ui.texts
+    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8164))
+    menu_draw();assert label in menu_ui.texts and '32/8164' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Backup');menu_draw()
 assert all(label in menu_ui.texts for label in ('Экспорт настроек','ОШИБКА ЭКСПОРТА','PTT ОТМЕНЯЕТ ЭКСПОРТ','ТОЛЬКО ЧТЕНИЕ / БЕЗ ЗАПИСИ'))
 print('ARM backup UI: System entry, every session state, progress, manual start/cancel hints, RU/EN and LCD bounds PASS')
@@ -1182,7 +1197,7 @@ for russian in (False,True):
  menu_key('Import')
  for phase,label in ((0,'Import not started'),(1,'Waiting for computer'),(2,'Receiving settings'),(5,'Import cancelled'),(6,'Import timed out'),(7,'Import rejected')):
   menu_ui.u.mem_write(0x20015000+import_offsets[1],bytes([phase]))
-  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8156))
+  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8164))
   menu_draw()
   assert backup_module is not None
   assert (('Импорт настроек' if russian else 'Import settings') in menu_ui.texts)
@@ -1257,11 +1272,26 @@ menu_key('Channels');menu_draw();assert 'LEFT: ACTIONS / ABC: ZONES' in menu_ui.
 menu_key('NextSlot');menu_draw();assert 'Select zone' in menu_ui.texts
 menu_key('Back')
 menu_key('Left');menu_draw()
-assert all(label in menu_ui.texts for label in ('Rename channel','Move channel','Delete channel','Copy to VFO','Base RX MHz','Base TX MHz'))
+assert all(label in menu_ui.texts for label in ('Rename channel','Move channel','Delete channel','Set channel TX','Copy to VFO','Base RX MHz','Base TX MHz'))
 menu_key('Back');menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok')
 menu_key('Channels');menu_key('Left');menu_draw()
-assert all(label in menu_ui.texts for label in ('Имя канала','Перенести канал','Удалить канал','Копировать в VFO','База RX','База TX'))
-print('ARM channel actions UI: zone shortcut, VFO copy and base frequency preview RU/EN PASS')
+assert all(label in menu_ui.texts for label in ('Имя канала','Перенести канал','Удалить канал','Частота TX канала','Копировать в VFO','База RX','База TX'))
+for _ in range(3):menu_key('Down')
+menu_key('Ok');menu_draw()
+assert 'ВЛЕВО: TX = RX / ВПРАВО: 0' in menu_ui.texts
+print('ARM channel actions UI: zone shortcut, VFO copy, TX editor and base frequency preview RU/EN PASS')
+
+for russian in (False,True):
+ menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
+ if russian:
+  menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back')
+ for key,label in zip(('VoxSwitch','VoxLevel','VoxDelay'),
+                      ('VOX на сеанс','Порог VOX','Задержка VOX') if russian else
+                      ('VOX switch','VOX level','VOX delay')):
+  menu_key(key);menu_draw()
+  assert label in menu_ui.texts,(label,menu_ui.texts)
+  menu_key('Back')
+print('ARM VOX UI: switch, level and delay in RU/EN PASS')
 
 # Change only a binding: autosave must notice it and survive a fresh MCU model.
 fm=FlashModel();flash_call(ctor,fresh,0)
@@ -1276,13 +1306,13 @@ for _ in range(5):flash_call(app_key,fresh,logical_keys['Down'])
 flash_call(app_key,fresh,logical_keys['Ok'])
 assert not poll_auto(250) and not poll_auto(2000)
 assert read_string(poll_auto(2250))==b'SETTINGS SAVED'
-assert fm.get(0x08010000+28)==6
+assert fm.get(0x08010000+28)==8
 key_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,key_slots);flash_call(ctor,fresh,0);flash_call(load,fresh)
 portable_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(portable_dump,fresh,0x20015000,8192)==8108
+assert flash_call(portable_dump,fresh,0x20015000,8192)==8116
 assert struct.unpack('<4I',bytes(fm.u.mem_read(0x20015000+7992,16)))==(0,5,2,0)
-print('ARM user keys autosave: binding-only edit triggers debounce, compact v6 commit and fresh MCU reload preserves all four assignments PASS')
+print('ARM user keys autosave: binding-only edit triggers debounce, compact v8 commit and fresh MCU reload preserves all four assignments PASS')
 
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('Weather');menu_draw()

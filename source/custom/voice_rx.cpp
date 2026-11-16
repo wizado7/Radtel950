@@ -30,6 +30,15 @@ struct Pins {
 };
 Pins pins;
 RegisterBus<Pins> bus(pins);
+void wait_us(unsigned microseconds) {
+    for(unsigned i=0;i<microseconds*120u;++i)__asm volatile("nop");
+}
+void sleep_chip(uint8_t chip) {
+    bus.write(chip,0x47,0x6042);
+    bus.write(chip,0x30,0);
+    wait_us(1000);
+    bus.write(chip,0x37,RfLdoSleep);
+}
 #ifdef RT950_MAIN_TX
 struct FrequencyRegisters {
     uint8_t chip;
@@ -61,11 +70,18 @@ void BoardReceiver::audio(bool enabled,bool speaker) {
 }
 void BoardReceiver::enable(bool enabled) {
     if(active_==enabled)return;
-    if(!enabled){stop();active_=false;status_={};return;}
+    if(!enabled){standby();active_=false;return;}
     // This diagnostic leaves all external transmit switch lines at idle.
     output(GPIO_PIN_8,true);output(GPIO_PIN_15,true);
     output(GPIO_PIN_10,false);output(GPIO_PIN_11,false);
-    active_=true;init_step_=0;
+    sleep_chip(uint8_t(rx_chip_^1u));
+    active_=true;idle_requested_=false;init_step_=0;
+}
+void BoardReceiver::standby() {
+    const bool initialized=init_step_!=0;
+    stop();
+    if(initialized)sleep_chip(rx_chip_);
+    status_={};init_step_=0;idle_requested_=true;
 }
 void BoardReceiver::stop() {
 #ifdef RT950_MAIN_TX
@@ -99,9 +115,10 @@ void BoardReceiver::tune(uint32_t hz,uint32_t now) {
     if(!(cb || vhf_tx_frequency(hz) || uhf_tx_frequency(hz)) || hz%10)return;
     const uint8_t chip=cb?1:0;
     if(chip!=rx_chip_) {
+        if(init_step_)sleep_chip(rx_chip_);
         rx_chip_=chip;status_={};init_step_=0;
     }
-    status_.frequency=hz;
+    idle_requested_=false;status_.frequency=hz;
     status_.sampled=false;
     if(!status_.ready)return;
     const uint32_t word=hz/10;
@@ -129,13 +146,15 @@ void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow
 }
 
 void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,WeatherAudio weather) {
-    if(!active_ || status_.fault)return;
+    if(!active_ || idle_requested_ || status_.fault)return;
     if(!status_.ready) {
+        if(init_step_==3 && int32_t(now-due_)<0)return;
         constexpr unsigned prefix=sizeof rx_startup/sizeof rx_startup[0];
         constexpr unsigned suffix=sizeof rx_finish/sizeof rx_finish[0];
         if(init_step_<prefix) {
             const auto reg=rx_startup[init_step_];
             bus.write(rx_chip_,reg.address,reg.value);
+            if(reg.address==0x37)due_=now+RfWakeMs;
         } else if(init_step_==prefix) {
             uint16_t existing=0;
             bus.read(rx_chip_,0x40,existing);
@@ -193,7 +212,7 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         bus.read(rx_chip_,0x0c,status_.status);
         bus.read(rx_chip_,0x67,rssi);
         if(status_.status==0xffff || rssi==0xffff){stop();status_.fault=true;return;}
-        status_.sampled=true;
+        status_.sampled=true;status_.sampled_at=now;
         status_.rssi=rssi&0x01ff;
         // Provisional diagnostic thresholds between the measured idle and P7 levels.
         constexpr uint16_t open_rssi=110,close_rssi=90;
@@ -369,7 +388,7 @@ void BoardUhfTx::restore_rx() {
     if(chip_started_) {
         bus.write(chip_,0x30,0);
         if(signal_used_)bus.write(chip_,0x70,0);
-        bus.write(chip_,0x37,0x1d00);
+        bus.write(chip_,0x37,RfLdoSleep);
     }
     gpio_set_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
     gpio_set_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);

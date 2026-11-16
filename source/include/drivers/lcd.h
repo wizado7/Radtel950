@@ -23,6 +23,8 @@
  * Performs hardware reset, sends init sequence, clears screen.
  */
 void lcd_init(void);
+void lcd_display_on(uint8_t on);
+void lcd_sleep(uint8_t sleeping);
 
 /*
  * lcd_write_command - Send a command byte via 8080 bus.

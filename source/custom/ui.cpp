@@ -48,6 +48,19 @@ void freq(char *d,uint32_t v) {
  d[3]='.';d[9]=0;uint32_t div=100000000;
  for(unsigned i=0;i<8;++i,div/=10)d[positions[i]]=char('0'+v/div%10);
 }
+void slot_tone(char *out,Tone tone,const char *prefix) {
+ if(tone.kind==ToneKind::Off){*out=0;return;}
+ copy(out,prefix);
+ out+=3;
+ if(tone.kind==ToneKind::Dcs) {
+  radio_option_label(RadioSetting::RxDcs,tone.index,out);return;
+ }
+ const unsigned tenths=ctcss_frequency(tone);
+ num(out,tenths/10u);
+ while(*out)++out;
+ *out++=draw_language==Language::Russian?',':'.';
+ *out++=char('0'+tenths%10u);*out=0;
+}
 bool eq(const char *a,const char *b) {while(*a && *a==*b){++a;++b;}return *a==*b;}
 const char *gps_state(const Application &a,uint32_t now) {
  const auto *n=nav_get();
@@ -619,9 +632,19 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const bool split=c.vfo[i].tx_hz && c.vfo[i].rx_hz!=c.vfo[i].tx_hz;
    unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=split?'S':c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=sending?'T':receiving?'R':recent?'L':'-';num(key+n,c.vfo[i].memory_channel);
    const bool redraw=changed(i+1,key,force) || cache.active!=c.active;
-   if(!redraw)continue;
    const unsigned y=52+i*70;const bool active=c.active==i;
    const uint16_t fill=active?selected:card;
+   const auto &profile=a.radio_profile(i);
+   const bool reverse=a.reverse_active(i);
+   char rx_tone[16],tx_tone[16];
+   slot_tone(rx_tone,profile.heard_tone(reverse),"RX ");
+   slot_tone(tx_tone,profile.sent_tone(reverse),"TX ");
+   const unsigned strength=sending?0:input.slot_signal[i].bars(c.vfo[i].rx_hz,now);
+   const char level[]={char('0'+strength),0};
+   const bool rx_changed=changed(5+i,rx_tone,redraw);
+   const bool tx_changed=changed(8+i,tx_tone,redraw);
+   const bool level_changed=changed(11+i,level,redraw);
+   if(redraw) {
    rect(8,y,224,64,fill);rect(8,y,4,64,active?accent:card);
    char slot[2]={char('A'+i),0};label(18,y+9,slot,active?accent:muted,fill);
    label(44,y+9,c.vfo[i].channel_mode?"CH":"VFO",muted,fill);
@@ -631,6 +654,13 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    if(c.vfo[i].rx_hz && !c.vfo[i].tx_hz)label(170,y+29,"NO TX",muted,fill);
    else if(a.reverse_active(i))label(170,y+29,"REV",accent,fill);
    else if(split && !sending)label(170,y+29,"SPLIT",muted,fill);
+   }
+   if(rx_changed){rect(18,y+50,65,9,fill);label(18,y+51,rx_tone,muted,fill);}
+   if(tx_changed){rect(88,y+50,65,9,fill);label(88,y+51,tx_tone,muted,fill);}
+   if(level_changed) {
+    for(unsigned bar=0;bar<8;++bar)
+     rect(166+7*bar,y+54,5,4,bar<strength?accent:bg);
+   }
   }
   cache.active=c.active;
 #ifdef RT950_BENCH_TX_HZ
@@ -1072,7 +1102,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V6 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V8 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";
@@ -1124,9 +1154,9 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   for(unsigned i=0;i<Application::ChannelCommandCount;++i) {
    const bool active=i==a.channel_command();
    if(!changed(i+1,active?"selected":"idle",force))continue;
-   const unsigned y=73+i*33;
+   const unsigned y=73+i*27;
    const uint16_t fill=active?selected:card;
-   rect(8,y,224,28,fill);label(16,y+10,Application::channel_commands[i],ink,fill);
+   rect(8,y,224,24,fill);label(16,y+8,Application::channel_commands[i],ink,fill);
   }
  } else if(a.page()==Page::ConfirmStore) {
   if(force) {
@@ -1291,7 +1321,12 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   if(changed(8,a.feedback(),force)){rect(8,266,224,20,bg);label(10,271,a.feedback(),muted,bg);}
  } else if(a.page()==Page::Brightness || a.page()==Page::ScreenTimer || a.page()==Page::Timezone) {
   char value[30];
-  if(a.page()==Page::Brightness){num(value,a.brightness()*25u);unsigned j=0;while(value[j])++j;value[j++]='%';value[j]=0;}
+  if(a.page()==Page::Brightness){
+   const unsigned duty=a.brightness_permille();num(value,duty/10u);
+   unsigned j=0;while(value[j])++j;
+   if(duty%10u){value[j++]=draw_language==Language::Russian?',':'.';value[j++]=char('0'+duty%10u);}
+   value[j++]='%';value[j]=0;
+  }
   else if(a.page()==Page::ScreenTimer)num(value,a.editor_digits()?a.editor_value():a.screen_seconds());
   else {int zone=a.timezone_draft();copy(value,zone<0?"UTC -":"UTC +");if(zone<0)zone=-zone;value[5]=char('0'+zone/60/10);value[6]=char('0'+zone/60%10);value[7]=':';value[8]=char('0'+zone%60/10);value[9]=char('0'+zone%10);value[10]=0;}
   if(changed(1,value,force)){panel(52,92);label(16,65,a.page()==Page::Brightness?"LCD BRIGHTNESS":a.page()==Page::ScreenTimer?"SCREEN TIMEOUT SECONDS":"GPS LOCAL TIMEZONE",accent);lcd_draw_string_2x(16,96,value,ink,card);}

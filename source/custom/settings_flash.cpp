@@ -8,7 +8,6 @@
 extern "C" {
 extern const uint8_t _storage_start[],_storage_end[],_storage_slot_size[];
 uint32_t get_tick(void);
-extern volatile uint8_t board_backlight_duty,board_backlight_phase;
 }
 
 namespace rt950 {
@@ -31,10 +30,6 @@ bool storage_supply_ok() {
 #define FLASH_CONTROL REG32(0x40022010u)
 #define FLASH_ADDRESS REG32(0x40022014u)
 #define CYCLE_COUNTER REG32(0xe0001004u)
-constexpr uint32_t PwmTickCycles=120000u;
-constexpr uint32_t BacklightPrimary=1u<<6, BacklightSecondary=1u<<3;
-constexpr uintptr_t GpioB=0x40010c00u, GpioC=0x40011000u;
-
 // Bank 1 cannot supply instructions while busy. No calls or flash data here.
 // noipa keeps the independent address checks even if all current callers are bounded.
 __attribute__((section(".ramfunc"),noipa,optimize("no-if-conversion","no-if-conversion2")))
@@ -45,11 +40,6 @@ bool flash_operation(uintptr_t address,uint32_t value,bool erase) {
         return false;
     uint32_t primask;
     __asm volatile("mrs %0, primask\n cpsid i" : "=r"(primask) :: "memory");
-    const unsigned duty=board_backlight_duty;
-    const unsigned phase=board_backlight_phase;
-    const bool pwm=duty>0 && duty<4;
-    const bool initial=pwm && (REG32(GpioC+0x0c)&BacklightPrimary);
-    bool lit=initial;
     bool ok=false;
     if(!(FLASH_STATUS&Busy) && FLASH_CONTROL==Lock) {
         FLASH_KEY=0x45670123u;FLASH_KEY=0xcdef89abu;
@@ -68,15 +58,6 @@ bool flash_operation(uintptr_t address,uint32_t value,bool erase) {
             while((FLASH_STATUS&Busy) && --spins) {
                 const uint32_t elapsed=CYCLE_COUNTER-began;
                 if(elapsed>=EraseDeadline)break;
-                if(pwm) {
-                    const bool on=((phase+elapsed/PwmTickCycles)&3u)<duty;
-                    if(on!=lit) {
-                        const uintptr_t output=on?0x10u:0x14u;
-                        REG32(GpioC+output)=BacklightPrimary;
-                        REG32(GpioB+output)=BacklightSecondary;
-                        lit=on;
-                    }
-                }
             }
             const uint32_t status=FLASH_STATUS;
             if(status&Busy) {
@@ -89,12 +70,6 @@ bool flash_operation(uintptr_t address,uint32_t value,bool erase) {
                 ok=(status&(Faults|Done))==Done;
             }
         }
-    }
-    // SysTick's cached pin state remains valid when interrupts resume.
-    if(lit!=initial) {
-        const uintptr_t output=initial?0x10u:0x14u;
-        REG32(GpioC+output)=BacklightPrimary;
-        REG32(GpioB+output)=BacklightSecondary;
     }
     __asm volatile("msr primask, %0" :: "r"(primask) : "memory");
     return ok;

@@ -97,6 +97,9 @@ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'AM seek failed at C++ line {result}'
 print('ARM AM seek: both directions on all bands, valid channel, invalid/wrapped/out-of-band responses, cancel, timeout and retune PASS')
 for suite,description in (
+ ('vox_tests','VOX: threshold, hysteresis, hang time, stale sample, wrap, reset and snapshot migration'),
+ ('tx_readback_diagnostics_tests','TX diagnosis: distinct BK4829 register failures before PA'),
+ ('channel_tx_tests','memory TX: PMR02 simplex default, recall, legacy migration and persistent explicit clear'),
  ('voice_signal_tests','voice signals: all DTMF pairs, four burst keys, debounce, bounded duration and cancellation'),
  ('beacon_formats_tests','APRS beacon completion: Base91 reference, Mic-E wire fields, SmartBeaconing, manual permit and migration'),
  ('aprs_symbols_tests','APRS symbols: presets, custom table and code, cancellation, snapshots and decoded frame'),
@@ -274,7 +277,7 @@ class UploadSerial:
    self.at+=len(data);self.answer=b'CHECKED\n' if self.at==len(self.frame) else b'NEXT\n'
   return len(data)
 fake=UploadSerial(fixture);backup.upload_backup(fake,fixture,clock=fake.clock)
-assert fake.at==8156 and b''.join(fake.writes[1:])==fixture
+assert fake.at==8164 and b''.join(fake.writes[1:])==fixture
 fake=UploadSerial(fixture)
 try:backup.upload_backup(fake,fixture[:-1],clock=fake.clock)
 except ValueError:pass
@@ -294,14 +297,14 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['user_key_tests']|1,0x080ff000,count=6000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'user keys failed at C++ line {result}'
-print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v6 and portable schema1/2 migration PASS')
+print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v8 and portable schema1/2 migration PASS')
 legacy=bytearray(fixture[:48+7992])
 import zlib
 struct.pack_into('<I',legacy,12,7992);struct.pack_into('<I',legacy,16,1)
 struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',legacy,44,zlib.crc32(legacy[:44]))
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
-assert backup.inspect_backup(fixture)['snapshot_schema']==6
+assert backup.inspect_backup(fixture)['snapshot_schema']==8
 v2=bytearray(fixture[:48+8008])
 struct.pack_into('<II',v2,12,8008,2)
 struct.pack_into('<I',v2,20,zlib.crc32(v2[48:]));struct.pack_into('<I',v2,44,zlib.crc32(v2[:44]))
@@ -316,15 +319,20 @@ scan_backup=bytearray(fixture)
 struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
-assert backup.inspect_backup(scan_backup)['snapshot_schema']==6
-fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8156
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==8
+fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8164
 old=bytearray(fixture[:48+8096])
 for schema in (4,5):
  struct.pack_into('<II',old,12,8096,schema)
  struct.pack_into('<I',old,20,zlib.crc32(old[48:]));struct.pack_into('<I',old,44,zlib.crc32(old[:44]))
  assert backup.inspect_backup(old)['snapshot_schema']==schema
  fake=UploadSerial(old);backup.upload_backup(fake,old,clock=fake.clock);assert fake.at==8144
-print('HOST portable migration: schema1–5 retained and schema6 8156-byte container validated PASS')
+old=bytearray(fixture[:48+8108])
+struct.pack_into('<II',old,12,8108,6)
+struct.pack_into('<I',old,20,zlib.crc32(old[48:]));struct.pack_into('<I',old,44,zlib.crc32(old[:44]))
+assert backup.inspect_backup(old)['snapshot_schema']==6
+fake=UploadSerial(old);backup.upload_backup(fake,old,clock=fake.clock);assert fake.at==8156
+print('HOST portable migration: schema1–7 retained and schema8 8164-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
 print('ARM APRS TX framing: bounded NRZI encoder, FCS and round trip PASS')
@@ -1465,10 +1473,10 @@ if a.stock:
  for mode in (0,1,2):
   result=call_tx(u,symbols['aprs_adc_probe'],mode,budget=5000000)
   assert result==0,(mode,result)
- print('ARM APRS ADC1: TIM2/CH2, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
+ print('ARM APRS ADC1: TIM4/CH4, keypad TIM2 independent, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
  result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
  assert result==0,f'MCU diagnostics failed at C++ line {result}'
- print('ARM MCU diagnostics: datasheet temperature trend, ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
+ print('ARM MCU diagnostics and VOX ADC1: temperature trend, PA0, busy ownership, internal channels, restoration, cancellation and timeout PASS')
 
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)

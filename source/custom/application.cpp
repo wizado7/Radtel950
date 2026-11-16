@@ -7,6 +7,13 @@ namespace rt950 {
 namespace {
 constexpr char callsign_chars[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 constexpr char name_chars[]="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-";
+constexpr unsigned PmrPresetCount=16;
+constexpr uint32_t pmr_preset_hz(unsigned index) {return 446006250u+index*12500u;}
+void preset_name(char *name,bool pmr,unsigned channel) {
+    const char *prefix=pmr?"PMR":"LPD";
+    for(unsigned i=0;i<3;++i)name[i]=prefix[i];
+    name[3]=char('0'+channel/10);name[4]=char('0'+channel%10);name[5]=0;
+}
 void text(char *dst, const char *src) {
     unsigned n=0; while (n<29 && src[n]) {dst[n]=src[n]; ++n;} dst[n]=0;
 }
@@ -26,10 +33,10 @@ Application::Application(bool presets) {
   text(zone_names_[i],"ZONE00");zone_names_[i][4]=char('0'+(i+1)/10);zone_names_[i][5]=char('0'+(i+1)%10);
  }
  if(presets) for(unsigned i=0;i<MemoryCount;++i) {
-  auto &m=memories_[i];const bool pmr=i<16;const unsigned ch=pmr?i+1:i-15;
-  m.rx_hz=pmr?446006250u+i*12500u:433075000u+(i-16)*25000u;
-  m.tx_hz=0;m.occupied=true;m.radio.narrow=pmr;
-  text(m.name,pmr?"PMR00":"LPD00");m.name[3]=char('0'+ch/10);m.name[4]=char('0'+ch%10);
+  auto &m=memories_[i];const bool pmr=i<PmrPresetCount;const unsigned ch=pmr?i+1:i-PmrPresetCount+1;
+  m.rx_hz=pmr?pmr_preset_hz(i):433075000u+(i-PmrPresetCount)*25000u;
+  m.tx_hz=pmr?m.rx_hz:0;m.occupied=true;m.radio.narrow=pmr;
+  preset_name(m.name,pmr,ch);
  }
  if(presets) {
   constexpr unsigned initial_channels[]={0,1,16};
@@ -40,6 +47,17 @@ Application::Application(bool presets) {
    vfo_profiles_[slot]=memories_[channel].radio;
   }
  }
+}
+void Application::upgrade_pmr_presets() {
+    for(unsigned i=0;i<PmrPresetCount;++i) {
+        auto &m=memories_[i];
+        if(!m.occupied || m.zone || m.rx_hz!=pmr_preset_hz(i) || m.tx_hz ||
+           !m.radio.narrow || m.radio.tx_inhibit || m.radio.reverse || m.radio.shift!=Shift::None)continue;
+        char expected[6];preset_name(expected,true,i+1);
+        unsigned n=0;while(n<sizeof expected && m.name[n]==expected[n])++n;
+        if(n==sizeof expected)m.tx_hz=m.rx_hz;
+    }
+    sync_frequencies();
 }
 // Reset logical state only. Persistence uses the existing guarded A/B autosave;
 // neither reset mode has a raw flash/calibration/bootloader erase path.
@@ -214,7 +232,10 @@ uint32_t Application::base_tx(unsigned slot) const {
     const auto &v=config_.vfo[slot];
     return v.channel_mode?memories_[v.memory_channel].tx_hz:vfo_tx_hz_[slot];
 }
-uint32_t Application::profile_tx_frequency() const {return base_tx(config_.active);}
+uint32_t Application::profile_tx_frequency() const {
+    return page_==Page::TxFrequency && channel_tx_edit_?
+        memories_[channel_].tx_hz:base_tx(config_.active);
+}
 bool Application::reverse_active(unsigned slot) const {
     return radio_profile(slot).reverse && candidate_tx(slot);
 }
@@ -487,6 +508,7 @@ constexpr MenuEntry radio_menu[]={
     {"FM presets",Key::FmPresets},{"AM presets",Key::AmPresets},
     {"FM tuning step",Key::FmStep},{"AM tuning step",Key::AmStep},
     {"Mic Gain",Key::MicGain},
+    {"VOX switch",Key::VoxSwitch},{"VOX level",Key::VoxLevel},{"VOX delay",Key::VoxDelay},
 #ifdef RT950_MAIN_TX
     {"Longwave AM",Key::LongwaveAm},{"Mediumwave AM",Key::MediumwaveAm},
 #endif
@@ -573,6 +595,12 @@ constexpr RouteChoice beacon_choices[]={
 };
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 const RouteChoice &route_choice(Key key) {
+    static constexpr RouteChoice vox_choices[]={
+        {"VOX switch",2,{"OFF","ON"}},
+        {"VOX level",9,{"1","2","3","4","5","6","7","8","9"}},
+        {"VOX delay",voice::VoxDelayCount,{"500 ms","1000 ms","1500 ms","2000 ms","3000 ms","5000 ms"}}
+    };
+    if(key>=Key::VoxSwitch)return vox_choices[unsigned(key)-unsigned(Key::VoxSwitch)];
     if(key>=Key::BeaconFormat)return beacon_choices[unsigned(key)-unsigned(Key::BeaconFormat)];
     return route_choices[unsigned(key)-unsigned(Key::AprsPath)];
 }
@@ -597,11 +625,20 @@ unsigned Application::route_value() const {
     case Key::BeaconFormat:return unsigned(beacon_format_);
     case Key::BeaconMode:return unsigned(beacon_mode_);
     case Key::BeaconOverlay:return beacon_overlay_;
+    case Key::VoxSwitch:return vox_on_;
+    case Key::VoxLevel:return vox_level_-1u;
+    case Key::VoxDelay:return vox_delay_;
     default:return 0;
     }
 }
 void Application::apply_route_choice() {
     if(route_value()==route_draft_)return;
+    switch(route_setting_) {
+    case Key::VoxSwitch:vox_on_=route_draft_!=0;return;
+    case Key::VoxLevel:vox_level_=uint8_t(route_draft_+1u);return;
+    case Key::VoxDelay:vox_delay_=route_draft_;return;
+    default:break;
+    }
     aprs_relay_armed_=false;
     switch(route_setting_) {
     case Key::AprsPath:aprs_routing_.beacon=aprs::BeaconPath(route_draft_);config_.beacon_on=false;break;
@@ -1176,6 +1213,10 @@ void Application::key(Key k) {
                 sync_frequencies();
                 cancel_entry();page_=Page::Radio;notify("CHANNEL COPIED TO VFO");return;
             }
+            if(channel_command_==3u) {
+                channel_tx_edit_=true;page_=Page::TxFrequency;
+                editor_value_=0;editor_digits_=0;notify("");return;
+            }
             constexpr Key commands[]={Key::RenameChannel,Key::MoveChannel,Key::DeleteChannel};
             channel_action_=commands[channel_command_];
             if(channel_action_==Key::RenameChannel)open_name_editor(memories_[channel_].name);
@@ -1289,7 +1330,8 @@ void Application::key(Key k) {
         beacon_requested_=true;beacon_requested_at_=now_;
         page_=Page::Radio;notify("BEACON REQUESTED");return;
     }
-    if((k>=Key::AprsPath && k<=Key::AprsPreamble) || (k>=Key::BeaconFormat && k<=Key::BeaconOverlay)) {
+    if((k>=Key::AprsPath && k<=Key::AprsPreamble) || (k>=Key::BeaconFormat && k<=Key::BeaconOverlay) ||
+       (k>=Key::VoxSwitch && k<=Key::VoxDelay)) {
         parent_=Page::Settings;page_=Page::AprsRouteChoice;
         route_setting_=k;route_draft_=uint8_t(route_value());notify("");return;
     }
@@ -1438,7 +1480,7 @@ void Application::key(Key k) {
         editor_value_=0;editor_digits_=0;notify("");return;
     }
     if(k==Key::WatchDwell || k==Key::WatchHold || k==Key::AprsScanInterval || k==Key::BeaconInterval || k==Key::AprsRxFrequency || k==Key::BeaconFrequency || k==Key::TxFrequency || k==Key::RepeaterOffset) {
-        parent_=Page::Settings;
+        channel_tx_edit_=false;parent_=Page::Settings;
         page_=k==Key::WatchDwell?Page::WatchDwell:k==Key::WatchHold?Page::WatchHold:k==Key::AprsScanInterval?Page::AprsScanInterval:k==Key::BeaconInterval?Page::BeaconInterval:k==Key::AprsRxFrequency?Page::AprsRxFrequency:k==Key::BeaconFrequency?Page::BeaconFrequency:
               k==Key::TxFrequency?Page::TxFrequency:Page::RepeaterOffset;
         editor_value_=0;editor_digits_=0;notify("");return;
@@ -1467,6 +1509,10 @@ void Application::key(Key k) {
         k=Key::Back;
     }
     if(k==Key::Back) {
+        if(page_==Page::TxFrequency && channel_tx_edit_) {
+            channel_tx_edit_=false;editor_digits_=0;editor_value_=0;
+            page_=Page::ChannelCommands;notify("");return;
+        }
         if(page_==Page::ManageChannel){page_=Page::Settings;notify("");return;}
         if(page_==Page::Settings && menu_group_!=MenuGroup::Root) {
             menu_group_=menu_group_==MenuGroup::Repeater?MenuGroup::Radio:(menu_group_==MenuGroup::Beacon || menu_group_==MenuGroup::AprsRx || menu_group_==MenuGroup::AprsRouting)?MenuGroup::Aprs:MenuGroup::Root;
@@ -1477,7 +1523,7 @@ void Application::key(Key k) {
         return;
     }
     if(page_==Page::TxFrequency && k==Key::Left) {
-        editor_value_=base_rx(config_.active)/10u;
+        editor_value_=(channel_tx_edit_?memories_[channel_].rx_hz:base_rx(config_.active))/10u;
         editor_digits_=8;notify("");return;
     }
     if(page_==Page::TxFrequency && k==Key::Right) {
@@ -1511,7 +1557,11 @@ void Application::key(Key k) {
                         config_.aprs_rx_hz=hz;
                     }
                     else if(page_==Page::BeaconFrequency)set_aprs_frequency(hz);
-                    else {
+                    else if(tx_editor && channel_tx_edit_) {
+                        auto &memory=memories_[channel_];
+                        memory.tx_hz=hz;memory.radio.shift=Shift::None;memory.radio.reverse=false;
+                        sync_frequencies();
+                    } else {
                         const unsigned slot=config_.active;
                         if(!frequency_valid(base_rx(slot))){notify("SET FREQUENCY FIRST");return;}
                         auto &v=config_.vfo[slot];
@@ -1523,7 +1573,8 @@ void Application::key(Key k) {
                     }
                 }
             }
-            page_=parent_;notify("SETTING APPLIED");
+            page_=tx_editor && channel_tx_edit_?Page::ChannelCommands:parent_;
+            channel_tx_edit_=false;editor_digits_=0;editor_value_=0;notify("SETTING APPLIED");
         }
         return;
     }
@@ -1568,7 +1619,13 @@ void Application::key(Key k) {
     if(page_==Page::Brightness || page_==Page::ScreenTimer) {
         if(k==Key::Up || k==Key::Down) {
             int dir=k==Key::Up?1:-1;
-            if(page_==Page::Brightness){int n=int(brightness_)+dir;if(n>=1 && n<=4)brightness_=unsigned(n);}
+            if(page_==Page::Brightness) {
+                constexpr unsigned levels[]={5,6,7,8,9,1,10,2,3,4};
+                static_assert(sizeof levels/sizeof *levels==BrightnessCount);
+                unsigned i=0;while(levels[i]!=brightness_)++i;
+                const int next=int(i)+dir;
+                if(next>=0 && unsigned(next)<BrightnessCount)brightness_=levels[next];
+            }
         } else if(k==Key::Ok) {
             if(page_==Page::ScreenTimer && editor_digits_) {
                 if(editor_value_>3600){notify("USE 0 TO 3600 SECONDS");return;}

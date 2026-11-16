@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include "../diagnostic/nmea_status.h"
 void board_init(void);
-void board_display_init(void);
-void board_display_brightness(uint8_t level);
-void board_display_tick(void);
-void board_display_sleep(void);
-void board_display_begin_wake(void);
+void board_display_init(uint32_t now);
+void board_display_brightness(uint16_t permille);
+bool board_display_poll(bool requested,uint32_t now);
 void board_display_shutdown(void);
 void board_radio_led(uint8_t rx,uint8_t tx);
 enum { BOARD_BATTERY_FAST_MS=20, BOARD_BATTERY_CONVERSION_TIMEOUT_MS=20 };

@@ -25,6 +25,7 @@
 /* --- APB1 peripherals -------------------------------------------------- */
 #define TIM2_BASE       0x40000000UL
 #define TIM3_BASE       0x40000400UL
+#define TIM8_BASE       0x40013400UL
 #define TIM4_BASE       0x40000800UL
 #define TIM5_BASE       0x40000C00UL
 #define TIM6_BASE       0x40001000UL
@@ -211,6 +212,7 @@ typedef struct {
 #define CRM_APB2EN_IOPDEN  (1UL << 5)
 #define CRM_APB2EN_IOPEEN  (1UL << 6)
 #define CRM_APB2EN_ADC1EN  (1UL << 9)
+#define CRM_APB2EN_TIM8EN  (1UL << 13)
 #define CRM_APB2EN_ADC2EN  (1UL << 10)
 #define CRM_APB2EN_TIM1EN  (1UL << 11)
 #define CRM_APB2EN_SPI1EN  (1UL << 12)
@@ -448,6 +450,7 @@ typedef struct {
 #define TIM1        ((TIM_TypeDef *)TIM1_BASE)
 #define TIM2        ((TIM_TypeDef *)TIM2_BASE)
 #define TIM3        ((TIM_TypeDef *)TIM3_BASE)
+#define TIM8        ((TIM_TypeDef *)TIM8_BASE)
 #define TIM4        ((TIM_TypeDef *)TIM4_BASE)
 #define TIM5        ((TIM_TypeDef *)TIM5_BASE)
 #define TIM6        ((TIM_TypeDef *)TIM6_BASE)

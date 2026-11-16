@@ -104,10 +104,12 @@ bool finish_voice_tx(Radio &radio,uint8_t selector) {
 
 // Keep the DAC at zero throughout readback. Verify the registers set here.
 template<class Radio>
-bool verify_voice_tx(Radio &radio,const UhfTxValues &values,uint8_t selector,uint16_t mode=TxActiveWord) {
-    const auto matches=[&radio](uint8_t address,uint16_t expected) {
+bool verify_voice_tx(Radio &radio,const UhfTxValues &values,uint8_t selector,uint16_t mode=TxActiveWord,uint8_t *failed=nullptr) {
+    const auto matches=[&radio,failed](uint8_t address,uint16_t expected) {
         uint16_t actual=0;
-        return radio.read(address,actual) && actual==expected;
+        if(radio.read(address,actual) && actual==expected)return true;
+        if(failed)*failed=address;
+        return false;
     };
     return selector<3 && matches(0x30,mode) && matches(0x38,values.frequency_low) &&
            matches(0x39,values.frequency_high) && matches(0x36,pa_control_word(selector));

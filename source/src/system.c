@@ -44,8 +44,6 @@ void SysTick_Handler(void)
         return;
 #endif
 #ifdef RT950_CUSTOM
-    extern void board_display_tick(void);
-    board_display_tick();
     extern void encoder_tick(void);
     encoder_tick();
 #endif

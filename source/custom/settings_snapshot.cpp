@@ -24,12 +24,12 @@ struct Reader {
 };
 // Compact container v1: magic, version, canonical word count, encoded length,
 // CRC32 over the first 16 header bytes and encoded bytes, then zero alignment.
-constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=6;
+constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=8;
 constexpr size_t PackedHeader=20;
 // Changing array capacities requires a separate historical decoder, not a
 // silent reinterpretation of the released v1/v2 canonical field order.
 static_assert(Application::MemoryCount==64 && Application::ZoneCount==15 && Application::BroadcastCount==8);
-static_assert(Application::PortableSize==8008+25*4);
+static_assert(Application::PortableSize==8008+27*4);
 struct WordCounter {
     size_t words=0;
     template<class T> void field(T){++words;}
@@ -171,10 +171,14 @@ template<class Archive,class App>
 void Application::beacon_fields(Archive &archive,App &s) {
     archive.field(s.beacon_format_);archive.field(s.beacon_overlay_);archive.field(s.beacon_mode_);
 }
+template<class Archive,class App>
+void Application::vox_fields(Archive &archive,App &s) {
+    archive.field(s.vox_level_);archive.field(s.vox_delay_);
+}
 size_t Application::save_portable_snapshot(uint8_t *data,size_t capacity) const {
     if(!data)return 0;
     Writer writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
     return writer.good?writer.pos:0;
 }
 bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema) {
@@ -187,8 +191,10 @@ bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsi
         if(schema>=3)aprs_routing_fields(reader,candidate);
         if(schema>=4)reader.field(candidate.beacon_altitude_code_);
         if(schema>=6)beacon_fields(reader,candidate);
+        if(schema>=7)vox_fields(reader,candidate);
         if(!reader.good || reader.pos!=reader.capacity || !candidate.valid_snapshot())return false;
     }
+    if(schema<8)candidate.upgrade_pmr_presets();
     *this=candidate;return true;
 }
 size_t Application::save_snapshot(uint8_t *data,size_t capacity) const {
@@ -198,18 +204,18 @@ size_t Application::save_snapshot(uint8_t *data,size_t capacity) const {
 }
 size_t Application::canonical_snapshot_size() const {
     WordCounter counter;portable_snapshot_fields(counter,*this);aprs_routing_fields(counter,*this);
-    counter.field(beacon_altitude_code_);beacon_fields(counter,*this);return counter.words*4u;
+    counter.field(beacon_altitude_code_);beacon_fields(counter,*this);vox_fields(counter,*this);return counter.words*4u;
 }
 size_t Application::compact_snapshot_size() const {
     PackedWriter writer{nullptr,SnapshotCapacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     return writer.good && size<=SnapshotCapacity?size:0;
 }
 size_t Application::save_compact_snapshot(uint8_t *data,size_t capacity) const {
     if(!data || capacity<PackedHeader)return 0;
     PackedWriter writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
     const size_t size=(writer.pos+3u)&~size_t(3);
     if(!writer.good || size>capacity)return 0;
     storage::put(data,PackedMagic);storage::put(data+4,PackedVersion);
@@ -239,8 +245,10 @@ bool Application::restore_snapshot(const uint8_t *data,size_t size) {
         if(version>=3)aprs_routing_fields(reader,candidate);
         if(version>=4)reader.field(candidate.beacon_altitude_code_);
         if(version>=6)beacon_fields(reader,candidate);
+        if(version>=7)vox_fields(reader,candidate);
         if(!reader.good || reader.pos!=reader.end || reader.words!=storage::word(data+8) || !candidate.valid_snapshot())return false;
         candidate.config_.ble_export=false;candidate.reconcile_channels();
+        if(version<8)candidate.upgrade_pmr_presets();
         if(!rt_config_valid(&candidate.config_))return false;
         *this=candidate;return true;
     }
@@ -321,13 +329,14 @@ bool Application::valid_snapshot() const {
     for(auto hz:fm_presets_)if(hz && (hz<6500 || hz>10800))return false;
     for(auto hz:am_presets_)if(hz && fm::am_band(hz)==fm::Band::Fm)return false;
     if(auto_lock_>=sizeof menu_timeouts/sizeof menu_timeouts[0])return false;
-    if(unsigned(mic_gain_)>unsigned(MicGain::High))return false;
+    if(unsigned(mic_gain_)>unsigned(MicGain::High) || vox_level_<1 || vox_level_>9 ||
+       vox_delay_>=voice::VoxDelayCount)return false;
     for(const auto &point:measured_power_.points)if(!MeasuredPower::valid(point))return false;
     if(menu_timeout_>=sizeof menu_timeouts/sizeof menu_timeouts[0])return false;
     if(beacon_symbol_>=BeaconSymbolCount)return false;
     if(aux_ptt_>3 || scan_mode_>ScanMode::Search || !valid_scan_bounds(scan_start_,scan_end_))return false;
     if(fm_memory_ && (fm_memory_<6500 || fm_memory_>10800))return false;
-    if(unsigned(language_)>unsigned(Language::Russian) || brightness_<1 || brightness_>4 ||
+    if(unsigned(language_)>unsigned(Language::Russian) || brightness_<1 || brightness_>BrightnessCount ||
        screen_seconds_>3600 || timezone_minutes_<-720 || timezone_minutes_>840 ||
        timezone_minutes_%15 || active_zone_>=ZoneCount ||
        unsigned(speed_unit_)>unsigned(SpeedUnit::Knots) || beacon_identity_.ssid>15 ||

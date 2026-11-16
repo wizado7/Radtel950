@@ -115,7 +115,7 @@ void board_gps_enable(uint8_t on) {
     head=tail=0;
     nav_reset();
     if(!on) {gpio_set_pin(GPIOA,GPIO_PIN_8);return;}
-    *(volatile uint32_t *)0x40010004u &= ~(3u<<4);
+    AFIO->MAPR=(AFIO->MAPR&~((3u<<4)|AFIO_MAPR_SWJ_CFG_MASK))|(2u<<24);
     *(volatile uint32_t *)0x4001002Cu &= ~(15u<<24);
     CRM->APB1RST |= CRM_APB1EN_USART3EN;
     CRM->APB1RST &= ~CRM_APB1EN_USART3EN;

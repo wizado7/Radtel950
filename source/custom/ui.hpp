@@ -29,6 +29,19 @@ struct InputStatus {
     bool fm_signal_ready=false,fm_audio_enabled=false,fm_audio_error=false;
     fm::Signal fm_signal{};
     voice::VoiceStatus voice{};
+    struct SignalLevel {
+        uint32_t frequency=0,sampled_at=0;
+        uint16_t raw=0;
+        unsigned bars(uint32_t hz,uint32_t now) const {
+            if(!frequency || frequency!=hz || uint32_t(now-sampled_at)>=2500u || raw<=65)return 0;
+            return raw>=200?8u:1u+(unsigned(raw)-66u)*7u/134u;
+        }
+    };
+    SignalLevel slot_signal[3]{};
+    void observe_signal(unsigned slot,const voice::VoiceStatus &rx,uint32_t hz,uint32_t now) {
+        if(slot<3 && rx.ready && !rx.fault && rx.sampled && rx.sampled_at==now && rx.frequency==hz)
+            slot_signal[slot]={hz,now,rx.rssi};
+    }
     aprs::RecentStations aprs_stations{};
     aprs::RecentMessages aprs_messages{};
     uint32_t aprs_frames=0,aprs_background_frames=0,aprs_windows=0,aprs_cancelled=0;

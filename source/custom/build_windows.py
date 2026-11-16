@@ -19,8 +19,8 @@ flags=['-mcpu=cortex-m4','-mthumb','-mfloat-abi=hard','-mfpu=fpv4-sp-d16','-Os',
 if tx_enabled: flags+=[f'-DRT950_BENCH_TX_HZ={tx_hz}']
 if a.bench_matrix or (tx_enabled and not bench): flags+=['-DRT950_BENCH_MATRIX']
 if tx_enabled and not bench: flags+=['-DRT950_MAIN_TX']
-c=['../src/startup.c','../src/system.c','../src/drivers/gpio.c','../src/drivers/lcd.c','../src/app/encoder.c','../diagnostic/nmea_status.c','../mvp/core.c','board.c','battery.c','display_power.c','runtime.c']
-cpp=['application.cpp','controls.cpp','main.cpp','ui.cpp','gps_view.cpp','gps_navigation.cpp','locale.cpp','radio_settings.cpp','settings_snapshot.cpp','settings_flash.cpp','settings_export_uart.cpp','fm_board.cpp','voice_rx.cpp','voice_factory_board.cpp','aprs_dac.cpp']; objs=[]
+c=['../src/startup.c','../src/system.c','../src/drivers/gpio.c','../src/drivers/lcd.c','../src/app/encoder.c','../diagnostic/nmea_status.c','../mvp/core.c','board.c','battery.c','runtime.c']
+cpp=['application.cpp','controls.cpp','main.cpp','ui.cpp','gps_view.cpp','gps_navigation.cpp','locale.cpp','radio_settings.cpp','settings_snapshot.cpp','settings_flash.cpp','settings_export_uart.cpp','fm_board.cpp','voice_rx.cpp','voice_factory_board.cpp','aprs_dac.cpp','display_power.cpp']; objs=[]
 for src in c+cpp:
  obj=out/(Path(src).stem+'.o'); objs.append(obj)
  opts=['-std=c++17','-fno-exceptions','-fno-rtti','-fno-threadsafe-statics','-Wshadow'] if src in cpp else ['-std=c11']

@@ -29,6 +29,8 @@ inline constexpr RegisterValue rx_finish[]={
 constexpr bool hardware_sql_open(uint16_t status) {return (status&2u)!=0;}
 
 // RX timing starts after the frequency registers are written.
+inline constexpr uint16_t RfLdoOn=0x9d1f,RfLdoSleep=0x1d00;
+inline constexpr uint32_t RfWakeMs=2;
 inline constexpr uint32_t RxRestartMs=1;
 inline constexpr uint32_t RxSettleMs=30;
 inline constexpr uint32_t RxSampleMs=15;
@@ -38,7 +40,7 @@ struct VoiceStatus {
     bool ready=false,fault=false,receiving=false,sampled=false;
     uint8_t slot=0;
     uint16_t rssi=0,status=0;
-    uint32_t frequency=0;
+    uint32_t frequency=0,sampled_at=0;
 };
 class BoardReceiver final {
 public:
@@ -47,6 +49,7 @@ public:
     void tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql);
 
     void stop();
+    void standby();
 #ifdef RT950_MAIN_TX
     void start_frequency_copy(uint32_t hz,uint32_t now,bool narrow);
     FrequencyCopy poll_frequency_copy(uint32_t now);
@@ -57,6 +60,7 @@ public:
     enum class WeatherAudio : uint8_t {Off, Muted, Speaker};
     void poll(uint32_t now,bool ptt,bool monitor=false,bool packet_audio=false,WeatherAudio weather=WeatherAudio::Off);
     bool carrier() const {return carrier_;}
+    bool audio_active() const {return audio_;}
     bool carrier_at_squelch() const {
 #ifdef RT950_MAIN_TX
         return sql_?sql_open_:carrier_;
@@ -74,7 +78,7 @@ private:
     uint32_t due_=0,next_sample_=0;
     unsigned init_step_=0;
     uint8_t rx_chip_=0;
-    bool active_=false,restart_=false,audio_=false;
+    bool active_=false,restart_=false,audio_=false,idle_requested_=false;
     Tone tone_{};
     uint8_t tone_level_=0,tone_matches_=0,tone_programmed_=0;
     bool narrow_=true,carrier_=false,tone_ready_=true;

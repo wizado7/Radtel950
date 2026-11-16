@@ -13,6 +13,8 @@
 #include "aprs_dac.hpp"
 #include "aprs_adc.hpp"
 #include "mcu_diagnostics.hpp"
+#include "voice_mic_adc.hpp"
+#include "voice_vox.hpp"
 #include "aprs_background.hpp"
 #include "channel_scan.hpp"
 #include "voice_battery_limits.hpp"
@@ -35,16 +37,17 @@ using namespace rt950;
 #ifdef RT950_MAIN_TX
 static uint8_t held_ptt_source,enabled_ptt_inputs;
 static uint16_t session_power_mv;
-static bool tail_hold;
+static bool tail_hold,vox_holding;
 #endif
 extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
     McuTemperature mcu_temperature;
+    voice::MicAdc vox_adc;
 #endif
     SCB->SCR &= ~6u; // shallow sleep; never inherit SLEEPDEEP/SLEEPONEXIT
     board_init();board_battery_init(get_tick());lcd_init();encoder_init();
     Application app;load_settings(app);
-    board_display_init();ui_boot_screen();board_display_brightness((uint8_t)app.brightness());delay_ms(400);
+    board_display_init(get_tick());ui_boot_screen();board_display_brightness(app.brightness_permille());delay_ms(400);
     SettingsAutosave autosave;autosave.begin(app,get_tick());Controls keys;PowerSwitch power;WakeGuard wake_keys;
     // Recovery route to diagnostics even if the matrix labels are wrong.
     // A held key at boot always enters diagnostics.
@@ -75,6 +78,7 @@ extern "C" int main(void) {
     voice::BoardUhfTx tx_board(voice_rx,factory,voice::factory_power_selector(TxPower::Low),[] {
 #ifdef RT950_MAIN_TX
         if(board_power_switch_off())return false;
+        if(held_ptt_source==voice::VoxSource)return vox_holding && !board_ptt_mask();
         if(tail_hold)return voice::tail_inputs_released(board_ptt_mask(),enabled_ptt_inputs);
         return voice::ptt_source(board_ptt_mask()&enabled_ptt_inputs)==held_ptt_source &&
             held_ptt_source;
@@ -125,6 +129,7 @@ extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
     uint32_t release_notice_since=0;
     voice::KeyedSignal tx_signal;
+    voice::Vox vox(get_tick());
     bool suppress_signal_key=false;
 #endif
 #ifdef RT950_MAIN_TX
@@ -150,7 +155,7 @@ extern "C" int main(void) {
 #ifdef RT950_BENCH_TX_HZ
 #ifdef RT950_MAIN_TX
             ble_export.enable(false,now);
-            packet_rx.stop();
+            packet_rx.stop();vox_adc.stop();
             packet_tx.stop(now);relay.cancel();
 #endif
             ptt.poll(transmitter,{},now,false);
@@ -248,17 +253,7 @@ extern "C" int main(void) {
         const auto &config=app.config();
 #ifdef RT950_MAIN_TX
         enabled_ptt_inputs=uint8_t(1u|(app.second_ptt_enabled()?2u:0u)|(app.side_ptt_enabled()?4u:0u));
-        const uint8_t source=voice::ptt_source(input.ptt_mask&enabled_ptt_inputs);
-        const bool tx_session=ptt.state()==voice::Ptt::State::Preparing ||
-            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
-        const uint8_t tx_slot=!source && tx_session?ptt.target_slot():voice::ptt_slot(source,config.active);
-#else
-        const uint8_t tx_slot=config.active;
-#endif
-        const auto &slot=config.vfo[tx_slot];
-        const auto &profile=app.radio_profile(tx_slot);
-#ifdef RT950_MAIN_TX
-        const Tone tx_tone=profile.sent_tone(app.reverse_active(tx_slot));
+        const uint8_t manual_source=voice::ptt_source(input.ptt_mask&enabled_ptt_inputs);
         ble_export.enable(config.ble_on && !switch_off,now);
         const bool export_allowed=config.ble_on && config.ble_export && !switch_off;
         ble_export.poll(export_allowed,now);
@@ -273,7 +268,7 @@ extern "C" int main(void) {
         // Capture the reason before a voice or APRS stop removes TX ownership.
         if(!power_tx_ok)input.power.trace.trip(supply_fault);
         app.power_battery(power_sample_ok?board_battery_mv():0);
-        const bool aprs_allowed=config.aprs_rx && voice_enabled && !weather_open && !ptt_down && !monitor &&
+        const bool aprs_allowed=config.aprs_rx && voice_enabled && !weather_open && !ptt_down && !monitor && !vox_holding &&
             page!=Page::PowerCalibration && page!=Page::PowerMeasured &&
             ptt.state()==voice::Ptt::State::Idle && !packet_tx.active();
         const bool background=aprs_background.poll(now,aprs_allowed && page==Page::Radio,
@@ -287,6 +282,25 @@ extern "C" int main(void) {
         mcu_temperature.poll(page==Page::PowerStatus && app.power_status_page()==2 &&
             !aprs_listen && !ptt_down && !packet_tx.active() && !switch_off,now);
         input.power.mcu_degrees=mcu_temperature.reading(now);
+        const bool vox_session=held_ptt_source==voice::VoxSource &&
+            (ptt.state()==voice::Ptt::State::Preparing || ptt.state()==voice::Ptt::State::Transmitting);
+        const auto vox_frequency=config.vfo[config.active].tx_hz;
+        const bool vox_blocked=!app.vox_on() || ptt_down || !power_tx_ok || !voice_enabled ||
+            page!=Page::Radio || app.editing() || app.keypad_locked() || monitor ||
+            aprs_listen || packet_tx.active() || numeric_power(app.active_radio_profile().power) ||
+            !(voice::vhf_tx_frequency(vox_frequency) || voice::uhf_tx_frequency(vox_frequency)) ||
+            (!vox_session && (!voice_rx.has_sample() || voice_rx.carrier() || voice_rx.status().receiving ||
+                              voice_rx.audio_active()));
+        uint16_t mic_sample=0;
+        const auto mic_result=vox_adc.poll(vox.ready(now,vox_blocked),now,mic_sample);
+        if(mic_result==voice::MicAdc::Result::Sample)vox.sample(mic_sample,app.vox_level(),app.vox_delay(),now);
+        else if(mic_result==voice::MicAdc::Result::Unavailable)vox.ready(now,true);
+        vox_holding=vox.requested(now);
+        if(vox_holding)app.activity(now);
+        ptt.manual_takeover(transmitter,manual_source!=0,held_ptt_source==voice::VoxSource,now);
+        const uint8_t source=manual_source?manual_source:vox_holding?voice::VoxSource:0;
+        const bool tx_session=ptt.state()==voice::Ptt::State::Preparing ||
+            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
         const auto &identity=app.beacon_identity();
         input.aprs_messages.select_identity(identity.callsign,identity.ssid);
         const uint32_t packet_hz=config.aprs_hz;
@@ -299,7 +313,7 @@ extern "C" int main(void) {
         };
         const auto &routing=app.aprs_routing();
         const uint32_t relay_hz=routing.relay_use_beacon?packet_hz:config.aprs_rx_hz;
-        const bool packet_permitted=voice_enabled && !ptt_down && !monitor && power_tx_ok &&
+        const bool packet_permitted=voice_enabled && !ptt_down && !vox_holding && !monitor && power_tx_ok &&
             ptt.state()==voice::Ptt::State::Idle;
         const bool beacon_allowed=packet_permitted && page==Page::Radio && config.beacon_on &&
             position_ready && identity.callsign[0] && calibrated_packet(packet_hz);
@@ -355,8 +369,14 @@ extern "C" int main(void) {
                                           app.beacon_format(),routing))begin_packet(packet_hz,false);
         }
         if(packet_tx.active())packet_tx.poll(packet_frame,now,packet_is_relay?relay_allowed:beacon_allowed);
+        const uint8_t tx_slot=!source && tx_session?ptt.target_slot():voice::ptt_slot(source,config.active);
+#else
+        const uint8_t tx_slot=config.active;
 #endif
+        const auto &slot=config.vfo[tx_slot];
+        const auto &profile=app.radio_profile(tx_slot);
 #ifdef RT950_MAIN_TX
+        const Tone tx_tone=profile.sent_tone(app.reverse_active(tx_slot));
         const bool vhf_tx=voice::vhf_tx_frequency(slot.tx_hz);
         const bool cb_tx=voice::cb_fm_frequency(slot.tx_hz);
         const bool frequency_allowed=cb_tx?
@@ -445,11 +465,11 @@ extern "C" int main(void) {
         if(ptt.state()==voice::Ptt::State::Idle)held_ptt_source=source;
         // Keep a finite software limit even when the configured TOT is off.
         const uint16_t timeout=power_probe?5:profile.timeout_seconds?profile.timeout_seconds:300;
-        const bool tail_enabled=app.enabled(Option::Tail) && !power_probe && !cb_tx && held_ptt_source!=0;
+        const bool tail_enabled=app.enabled(Option::Tail) && !power_probe && !cb_tx && held_ptt_source!=0 && held_ptt_source!=voice::VoxSource;
         tail_hold=!pressed && allowed && tail_enabled &&
             (ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending);
         const voice::TxRequest request{slot.tx_hz,timeout,tx_slot,
-            allowed && (source==held_ptt_source || tail_hold),profile.busy_lock,tail_enabled};
+            allowed && (source==held_ptt_source || tail_hold),profile.busy_lock || source==voice::VoxSource,tail_enabled};
 #else
         const bool pressed=(input.ptt_mask&1u)!=0;
         const voice::TxRequest request{slot.tx_hz,15,tx_slot,allowed,true};
@@ -474,7 +494,7 @@ extern "C" int main(void) {
 #endif
             );
 #ifdef RT950_MAIN_TX
-        const bool signal_keyed=pressed && ptt.state()==voice::Ptt::State::Transmitting;
+        const bool signal_keyed=manual_source && ptt.state()==voice::Ptt::State::Transmitting;
         const bool signal_allowed=app.page()==Page::Radio && !app.keypad_locked() && !cb_tx && !numeric;
         if(!tx_signal.poll(now,signal_keyed,signal_allowed,input.sampled,keys.accepted(),
             [&](const voice::TxSignal &tone){return transmitter.set_signal(tone);}))
@@ -487,7 +507,8 @@ extern "C" int main(void) {
         tx_owns_radio=transmitting || ptt.state()==voice::Ptt::State::Preparing;
 #ifdef RT950_MAIN_TX
         constexpr const char *tx_labels[]={"TX SLOT A","TX SLOT B","TX SLOT C"};
-        const char *tx_on=power_probe?"POWER TEST / UNMEASURED":tx_signal.active()?"TX SIGNAL":tx_labels[tx_slot];
+        const char *tx_on=power_probe?"POWER TEST / UNMEASURED":held_ptt_source==voice::VoxSource?"VOX TX":
+            tx_signal.active()?"TX SIGNAL":tx_labels[tx_slot];
 #else
         constexpr const char *tx_on="BENCH TX ON";
 #endif
@@ -504,6 +525,23 @@ extern "C" int main(void) {
         if(!factory_valid)calibration_error=factory_errors[unsigned(factory_status)];
         else if(!calibration_valid && voice::uhf_tx_frequency(slot.tx_hz))calibration_error="CAL PA TABLE INVALID";
 #endif
+        const char *dynamic_failure=!voice_rx.status().ready?"TX RX NOT READY":"TX BLOCKED / RELEASE";
+        if(ptt.state()==voice::Ptt::State::WaitRelease) {
+            using Fault=decltype(transmitter)::Fault;
+            constexpr const char *reasons[]={"TX BLOCKED / RELEASE","TX RX NOT READY","TX RF ROUTE",
+                "TX RX SAMPLE FAILED","TX CHIP READ FAILED","TX CAL VALUE INVALID","TX RF SETUP FAILED",
+                "TX BK4829 READBACK","TX KEY INTERRUPTED"};
+            dynamic_failure=reasons[unsigned(transmitter.fault())];
+            if(ptt.preparation_timed_out())dynamic_failure="TX RX CHECK TIMEOUT";
+            if(transmitter.fault()==Fault::Readback) {
+                switch(transmitter.failed_register()) {
+                case 0x30:dynamic_failure="TX BK4829 REG 30";break;
+                case 0x38:dynamic_failure="TX BK4829 REG 38";break;
+                case 0x39:dynamic_failure="TX BK4829 REG 39";break;
+                case 0x36:dynamic_failure="TX BK4829 REG 36";break;
+                }
+            }
+        }
         input.bench_ptt=ptt.state()==voice::Ptt::State::Ending?"TX ENDING":!pressed?"":transmitting?tx_on:tx_owns_radio?"TX PREPARING":
 #ifdef RT950_MAIN_TX
             page==Page::Radio && app.editing()?"TX: FINISH FREQ INPUT":
@@ -516,7 +554,7 @@ extern "C" int main(void) {
             waiting_for_battery?"TX CHECKING BATTERY":
             numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
 #endif
-            !allowed?"TX PROFILE BLOCKED":ptt.blocked_by_carrier()?"TX CHANNEL BUSY":"TX BLOCKED / RELEASE";
+            !allowed?"TX PROFILE BLOCKED":ptt.blocked_by_carrier()?"TX CHANNEL BUSY":dynamic_failure;
 #ifdef RT950_MAIN_TX
         constexpr const char *release_errors[]={"","TX END NOT PERMITTED","TX END PROFILE CHANGED",
             "TX END TIME LIMIT","TX END RADIO BLOCKED","TX END SIGNAL FAILED"};
@@ -598,7 +636,7 @@ extern "C" int main(void) {
                     const auto &rx_profile=app.radio_profile(rx_slot);
                     const auto tone=rx_profile.heard_tone(app.reverse_active(rx_slot));
                     if(hz)voice_rx.tune_profile(hz,tone,tone_level(tone),now,rx_profile.narrow,rx_profile.squelch);
-                    else voice_rx.stop();
+                    else voice_rx.standby();
                 });
             bool tone_scan_fault=false;
             if(tone_search) {
@@ -643,9 +681,17 @@ extern "C" int main(void) {
 #else
             voice_watch.poll(voice_rx,app.config(),now,!voice_rx.status().fault,input.ptt_mask!=0 || monitor);
             voice_rx.poll(now,input.ptt_mask!=0,monitor);
+            if(!input.ptt_mask) {
+                const auto slot=voice_watch.slot();
+                input.observe_signal(slot,voice_rx.status(),app.config().vfo[slot].rx_hz,now);
+            }
 #endif
 #ifdef RT950_MAIN_TX
             const auto &rx=voice_rx.status();
+            if(voice_target && !ptt_down) {
+                const auto slot=voice_watch.slot();
+                input.observe_signal(slot,rx,config.vfo[slot].rx_hz,now);
+            }
             if(frequency_copy_open) {
                 app.frequency_copy_result(voice_rx.poll_frequency_copy(now));
             } else if(spectrum_open) {
@@ -723,8 +769,9 @@ extern "C" int main(void) {
 #endif
         if(page!=Page::Debug)board_radio_led(input.voice.receiving && !input.ptt_mask,transmitting);
         if(gps!=app.config().gps_on) {gps=app.config().gps_on;board_gps_enable(gps);}
-        if(!app.screen_awake() && display_awake){board_display_sleep();display_awake=false;}
-        if(app.screen_awake() && !display_awake){board_display_begin_wake();ui_invalidate();last_draw=now-200u;display_awake=true;}
+        const bool draw_ready=board_display_poll(app.screen_awake(),now);
+        if(draw_ready && !display_awake){ui_invalidate();last_draw=now-200u;}
+        display_awake=draw_ready;
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
         const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && !spectrum_open && !frequency_copy_open && input.voice.ready;
@@ -735,12 +782,12 @@ extern "C" int main(void) {
             (config.ble_on && !switch_off?1u<<Load::Ble:0u) |
             (packet_rx.running()?1u<<Load::AprsRx:0u) | (transmitting?1u<<Load::Tx:0u));
 #endif
-        if(app.screen_awake() && uint32_t(now-last_draw)>=200u) {
+        if(draw_ready && uint32_t(now-last_draw)>=200u) {
             last_draw=now;ui_draw(app,input,now);
             if(app.page()==Page::AprsMessages && app.aprs_personal())
                 input.aprs_messages.read_personal(app.aprs_message_index());
         }
-        board_display_brightness(app.screen_awake()?(uint8_t)app.brightness():0);
+        if(draw_ready)board_display_brightness(app.brightness_permille());
         // Sleep only the CPU, keep SysTick/UART and GPIO polling active.
         // SysTick wakes us every millisecond; the watchdog still checks main.
         if(app.power_save()) __asm volatile("dsb\n wfi" ::: "memory");

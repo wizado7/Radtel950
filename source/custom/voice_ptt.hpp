@@ -25,6 +25,7 @@ public:
     State state() const {return state_;}
     uint8_t target_slot() const {return target_.slot;}
     ReleaseError release_error() const {return release_error_;}
+    bool preparation_timed_out() const {return state_==State::WaitRelease && preparation_timeout_;}
     bool blocked_by_carrier() const {return state_==State::WaitRelease && blocked_by_carrier_;}
 
     template<class Backend>
@@ -63,7 +64,7 @@ public:
             return;
         }
         if(state_==State::Idle) {
-            release_error_=ReleaseError::None;
+            release_error_=ReleaseError::None;preparation_timeout_=false;
             if(!backend.begin(request)) {
                 backend.stop();
                 state_=State::WaitRelease;
@@ -81,6 +82,7 @@ public:
             return;
         }
         if(uint32_t(now-since_)>=250u) {
+            preparation_timeout_=true;
             finish(backend,State::WaitRelease);
             return;
         }
@@ -93,6 +95,10 @@ public:
             return;
         }
         since_=now;state_=State::Transmitting;
+    }
+    template<class Backend>
+    void manual_takeover(Backend &backend,bool requested,bool automatic,uint32_t now) {
+        if(requested && automatic)poll(backend,{},now,false,false);
     }
     static constexpr uint32_t TailMilliseconds=400;
 private:
@@ -109,6 +115,6 @@ private:
     TxRequest target_{};
     ReleaseError release_error_=ReleaseError::None;
     uint32_t since_=0,ending_ms_=0;
-    bool blocked_by_carrier_=false;
+    bool blocked_by_carrier_=false,preparation_timeout_=false;
 };
 }

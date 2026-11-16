@@ -38,9 +38,10 @@ assert start==0xd000 and end==0x11000 and end-start==2*layout['_storage_slot_siz
 assert pc&~1>=0x08003000+end and end<len(raw)
 assert ('BoardUhfTx' in symbols)==(not args.rx_only)
 sections=subprocess.check_output([args.prefix+'objdump','-h',elf],text=True)
-for row in sections.splitlines():
+rows=sections.splitlines()
+for row,flags in zip(rows,rows[1:]):
     fields=row.split()
-    if len(fields)<7 or not fields[0].isdigit():continue
+    if len(fields)<7 or not fields[0].isdigit() or 'LOAD' not in flags.strip().split(', '):continue
     length,lma=int(fields[2],16),int(fields[4],16)
     if 0x08000000<=lma<0x08100000 and length:
         assert lma>=0x08003000 and lma+length<=0x08040000
