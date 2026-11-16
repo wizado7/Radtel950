@@ -532,6 +532,7 @@ constexpr Text catalog[]={
     {"SETTINGS SAVED","НАСТРОЙКИ СОХРАНЕНЫ"},
     {"STORAGE UNAVAILABLE","ПАМЯТЬ НЕДОСТУПНА"},
     {"CHECK BATTERY","ПРОВЕРЬТЕ ЗАРЯД"},
+    {"TX CHECKING BATTERY","ПРОВЕРКА БАТАРЕИ"},
     {"STORAGE WRITE FAILED","ОШИБКА ЗАПИСИ"},
     {"RELEASE PTT","ОТПУСТИТЕ PTT"},
     {"READ ONLY","ТОЛЬКО ЧТЕНИЕ"},

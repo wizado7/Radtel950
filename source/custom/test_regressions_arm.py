@@ -1385,7 +1385,7 @@ if a.stock:
  print('ARM APRS ADC1: TIM2/CH2, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
  result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
  assert result==0,f'MCU diagnostics failed at C++ line {result}'
- print('ARM MCU diagnostics: ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
+ print('ARM MCU diagnostics: datasheet temperature trend, ADC1 busy ownership, internal channels, restoration, cancellation and timeout PASS')
 
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)

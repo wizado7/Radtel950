@@ -2076,6 +2076,9 @@ extern "C" int power_diagnostics_tests() {
  CHECK(classify_supply(true,187,limits.low,limits.High)==SupplyFault::None);
  CHECK(classify_supply(true,188,limits.low,limits.High)==SupplyFault::High);
  CHECK(classify_supply(false,160,limits.low,limits.High)==SupplyFault::Sensor);
+ CHECK(tx_supply_ready(0) && tx_supply_ready(20) && !tx_supply_ready(21));
+ CHECK(tx_supply_live(59) && !tx_supply_live(60) && !tx_supply_live(0xffffffffu));
+ CHECK(!tx_supply_ready(0xffffffffu));
  constexpr SupplyFault faults[]={SupplyFault::Low,SupplyFault::High,SupplyFault::Sensor};
  for(auto fault:faults) {
   TxBackend backend;voice::Ptt ptt;
@@ -2083,7 +2086,7 @@ extern "C" int power_diagnostics_tests() {
   ptt.poll(backend,request,0,false);
   ptt.poll(backend,request,1,true);
   CHECK(ptt.state()==voice::Ptt::State::Transmitting);
-  const bool fresh=fault!=SupplyFault::Sensor;
+  const bool fresh=tx_supply_live(fault==SupplyFault::Sensor?60:20);
   const uint8_t raw=fault==SupplyFault::Low?128:fault==SupplyFault::High?188:160;
   request.authorized=classify_supply(fresh,raw,limits.low,limits.High)==SupplyFault::None;
   ptt.poll(backend,request,22,true);
@@ -2141,6 +2144,11 @@ extern "C" int power_diagnostics_tests() {
 }
 
 extern "C" int mcu_diagnostics_probe() {
+ CHECK(McuTemperature::estimate(1536,1440)==25);
+ CHECK(McuTemperature::estimate(1638,1440)==44);
+ CHECK(McuTemperature::estimate(1484,1440)==15);
+ CHECK(McuTemperature::estimate(0,1440)==McuTemperature::Unavailable);
+ CHECK(McuTemperature::estimate(1536,4095)==McuTemperature::Unavailable);
  McuTemperature sensor;
  ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA;
  CRM->APB2EN=CRM_APB2EN_ADC1EN|CRM_APB2EN_ADC2EN;

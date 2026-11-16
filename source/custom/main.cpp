@@ -106,7 +106,7 @@ extern "C" int main(void) {
     aprs::FrameTransmitter packet_frame;
     aprs::BeaconSession<decltype(packet_rf),aprs::DacBurst> packet_tx(packet_rf,packet_audio);
     aprs::RelayQueue relay;
-    bool packet_is_relay=false;
+    bool packet_is_relay=false,packet_battery_pending=false;
     uint32_t last_beacon=get_tick(),packet_tx_hz=0;
 #endif
 #endif
@@ -134,9 +134,9 @@ extern "C" int main(void) {
         const uint8_t raw_ptt=board_ptt_mask();
         if(raw_ptt)app.activity(now);
 #ifdef RT950_MAIN_TX
-        board_battery_fast(raw_ptt || packet_tx.active() ||
-            ptt.state()==voice::Ptt::State::Preparing ||
-            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending);
+        const bool rf_session=packet_tx.active() || ptt.state()==voice::Ptt::State::Preparing ||
+            ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
+        board_battery_fast(raw_ptt || rf_session || packet_battery_pending);
 #endif
         app.tick(now);
         board_battery_poll(now);
@@ -248,7 +248,10 @@ extern "C" int main(void) {
         const bool ptt_down=board_ptt_mask()!=0;
         const bool power_sample_ok=board_battery_sample_fresh(now);
         const uint8_t battery_raw=board_battery_raw();
-        const auto supply_fault=classify_supply(power_sample_ok,battery_raw,battery_limits.low,battery_limits.High);
+        const auto battery_age=board_battery_sample_age(now);
+        const bool supply_ready=tx_supply_ready(battery_age);
+        const auto supply_fault=classify_supply(power_sample_ok && (!rf_session || tx_supply_live(battery_age)),
+            battery_raw,battery_limits.low,battery_limits.High);
         const bool power_tx_ok=supply_fault==SupplyFault::None;
         // Capture the reason before a voice or APRS stop removes TX ownership.
         if(!power_tx_ok)input.power.trace.trip(supply_fault);
@@ -298,11 +301,14 @@ extern "C" int main(void) {
         const auto &current_rx=voice_rx.status();
         const bool relay_channel_clear=aprs_listen && current_rx.sampled && !current_rx.fault &&
             current_rx.frequency==config.aprs_rx_hz && !voice_rx.carrier();
-        if(relay.take(packet_frame,now,relay_allowed && !packet_tx.active(),relay_channel_clear,
+        if(relay.take(packet_frame,now,relay_allowed && !packet_tx.active(),relay_channel_clear && supply_ready,
             aprs::tx_flags[routing.preamble]))begin_packet(relay_hz,true);
-        if(!packet_tx.active() && !relay.pending() && beacon_allowed && !aprs_listen && !voice_rx.carrier() &&
-           voice_rx.status().ready && ptt.state()==voice::Ptt::State::Idle &&
-           uint32_t(now-last_beacon)>=config.beacon_seconds*1000u) {
+        const bool beacon_due=!packet_tx.active() && !relay.pending() && beacon_allowed &&
+            !aprs_listen && !voice_rx.carrier() && current_rx.ready &&
+            uint32_t(now-last_beacon)>=config.beacon_seconds*1000u;
+        packet_battery_pending=!packet_tx.active() && !supply_ready &&
+            (beacon_due || (relay_allowed && relay.pending()));
+        if(beacon_due && supply_ready) {
             last_beacon=now;
             const auto &nav=*nav_get();
             const char symbol=beacon_symbols[app.beacon_symbol_index()].code;
@@ -411,14 +417,20 @@ extern "C" int main(void) {
         const bool pressed=(input.ptt_mask&1u)!=0;
         const voice::TxRequest request{slot.tx_hz,15,tx_slot,allowed,true};
 #endif
-        if(pressed && allowed && ptt.state()==voice::Ptt::State::Idle)
+#ifdef RT950_MAIN_TX
+        const bool waiting_for_battery=pressed && allowed &&
+            ptt.state()==voice::Ptt::State::Idle && !supply_ready;
+#else
+        constexpr bool waiting_for_battery=false;
+#endif
+        if(pressed && allowed && ptt.state()==voice::Ptt::State::Idle && !waiting_for_battery)
             voice_watch.poll(voice_rx,config,now,false,false);
         // After a preempted packet the shared receiver may still be restarting.
 #ifdef RT950_MAIN_TX
         const bool was_transmitting=ptt.state()==voice::Ptt::State::Transmitting ||
             ptt.state()==voice::Ptt::State::Ending;
 #endif
-        if(!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready)
+        if(!waiting_for_battery && (!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready))
             ptt.poll(transmitter,request,now,pressed);
 #ifdef RT950_MAIN_TX
         if(!pressed && was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
@@ -454,6 +466,7 @@ extern "C" int main(void) {
             !calibration_valid?calibration_error:
 #ifdef RT950_MAIN_TX
             !power_tx_ok?supply_fault_text(supply_fault):
+            waiting_for_battery?"TX CHECKING BATTERY":
             numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
 #endif
             !allowed?"TX PROFILE BLOCKED":ptt.blocked_by_carrier()?"TX CHANNEL BUSY":"TX BLOCKED / RELEASE";

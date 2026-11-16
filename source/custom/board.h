@@ -13,6 +13,7 @@ void board_display_sleep(void);
 void board_display_begin_wake(void);
 void board_display_shutdown(void);
 void board_radio_led(uint8_t rx,uint8_t tx);
+enum { BOARD_BATTERY_FAST_MS=20, BOARD_BATTERY_CONVERSION_TIMEOUT_MS=20 };
 void board_battery_init(uint32_t now);
 void board_battery_fast(uint8_t enabled);
 void board_battery_poll(uint32_t now);

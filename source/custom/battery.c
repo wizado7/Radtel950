@@ -38,11 +38,11 @@ void board_battery_poll(uint32_t now) {
                 since=now;state=6;
             }
         }break;
-    case 6:if((uint32_t)(now-since)>=(fast?20u:1000u))start(now,4);break;
+    case 6:if((uint32_t)(now-since)>=(fast?BOARD_BATTERY_FAST_MS:1000u))start(now,4);break;
     case 7:if((uint32_t)(now-since)>=1000u)board_battery_init(now);break;
     default:break;
     }
-    if(state>=2 && state<=5 && (uint32_t)(now-since)>=20u) {
+    if(state>=2 && state<=5 && (uint32_t)(now-since)>=BOARD_BATTERY_CONVERSION_TIMEOUT_MS) {
         ++errors;millivolts=0;REG(8)=0;since=now;state=7;
     }
 }

@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
-#include <stdint.h>
+#include "board.h"
 
 namespace rt950 {
 enum class SupplyFault : uint8_t { None, Sensor, Low, High };
 constexpr SupplyFault classify_supply(bool fresh,uint8_t raw,uint8_t low,uint8_t high) {
     return !fresh?SupplyFault::Sensor:raw<low?SupplyFault::Low:raw>high?SupplyFault::High:SupplyFault::None;
+}
+constexpr bool tx_supply_ready(uint32_t age_ms) {
+    return age_ms<=BOARD_BATTERY_FAST_MS;
+}
+constexpr bool tx_supply_live(uint32_t age_ms) {
+    // Fast interval plus time for the discard and measured conversions.
+    return age_ms<BOARD_BATTERY_FAST_MS+2u*BOARD_BATTERY_CONVERSION_TIMEOUT_MS;
 }
 inline const char *supply_fault_text(SupplyFault fault) {
     switch(fault) {

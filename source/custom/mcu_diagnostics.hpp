@@ -9,7 +9,8 @@ public:
     static int estimate(unsigned temperature,unsigned reference) {
         if(!temperature || temperature>=4095 || !reference || reference>=4095)return Unavailable;
         const int millivolts=int((1200u*temperature+reference/2u)/reference);
-        const int degrees=25+(1280-millivolts)*100/426;
+        // AT32F403A V2.04 p. 78, Table 55: Avg_Slope is -4.26 mV/C.
+        const int degrees=25+(millivolts-1280)*100/426;
         return degrees>=-40 && degrees<=105?degrees:Unavailable;
     }
     int reading(uint32_t now) const {
