@@ -15,8 +15,12 @@ void board_radio_led(uint8_t rx,uint8_t tx);
 enum { BOARD_BATTERY_FAST_MS=20, BOARD_BATTERY_CONVERSION_TIMEOUT_MS=20 };
 void board_battery_init(uint32_t now);
 bool board_battery_idle(void);
+uint32_t board_battery_deadline(uint32_t now);
 bool board_idle_clock(bool low);
-extern bool custom_clock_low;
+#include "custom_clock.h"
+void board_idle_wait(uint8_t timeout_ms,uint8_t ptt);
+void board_display_retime(void);
+void board_display_keypad(bool enabled);
 void board_battery_fast(uint8_t enabled);
 void board_battery_poll(uint32_t now);
 uint16_t board_battery_mv(void);

@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse
 import struct
 import subprocess
-from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
+from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS, UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_HOOK_INSN_INVALID
 from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3, UC_ARM_REG_PC, UC_ARM_REG_C1_C0_2, UC_ARM_REG_FPEXC, UC_ARM_REG_CPSR, UC_ARM_REG_PRIMASK, UC_CPU_ARM_CORTEX_M4
 
 parser=argparse.ArgumentParser()
@@ -322,17 +322,47 @@ m.alarm(0,1)
 assert m.function('get_tick')==0
 print('ARM TIM3 time base: millisecond reads, pending overflow, combined IRQ and 32-bit wrap PASS')
 
+m=Machine(raw)
+m.function('board_init')
+exti=0x40010400
+lines=(1<<2)|(1<<3)|(1<<5)
+for offset in (0,8,12):assert read32(m,exti+offset)&lines==lines
+assert read32(m,0x40010008)&0xff00==0x4400
+assert read32(m,0x4001000c)&0xf0==0x40
+for irq,line,name in ((8,2,'EXTI2_IRQHandler'),(9,3,'EXTI3_IRQHandler'),(23,5,'EXTI9_5_IRQHandler')):
+    assert read32(m,BASE+4*(16+irq))==symbols[name]|1
+    m.function(name)
+    assert read32(m,exti+0x14)==1<<line
+print('ARM PTT wake: PE2/3/5 both edges, grouped vector and pending-bit clear PASS')
+
+m=Machine(raw)
+def program_wait(count, compare, interval):
+    for offset,value in ((0x10,0),(0x24,count),(0x34,compare)):
+        m.u.mem_write(timer+offset,struct.pack('<I',value))
+    m.u.reg_write(UC_ARM_REG_R0,interval)
+    m.u.reg_write(UC_ARM_REG_R1,1) # a PTT level change skips WFI
+    m.function('board_idle_wait')
+    return read32(m,timer+0x34)
+assert program_wait(60,100,5)==70
+assert program_wait(61,70,25)==70
+assert program_wait(0xfff8,10,4)==0
+print('ARM foreground deadline: nearer wake, no postponement and compare across wrap PASS')
+
 for fail_low in (False,True):
     m=Machine(raw)
     m.u.mem_map(0xe0001000,0x1000)
     m.u.hook_add(UC_HOOK_MEM_READ,clock_status,begin=crm,end=crm+4)
     m.function('SystemInit')
     m.u.mem_write(timer+0x24,struct.pack('<I',4200))
-    m.u.mem_write(crm+0x1c,struct.pack('<I',2|(1<<18)))
+    m.u.mem_write(timer+0x34,struct.pack('<I',4230))
+    m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_display_init')
+    m.u.reg_write(UC_ARM_REG_R0,355);m.function('board_display_brightness')
+    m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_gps_enable')
+    m.u.mem_write(crm+0x1c,struct.pack('<I',read32(m,crm+0x1c)|(1<<2))) # TIM4 owns audio
     m.u.reg_write(UC_ARM_REG_R0,1)
     assert m.call(symbols['board_idle_clock'])==0
     assert read32(m,timer+0x28)==59999
-    m.u.mem_write(crm+0x1c,struct.pack('<I',2))
+    m.u.mem_write(crm+0x1c,struct.pack('<I',read32(m,crm+0x1c)&~(1<<2)))
     if fail_low:
         def low_never_ready(u,access,address,size,value,data):
             if read32(m,crm+4)&0x803d0000==0x00050000:
@@ -341,18 +371,25 @@ for fail_low in (False,True):
     m.u.reg_write(UC_ARM_REG_R0,1)
     assert m.call(symbols['board_idle_clock'],budget=800000)==int(not fail_low)
     assert m.u.reg_read(UC_ARM_REG_PC)==STOP and not m.u.reg_read(UC_ARM_REG_PRIMASK)
-    assert read32(m,crm+4)&0x803d000f==(0x8035000a if fail_low else 0x0005000a)
+    assert read32(m,crm+4)&0x803d3f0f==(0x8035240a if fail_low else 0x0005000a)
     assert read32(m,timer+0x28)==(59999 if fail_low else 11999)
+    assert read32(m,timer+0x34)==4230
+    assert read32(m,0x40004808)==(6250 if fail_low else 2500)
+    pwm=0x40013400
+    assert read32(m,pwm+0x2c)==(4799 if fail_low else 959)
+    assert read32(m,pwm+0x34)==(1704 if fail_low else 340)
     assert bytes(m.u.mem_read(symbols['custom_clock_low'],1))==bytes([not fail_low])
     assert m.function('get_tick')==2100
     if not fail_low:
         m.u.reg_write(UC_ARM_REG_R0,0)
         assert m.call(symbols['board_idle_clock'],budget=800000)==0
         assert m.u.reg_read(UC_ARM_REG_PC)==STOP
-        assert read32(m,crm+4)&0x803d000f==0x8035000a
+        assert read32(m,crm+4)&0x803d3f0f==0x8035240a
         assert read32(m,timer+0x28)==59999 and m.function('get_tick')==2100
+        assert read32(m,timer+0x34)==4230 and read32(m,0x40004808)==6250
+        assert read32(m,pwm+0x2c)==4799 and read32(m,pwm+0x34)==1704
         assert bytes(m.u.mem_read(symbols['custom_clock_low'],1))==b'\0'
-print('ARM idle clocks: guard active UART, real PLL 24/120 parameters, TIM3 retime and low-lock fallback PASS')
+print('ARM idle clocks: PLL rollback, active GPS/25 kHz backlight, TIM3 compare, APB and audio guard PASS')
 
 
 class EncoderMachine(Machine):
@@ -503,21 +540,58 @@ class Foreground(Machine):
         self.now=0;self.texts=[]
         super().__init__(raw)
         self.cut=True
+        self.resume=None
+        self.steps=0
+        self.driving_main=False
         self.u.mem_write(0xe000ed10,struct.pack("<I",6))
         self.sequence=[14,12,15,10,11,15,6,3,6,9] # 435125, OK, ABC, pages
+    def redirect(self,u,target):
+        self.resume=target
+        u.reg_write(UC_ARM_REG_PC,target)
+        if self.driving_main:u.emu_stop()
+    def invalid_instruction(self,u,_):
+        pc=u.reg_read(UC_ARM_REG_PC)
+        hi,lo=struct.unpack('<HH',u.mem_read(pc,4))
+        it_mask=0x0600fc00
+        # Unicorn can leave Thumb ITSTATE active on entry to a standalone
+        # conditional wide branch. Retry only this otherwise valid encoding.
+        if (hi&0xf800!=0xf000 or hi>>6&15>=14 or lo&0xd000!=0x8000 or
+            not u.reg_read(UC_ARM_REG_CPSR)&it_mask or self.retry==(pc,self.now)):
+            return False
+        self.retry=(pc,self.now)
+        self.redirect(u,pc)
+        return True
+    def run_main(self,budget=22000000):
+        self.u.mem_map(0xe0001000,0x1000)
+        self.u.mem_write(crm,struct.pack('<II',0x03030000,0x8035240a))
+        self.u.hook_add(UC_HOOK_MEM_READ,clock_status,begin=crm,end=crm+4)
+        self.retry=None
+        self.driving_main=True
+        invalid_hook=self.u.hook_add(UC_HOOK_INSN_INVALID,self.invalid_instruction)
+        self.u.reg_write(UC_ARM_REG_SP,0x20017b00)
+        self.u.reg_write(UC_ARM_REG_LR,STOP|1)
+        self.resume=symbols['main']|1
+        while self.resume is not None and self.steps<budget:
+            target=self.resume
+            self.resume=None
+            self.u.reg_write(UC_ARM_REG_CPSR,self.u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
+            self.u.emu_start(target|1,STOP,count=budget-self.steps)
+        self.u.hook_del(invalid_hook)
+        self.driving_main=False
     def code(self,u,address,size,data):
+        self.steps+=1
         if bytes(u.mem_read(address,4))==b'\xbf\xf3\x6f\x8f':
-            u.reg_write(UC_ARM_REG_PC,(address+4)|1);return
+            self.redirect(u,address+4);return
         if bytes(u.mem_read(address,2))==b'\x30\xbf':
-            u.reg_write(UC_ARM_REG_PC,(address+2)|1);return
+            self.redirect(u,address+2);return
         if address==symbols['delay_ms']:
             self.now+=u.reg_read(UC_ARM_REG_R0)
-            u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
+            self.redirect(u,u.reg_read(UC_ARM_REG_LR));return
         if address==symbols['get_tick']:
             self.now+=1
             u.reg_write(UC_ARM_REG_R0,self.now)
             u.reg_write(UC_ARM_REG_CPSR,u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
-            u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
+            self.redirect(u,u.reg_read(UC_ARM_REG_LR));return
         if address in [symbols['lcd_draw_string'],symbols['lcd_draw_string_2x'],symbols[screen_text]]:
             ptr=u.reg_read(UC_ARM_REG_R2)
             buf=bytearray()
@@ -528,7 +602,7 @@ class Foreground(Machine):
             self.texts.append(buf.decode('utf-8'))
         if address in [symbols[n] for n in ('lcd_init','lcd_draw_string','lcd_draw_string_2x','lcd_fill_rect',screen_text)]:
             u.reg_write(UC_ARM_REG_CPSR,u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
-            u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
+            self.redirect(u,u.reg_read(UC_ARM_REG_LR));return
         super().code(u,address,size,data)
     def read(self,u,access,address,size,value,data):
         self.pressed=()
@@ -540,7 +614,7 @@ class Foreground(Machine):
             v=struct.unpack('<I',u.mem_read(address,4))[0]|1
             u.mem_write(address,struct.pack('<I',v))
 
-m=Foreground();m.call(symbols['main'],budget=22000000)
+m=Foreground();m.run_main()
 assert m.now>=4050 and m.feeds>=1,('foreground must reach debounced power cut',m.now,m.feeds,
                                   hex(m.u.reg_read(UC_ARM_REG_PC)))
 assert any('435.12500' in line for line in m.texts),'numeric entry not committed/rendered'
@@ -554,7 +628,7 @@ print('ARM main integration: digit input -> OK commit -> A/B/C -> OK menu -> Bac
 
 messages=Foreground()
 messages.sequence=[6,8,8,8,6,8,6,2] # Settings -> APRS -> Messages -> V/M
-messages.call(symbols['main'],budget=17000000)
+messages.run_main(budget=17000000)
 assert all(s in messages.texts for s in ('APRS messages','0/0','V/M: ALL MESSAGES','V/M: TO ME'))
 print('ARM APRS messages UI: empty inbox displays 0/0 and physical V/M toggles views PASS')
 
@@ -584,7 +658,7 @@ if args.bench:
             super().write(u,access,address,size,value,data)
             if address==0x4000741c:self.dac.append(value)
     guard=NoFactoryPtt()
-    guard.call(symbols['main'],budget=50000000)
+    guard.run_main(budget=50000000)
     assert guard.now>=4050 and guard.feeds>=1
     assert any('446.08125' in line for line in guard.texts)
     assert guard.rf_reads>16 and guard.ptt_reads>10

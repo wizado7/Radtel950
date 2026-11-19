@@ -53,6 +53,11 @@ public:
     void standby();
 #ifdef RT950_MAIN_TX
     bool idle_sleep(uint32_t now,bool allowed,bool packet_window=false);
+    void idle_activity(uint32_t now);
+    void low_power(bool low,uint32_t now) {
+        if(low_power_!=low){low_power_=low;idle_activity(now);}
+    }
+    uint32_t next_poll(uint32_t now) const;
     bool sleeping() const {return asleep_;}
     enum class Decoder : uint8_t {Off,Dtmf,Same};
     char decode(Decoder mode,uint32_t now,char (&event)[4]);
@@ -83,9 +88,9 @@ private:
     FrequencyCounter frequency_counter_{};
     SameRx same_{};
     Decoder decoder_=Decoder::Off;
-    uint32_t sleep_at_=0,decode_at_=0,packet_until_=0;
+    uint32_t sleep_at_=0,recent_until_=0,decode_at_=0,packet_until_=0;
     bool packet_gate_=false;
-    bool asleep_=false,sleep_eligible_=false;
+    bool asleep_=false,sleep_eligible_=false,low_power_=false;
     void disable_decoder();
     void wake_receiver(uint32_t now);
 #endif

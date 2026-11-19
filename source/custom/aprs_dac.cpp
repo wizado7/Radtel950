@@ -4,6 +4,7 @@ extern "C" {
 #include "drivers/dma.h"
 #include "drivers/dac_audio.h"
 #include "drivers/gpio.h"
+#include "custom_clock.h"
 }
 
 namespace rt950::aprs {
@@ -57,7 +58,7 @@ bool DacBurst::begin(const FrameTransmitter &frame,uint32_t now) {
     fill(0);fill(1);last_event_=now;
     TIM6->CR1=0;TIM6->CR2=0;
     // OEM 0.29 0x08006408 uses PSC=3, ARR=781 and update TRGO.
-    TIM6->PSC=3;TIM6->ARR=781;TIM6->EGR=1;TIM6->SR=0;TIM6->CR2=0x20;
+    TIM6->PSC=custom_clock_low?0u:3u;TIM6->ARR=custom_clock_low?624u:781u;TIM6->EGR=1;TIM6->SR=0;TIM6->CR2=0x20;
     DAC->DHR12R1=AfskWave::Silence;DAC->SR=Underrun;
     gpio_config_pin(GPIOA,GPIO_PIN_4,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     gpio_set_pin(GPIOC,GPIO_PIN_12);

@@ -17,7 +17,7 @@ extern "C" {
 }
 
 namespace rt950 {
-enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude, BeaconFormat, BeaconMode, BeaconOverlay, BeaconNow, VoxSwitch, VoxLevel, VoxDelay, QuickSettings, Theme, SlotRatio, ShowVoltage, FontScale };
+enum class Key : uint8_t { NextSlot, Mode, Up, Down, Ok, Back, Menu, Save, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, Erase, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, Left, Right, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, RenameChannel, DeleteChannel, SelectZone, RenameZone, MoveChannel, FlashInfo, FmProbe, FmRadio, VoiceRx, SwAm, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, BandProfile, PowerStatus, MicGain, KeypadLock, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, ResetSettings, ResetAll, Import, Pf1Short, Pf1Hold, Pf2Short, Pf2Hold, Weather, WeatherAlert, LongwaveAm, MediumwaveAm, Spectrum, BeaconSource, FrequencyCopy, AprsPath, RelayMode, RelayChannel, RelayDelay, AprsPreamble, AprsHop1, AprsHop2, BeaconAltitude, BeaconFormat, BeaconMode, BeaconOverlay, BeaconNow, VoxSwitch, VoxLevel, VoxDelay, QuickSettings, Theme, SlotRatio, ShowVoltage, FontScale, LowPower };
 enum class Page : uint8_t { Radio, Settings, Gps, Aprs, Debug, Channels, Battery, StoreChannel, Brightness, ScreenTimer, Timezone, LcdTest, BeaconInterval, AprsRxFrequency, BeaconFrequency, BeaconIdentity, CoordinateFormat, SpeedUnits, AltitudeUnits, LanguageSelect, VfoStep, RadioOptions, TxFrequency, RepeaterOffset, ManageChannel, EditName, ConfirmDelete, Zones, FlashInfo, FmProbe, VoiceRx, AprsScanInterval, WatchDwell, WatchHold, WatchSlots, ChannelScan, ScanMode, VfoScan, ScanStart, ScanEnd, BeaconSymbol, ClearAprs, AprsMessages, MenuTimeout, PowerCalibration, PowerMeasured, PowerClear, BandProfile, PowerStatus, MicGain, Monitor, AutoLock, FmPresets, AmPresets, About, FmStep, AmStep, DistanceUnits, Waypoint, Distance, Backup, Reset, Import, KeyBinding, ConfirmStore, ChannelCommands, Weather, Spectrum, BeaconSource, ClearAprsMessages, EditWaypoint, FrequencyCopy, AprsRouteChoice, AprsHop1, AprsHop2, BeaconAltitude, QuickSettings, DisplayChoice };
 enum class KeyAction : uint8_t { None, Monitor, Fm, NextSlot, Mode, Gps, Aprs, Channels, ScanChannels, ScanVfo, Weather, Spectrum, Count };
 enum class SpeedUnit : uint8_t { Kmh, Mph, Knots };
@@ -82,6 +82,7 @@ public:
         return slot==config_.active?hero:slot==first_inactive?first:remaining-first;
     }
     void tick(uint32_t now);
+    uint32_t last_activity() const {return last_activity_;}
     void activity(uint32_t now) {last_activity_=now;screen_awake_=true;}
     bool screen_awake() const { return screen_awake_; }
     bool keypad_locked() const {return keypad_locked_;}
@@ -334,7 +335,11 @@ public:
     const rt_config &config() const { return config_; }
     const Memory *memory(unsigned i) const { return i < MemoryCount ? &memories_[i] : nullptr; }
     Page page() const { return page_; }
-    bool power_save() const { return power_save_; }
+    bool cpu_power_save() const {return power_flags_&1u;}
+    bool power_save() const {return low_power_ || cpu_power_save();}
+    unsigned low_power_mode() const {return power_flags_>>1;}
+    bool low_power() const {return low_power_;}
+    void power_policy(uint8_t percent);
     const char *feedback() const { return notice_; }
     void entry_text(char *out) const;
     unsigned menu_selection() const { return menu_selection_[unsigned(menu_group_)]; }
@@ -451,7 +456,8 @@ private:
     uint32_t entry_khz_ = 0;
     uint8_t digits_ = 0;
     bool invalid_ = false, lcd_test_gray_ = false;
-    bool power_save_ = true,screen_awake_=true;
+    uint8_t power_flags_=1;
+    bool low_power_=false,screen_awake_=true;
     bool light_theme_=false,show_voltage_=false,large_font_=false;
     uint8_t slot_ratio_=100,quick_tile_=8,quick_mode_=0;
     Key display_setting_=Key::Theme;

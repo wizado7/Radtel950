@@ -60,8 +60,8 @@ bool valid=false,last_theme=false,last_large=false;Language last_language=Langua
 void status_header(const Application &a,const InputStatus &input,uint32_t now,const Palette &p,bool force) {
  const unsigned mv=board_battery_mv();
  const unsigned charge=mv?board_battery_percent_from_mv(mv):0;
- const unsigned gps=!a.config().gps_on?0:nav_fix_fresh(now)?3:(!board_gps_powered() || board_gps_sleeping())?1:2;
- const bool ble=a.config().ble_on;
+ const unsigned gps=a.low_power() || !a.config().gps_on?0:nav_fix_fresh(now)?3:(!board_gps_powered() || board_gps_sleeping())?1:2;
+ const bool ble=!a.low_power() && a.config().ble_on;
  const bool mail=input.aprs_messages.personal_unread();
  const uint32_t key=gps|(ble?4u:0u)|(mail?8u:0u)|
     (a.show_voltage()?16u:0u)|(a.keypad_locked()?32u:0u)|(charge/25u<<6)|(a.show_voltage()?mv/100u<<10:0);

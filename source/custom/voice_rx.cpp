@@ -116,6 +116,20 @@ void BoardReceiver::wake_receiver(uint32_t now) {
     asleep_=false;restart_=true;due_=now+RfWakeMs;
 }
 
+void BoardReceiver::idle_activity(uint32_t now) {
+    wake_receiver(now);
+    sleep_at_=now+10000u;
+    recent_until_=sleep_at_+(low_power_?60000u:1800000u);
+}
+
+uint32_t BoardReceiver::next_poll(uint32_t now) const {
+    if(asleep_)return sleep_at_;
+    if(!active_ || idle_requested_ || status_.fault)return now+25u;
+    if(!status_.ready)return now+1u;
+    if(!status_.frequency)return now+25u;
+    return restart_?due_:next_sample_;
+}
+
 bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
     // Background APRS borrows the receiver without restarting the idle hold.
     if(allowed && packet_window) {
@@ -127,11 +141,11 @@ bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
         sleep_eligible_=false;
         wake_receiver(now);
     } else if(!sleep_eligible_) {
-        sleep_at_=now+10000u;sleep_eligible_=true;
+        idle_activity(now);sleep_eligible_=true;
     } else if(int32_t(now-sleep_at_)>=0) {
         if(asleep_) {
             wake_receiver(now);
-            sleep_at_=now+300u;
+            sleep_at_=now+(clock_due(now,recent_until_)?180u:300u);
         } else if(!restart_ && status_.sampled) {
             disable_decoder();
             audio(false);
@@ -140,7 +154,7 @@ bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
             // The regular restart sequence restores the band after LDO settle.
             disable_rx_route();
             status_.sampled=false;status_.rssi=0;status_.status=0;
-            tone_matches_=0;asleep_=true;sleep_at_=now+300u;
+            tone_matches_=0;asleep_=true;sleep_at_=now+(clock_due(now,recent_until_)?800u:300u);
         }
     }
     return asleep_;
@@ -463,7 +477,7 @@ bool BoardUhfTx::write(uint8_t address,uint16_t value) {
 void BoardUhfTx::delay_us(unsigned microseconds) {
     // HCLK is 120 MHz. Even at one cycle per iteration this waits at
     // least the requested interval, with a fixed bounded loop.
-    for(unsigned i=0;i<microseconds*120u;++i)__asm volatile("nop");
+    for(unsigned i=0;i<microseconds*clock_mhz(clock_mult());++i)__asm volatile("nop");
 }
 
 void BoardUhfTx::bias(uint8_t value) {

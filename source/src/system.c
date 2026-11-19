@@ -31,7 +31,7 @@
 
 #ifdef RT950_CUSTOM
 #include "cortex_m4.h"
-#include <stdbool.h>
+#include "custom_clock.h"
 
 enum { TimerOverflow=1u, TimerWake=2u, CountsPerMs=2u };
 static volatile uint32_t timer_epoch_ms;
@@ -95,74 +95,126 @@ static bool select_clock(uint32_t selection)
     return clock_ready(&CRM->CFGR,CRM_CFGR_SWS_MASK,selection<<2);
 }
 
-static bool start_pll(uint32_t multiplier)
+static bool start_pll(unsigned mult)
 {
     CRM->CR&=~CRM_CR_PLLEN;
     if(!clock_ready(&CRM->CR,CRM_CR_PLLRDY,0))return false;
-    CRM->CFGR=(CRM->CFGR&0x1fc0ffffu)|multiplier;
+    const uint32_t range=mult==ClockNormalMult?1u<<31:0;
+    CRM->CFGR=(CRM->CFGR&0x1fc0ffffu)|range|CRM_CFGR_PLLSRC|((mult-2u)<<18);
     CRM->CR|=CRM_CR_PLLEN;
     return clock_ready(&CRM->CR,CRM_CR_PLLRDY,CRM_CR_PLLRDY);
 }
 
+static void set_bus_dividers(unsigned mult)
+{
+    const uint32_t mask=CRM_CFGR_PPRE1_MASK|CRM_CFGR_PPRE2_MASK;
+    CRM->CFGR=(CRM->CFGR&~mask)|(mult==ClockNormalMult?0x2400u:0);
+}
+
+static void uart_retime(unsigned mult)
+{
+    if(CRM->APB1EN&CRM_APB1EN_USART3EN)USART3->BRR=clock_brr(mult,9600);
+    if(CRM->APB2EN&CRM_APB2EN_USART1EN)USART1->BRR=clock_brr(mult,9600);
+}
+
 bool board_idle_clock(bool low)
 {
-    const uint32_t gated1=CRM_APB1EN_TIM2EN|CRM_APB1EN_TIM4EN|CRM_APB1EN_TIM6EN|
-                         CRM_APB1EN_SPI2EN|CRM_APB1EN_USART3EN|CRM_APB1EN_UART4EN;
-    const uint32_t gated2=CRM_APB2EN_TIM8EN|CRM_APB2EN_ADC1EN|CRM_APB2EN_USART1EN;
-    if(low && ((CRM->APB1EN&gated1) || (CRM->APB2EN&gated2) ||
-               (CRM->AHBEN&(CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN))))return false;
-
-    const uint32_t normal=0x80350000u, reduced=0x00050000u;
-    const uint32_t mhz=low?120u:24u;
+    if(low==custom_clock_low)return low;
+    const uint32_t gated1=CRM_APB1EN_TIM4EN|CRM_APB1EN_TIM6EN|
+                         CRM_APB1EN_SPI2EN|CRM_APB1EN_UART4EN;
+    const uint32_t gated2=CRM_APB2EN_ADC1EN;
+    if((CRM->APB1EN&gated1) || (CRM->APB2EN&gated2) ||
+       (CRM->AHBEN&(CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN)))return custom_clock_low;
+    if((CRM->APB1EN&CRM_APB1EN_USART3EN) && (USART3->CR1&USART_CR1_TE) &&
+       !(USART3->SR&USART_SR_TC))return custom_clock_low;
+    if((CRM->APB2EN&CRM_APB2EN_USART1EN) && !(USART1->SR&USART_SR_TC))
+        return custom_clock_low;
+    const unsigned mhz=clock_mhz(clock_mult());
+    const unsigned target=low?ClockLowMult:ClockNormalMult;
     volatile uint32_t *const dwt=(volatile uint32_t *)0xe0001000u;
     *(volatile uint32_t *)0xe000edfcu|=1u<<24;
     dwt[0]|=1;
     // Start near a timer edge so resetting PSC does not discard a partial tick.
     const uint16_t next=(uint16_t)(TIM3->CNT+1u);
     clock_ready(&TIM3->CNT,0xffffu,next);
-    __disable_irq();
+    uint32_t primask;
+    __asm volatile("mrs %0, primask\ncpsid i":"=r"(primask)::"memory");
     TIM3->CR1=0;
     uint32_t count=TIM3->CNT;
-    if(TIM3->SR&TimerOverflow)timer_epoch_ms+=0x8000u;
+    const uint32_t flags=TIM3->SR;
+    const uint16_t compare=(uint16_t)TIM3->CCR1;
+    if(flags&TimerOverflow)timer_epoch_ms+=0x8000u;
     const uint32_t start=dwt[1];
     CRM->MISC3|=CRM_MISC3_AUTO_STEP_EN;
-    bool switched=false;
-    uint32_t before=0, crystal=0;
+    unsigned running=clock_mult();
+    uint32_t before=0,crystal=0,after=0;
     if((CRM->CR&CRM_CR_HSERDY) && select_clock(CRM_CFGR_SW_HSE)) {
         const uint32_t on_crystal=dwt[1];
-        before=(on_crystal-start)/mhz;
-        if(low && start_pll(reduced))switched=select_clock(CRM_CFGR_SW_PLL);
-        if(!switched) {
-            if(!select_clock(CRM_CFGR_SW_HSE) || !start_pll(normal) ||
-               !select_clock(CRM_CFGR_SW_PLL)) {
-                // Keep PA idle and let the independent watchdog reset.
+        before=on_crystal-start;
+        set_bus_dividers(1);
+        uart_retime(1);
+        if(start_pll(target)) {
+            set_bus_dividers(target);
+            if(select_clock(CRM_CFGR_SW_PLL))running=target;
+            else running=0;
+        } else running=0;
+        if(!running) {
+            if(!select_clock(CRM_CFGR_SW_HSE) || !start_pll(ClockNormalMult)) {
                 for(;;) __asm volatile("nop");
             }
+            set_bus_dividers(ClockNormalMult);
+            if(!select_clock(CRM_CFGR_SW_PLL)) {
+                for(;;) __asm volatile("nop");
+            }
+            running=ClockNormalMult;
         }
-        crystal=(dwt[1]-on_crystal)/8u;
-    } else if(!low || (CRM->CFGR&CRM_CFGR_SWS_MASK)!=CRM_CFGR_SWS_PLL) {
+        const uint32_t on_pll=dwt[1];
+        crystal=on_pll-on_crystal;
+        custom_clock_low=running==ClockLowMult;
+        uart_retime(running);
+        extern void board_display_retime(void);
+        board_display_retime();
+        after=dwt[1]-on_pll;
+    } else if((CRM->CFGR&CRM_CFGR_SWS_MASK)!=CRM_CFGR_SWS_PLL) {
         for(;;) __asm volatile("nop");
     } else {
         CRM->CFGR=(CRM->CFGR&~CRM_CFGR_SW_MASK)|CRM_CFGR_SW_PLL;
-        before=(dwt[1]-start)/mhz;
+        before=dwt[1]-start;
     }
     CRM->MISC3&=~CRM_MISC3_AUTO_STEP_EN;
 
-    // TIM3 is the only active clock-rate consumer during this wait.
-    static uint32_t carry_us;
-    carry_us+=before+crystal;
-    count+=carry_us/500u;
-    carry_us%=500u;
-    if(count>=65536u)timer_epoch_ms+=0x8000u;
-    TIM3->PSC=switched?11999u:59999u;
+    // 120 units per microsecond keeps fractions across both PLL rates and HEXT.
+    static uint32_t carry;
+    carry+=before*(120u/mhz)+crystal*15u+after*(120u/clock_mhz(running));
+    const uint32_t elapsed=carry/60000u;
+    carry%=60000u;
+    const bool wake=(flags&TimerWake) || (uint16_t)(compare-count)<=elapsed;
+    count+=elapsed;
+    if(count>=65536u)timer_epoch_ms+=(count>>16)*0x8000u;
+    TIM3->PSC=clock_mhz(running)*500u-1u;
     TIM3->EGR=TimerOverflow;
     TIM3->CNT=(uint16_t)count;
     TIM3->SR=0;
-    TIM3->CCR1=(uint16_t)(count+CountsPerMs*custom_idle_wake_ms);
+    TIM3->CCR1=compare;
+    if(wake)TIM3->EGR=TimerWake;
     TIM3->CR1=1;
-    custom_clock_low=switched;
+    __asm volatile("msr primask, %0"::"r"(primask):"memory");
+    return custom_clock_low;
+}
+
+void board_idle_wait(uint8_t timeout_ms,uint8_t ptt)
+{
+    __disable_irq();
+    custom_idle_wake_ms=timeout_ms;
+    const uint16_t start=(uint16_t)TIM3->CNT;
+    const uint16_t interval=CountsPerMs*timeout_ms;
+    if(!(TIM3->SR&TimerWake) && (uint16_t)((uint16_t)TIM3->CCR1-start)>interval) {
+        TIM3->CCR1=(uint16_t)(start+interval);
+        if((uint16_t)((uint16_t)TIM3->CNT-start)>=interval)TIM3->EGR=TimerWake;
+    }
+    extern uint8_t board_ptt_mask(void);
+    if(board_ptt_mask()==ptt)__asm volatile("dsb\n wfi":::"memory");
     __enable_irq();
-    return switched;
 }
 
 static void tick_init(void)

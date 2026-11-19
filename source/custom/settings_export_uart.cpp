@@ -2,6 +2,7 @@
 #include "settings_export.hpp"
 extern "C" {
 #include "drivers/gpio.h"
+#include "custom_clock.h"
 #include "cortex_m4.h"
 }
 namespace {
@@ -29,7 +30,7 @@ void BackupUart::open() {
     gpio_set_pin(GPIOC,GPIO_PIN_10|GPIO_PIN_11);
     gpio_config_pin(GPIOC,GPIO_PIN_10,GPIO_MODE_OUT_2MHZ,GPIO_CNF_AF_PP);
     gpio_config_pin(GPIOC,GPIO_PIN_11,GPIO_MODE_INPUT,GPIO_CNF_PULL);
-    UART4->BRR=521; // Verified 0.29: UART4 PC11 init 0x08025B0C, 115200, APB1 60 MHz.
+    UART4->BRR=clock_brr(clock_mult(),115200); // OEM 0.29 UART4 init 0x08025B0C.
     (void)UART4->SR;(void)UART4->DR;
     NVIC->ICPR[UART4_IRQn/32]=1u<<(UART4_IRQn%32);NVIC_SetPriority(UART4_IRQn,2);NVIC_EnableIRQ(UART4_IRQn);
     UART4->CR1=USART_CR1_UE|USART_CR1_TE|USART_CR1_RE|USART_CR1_RXNEIE;

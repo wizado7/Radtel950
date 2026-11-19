@@ -1,4 +1,5 @@
 #include "settings_export.hpp"
+#include "idle_schedule.hpp"
 #include "settings_import.hpp"
 #include "voice_tx_board.hpp"
 #include "voice_tx_registers.hpp"
@@ -1658,6 +1659,18 @@ extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
   rx.poll(11332,false);
   rx.poll(11362,false);
   return rx.idle_sleep(11363,true)?0:26;
+ }
+ if(mode==6 || mode==7) {
+  const bool saver=mode==7;
+  rx.low_power(saver,131);rx.idle_sleep(131,true);
+  const uint32_t at=10131u+(saver?60000u:1800000u);
+  if(!rx.idle_sleep(at,true) || rx.next_poll(at)!=at+800u)return 27;
+  if(!rx.idle_sleep(at+799u,true) || rx.idle_sleep(at+800u,true))return 28;
+  rx.poll(at+802u,false);rx.poll(at+832u,false);
+  if(!rx.has_sample() || rx.idle_sleep(at+979u,true) || !rx.idle_sleep(at+980u,true))return 29;
+  rx.idle_activity(at+981u);
+  if(rx.sleeping() || rx.idle_sleep(at+982u,true))return 30;
+  return 0;
  }
  if(mode==0 || mode==3) {
   const auto routed=[](){return !(GPIOE->ODR&0x3000u) && (GPIOB->ODR&1u);};
@@ -4334,5 +4347,41 @@ extern "C" int gps_power_tests() {
  CHECK(length && restored.restore_portable_snapshot(snapshot,length,Application::PortableSchema) && restored.config().gps_on==RT_GPS_ON);
  app.key(Key::Ok);CHECK(app.config().gps_on==RT_GPS_OFF && !demand.update(app,2));
  app.key(Key::Ok);CHECK(app.config().gps_on==RT_GPS_AUTO && !demand.update(app,3));
+ return 0;
+}
+
+extern "C" int idle_policy_tests() {
+ ClockGovernor governor;
+ CHECK(!governor.low(999,0) && governor.low(1000,0));
+ constexpr uint32_t wrap=0xffffffedu;
+ CHECK(!governor.low(wrap,ClockLink) && !governor.low(wrap+999u,0) && governor.low(wrap+1000u,0));
+ WakeDeadline wake(wrap);
+ wake.at(wrap+40);CHECK(wake.interval()==25);
+ wake.at(wrap+24);CHECK(wake.interval()==24);
+ wake.at(wrap+2);wake.at(wrap+3);CHECK(wake.interval()==2);
+ wake.at(wrap-1);CHECK(wake.interval()==1);
+
+ Application app,restored(false);
+ CHECK(app.set_option(Option::Ble,true));
+ app.power_policy(19);CHECK(app.low_power_mode()==0 && !app.low_power());
+ app.key(Key::Menu);
+ for(unsigned i=0;i<5;++i)app.key(Key::Down);
+ app.key(Key::Ok);
+ CHECK(app.menu_group()==MenuGroup::Display);
+ for(unsigned i=0;i<7;++i)app.key(Key::Down);
+ CHECK(app.menu_entry(app.menu_selection()).action==Key::LowPower);
+ app.key(Key::Ok);app.power_policy(100);CHECK(app.low_power_mode()==1 && app.low_power());
+ CHECK(app.config().gps_on==RT_GPS_AUTO && app.config().ble_on && app.config().aprs_rx && app.enabled(Option::Watch));
+ app.key(Key::Ok);app.power_policy(20);CHECK(app.low_power_mode()==2 && !app.low_power());
+ app.power_policy(19);CHECK(app.low_power());
+ app.power_policy(255);CHECK(app.low_power());
+ app.power_policy(79);CHECK(app.low_power());
+ app.power_policy(80);CHECK(!app.low_power());
+ uint8_t data[Application::SnapshotCapacity];
+ auto size=app.save_compact_snapshot(data,sizeof data);
+ CHECK(size && restored.restore_snapshot(data,size) && restored.low_power_mode()==2 && !restored.low_power());
+ size=app.save_portable_snapshot(data,sizeof data);
+ CHECK(size && restored.restore_portable_snapshot(data,size,Application::PortableSchema) && restored.low_power_mode()==2);
+ app.key(Key::Ok);app.power_policy(0);CHECK(app.low_power_mode()==0 && !app.low_power());
  return 0;
 }

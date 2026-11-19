@@ -558,7 +558,7 @@ constexpr MenuEntry aprs_route_menu[]={
 };
 constexpr MenuEntry ble_menu[]={{"Bluetooth",Key::Menu,Option::Ble},{"BLE export",Key::Menu,Option::Export}};
 constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery},
- {"Screen theme",Key::Theme},{"Slot proportions",Key::SlotRatio},{"Battery voltage",Key::ShowVoltage},{"Font size",Key::FontScale}};
+ {"Screen theme",Key::Theme},{"Slot proportions",Key::SlotRatio},{"Battery voltage",Key::ShowVoltage},{"Font size",Key::FontScale},{"Low power mode",Key::LowPower}};
 constexpr MenuEntry system_menu[]={{"CPU power save",Key::Mode},{"Language",Key::LanguageSelect},{"Menu timeout",Key::MenuTimeout},{"About firmware",Key::About},{"Export settings",Key::Backup},{"Auto keypad lock",Key::AutoLock},{"Reset settings",Key::ResetSettings},{"Reset all user data",Key::ResetAll},{"Import settings",Key::Import},{"User keys",Key::Menu,Option::Count,MenuGroup::UserKeys},{"Lock keypad",Key::KeypadLock}};
 constexpr MenuEntry diagnostics_menu[]={{"Keys / encoder",Key::Debug},{"LCD field test",Key::LcdTest},{"Flash info",Key::FlashInfo},{"FM tuner test",Key::FmProbe},{"RX / Watch monitor",Key::VoiceRx},{"TX power calibration",Key::PowerCalibration},{"Power / TX status",Key::PowerStatus}};
 
@@ -759,6 +759,15 @@ void Application::quick_value(unsigned tile,char *out) const {
     default:out[0]=0;
     }
 }
+void Application::power_policy(uint8_t percent) {
+    const auto mode=low_power_mode();
+    if(mode!=2u)low_power_=mode==1u;
+    else if(percent<=100u)low_power_=percent<(low_power_?80u:20u);
+    if(low_power_ && (scan_page() || page_==Page::FmProbe || page_==Page::Weather)) {
+        page_=Page::Radio;notify("LOW POWER MODE");
+    }
+}
+
 void Application::key(Key k) {
     last_activity_=now_;
     if(k==Key::KeypadLock) {
@@ -1831,7 +1840,11 @@ void Application::key(Key k) {
                 radio_setting_=entry.radio_setting;
                 radio_draft_=radio_profile_option(active_radio_profile(),radio_setting_);
                 parent_=Page::Settings;page_=Page::RadioOptions;notify("");
-            } else if(entry.action==Key::Mode) power_save_=!power_save_;
+            } else if(entry.action==Key::Mode) power_flags_^=1u;
+            else if(entry.action==Key::LowPower) {
+                power_flags_=uint8_t((power_flags_&1u)|(((low_power_mode()+1u)%3u)<<1));
+                if(low_power_mode()==2)low_power_=false;
+            }
             else key(entry.action);
         }
         return;

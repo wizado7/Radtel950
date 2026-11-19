@@ -39,6 +39,11 @@ u.emu_start(symbols['gps_power_tests']|1,0x080ff000,count=5000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'GPS standby failed at C++ line {result}'
 print('ARM GPS standby: explicit On persistence, ephemeris hold, checksum, PTT, timed wake and PA8 fallback PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['idle_policy_tests']|1,0x080ff000,count=5000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'idle policy failed at C++ line {result}'
+print('ARM idle policy: Governor hold, deadline wrap, Low Power Mode thresholds and snapshot persistence PASS')
 print('ARM reference UI logic: ABC hold without short action, per-slot tones/modes, unavailable AM/USB, ratio bounds and font size and v10/legacy persistence PASS')
 print('ARM menu timeout: inactivity, input, wrap, draft cancellation, status/scan exclusion, OFF, snapshot migration and tail defaults PASS')
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
@@ -1309,6 +1314,12 @@ if a.stock:
   words=[iter((0xa800,0,55,0,55)),iter(())]
   assert call_tx(u,symbols['voice_board_idle_decode_probe'],3,budget=6000000)==0
   assert sum(1 for chip,reg,value,_ in transfers if (chip,reg,value)==(0,0x37,0x1d00))==2
+  for mode in (6,7):
+   transfers.clear()
+   words=[iter((0xa800,0,55,0,55)),iter(())]
+   result=call_tx(u,symbols['voice_board_idle_decode_probe'],mode,budget=6000000)
+   assert result==0,(mode,result)
+  print('ARM RX long idle: 30 minute normal or 1 minute Low Power transition to 180/800, with immediate wake on input PASS')
   print('ARM active BK4829 doze: settled quiet RX, timed 300/300 phases, external RX GPIO isolation and restore, PTT and RF/LDO ordering PASS')
   transfers.clear()
   words=[iter((0xa800,0,170,0x07fe,1,0x0800,0x0a00,0x0ffe)),iter(())]

@@ -107,7 +107,7 @@ bool valid_name(const char *name,size_t size,bool dash,bool empty=false) {
 template<class Archive,class App>
 void Application::snapshot_fields(Archive &a,App &s) {
     a.field(s.language_);a.field(s.brightness_);a.field(s.screen_seconds_);
-    a.field(s.timezone_minutes_);a.field(s.power_save_);a.field(s.active_zone_);
+    a.field(s.timezone_minutes_);a.field(s.power_flags_);a.field(s.active_zone_);
     a.field(s.altitude_feet_);a.field(s.speed_unit_);a.field(s.decimal_coordinates_);
     auto &c=s.config_;
     a.field(c.active);a.field(c.watch_mode);a.field(c.watch_mask);
@@ -324,7 +324,7 @@ bool Application::import_snapshot(const uint8_t *data,size_t size,uint32_t now,u
 }
 
 bool Application::valid_snapshot() const {
-    if(slot_ratio_<66 || slot_ratio_>160 || config_.gps_on>RT_GPS_ON)return false;
+    if(power_flags_>5 || slot_ratio_<66 || slot_ratio_>160 || config_.gps_on>RT_GPS_ON)return false;
     for(auto action:key_actions_)if(unsigned(action)>=unsigned(KeyAction::Count))return false;
     for(const auto &hop:aprs_routing_.hops)if(!aprs::valid_address(hop,true))return false;
     if(aprs_routing_.beacon>aprs::BeaconPath::Custom || aprs_routing_.relay>aprs::RelayMode::Wide ||

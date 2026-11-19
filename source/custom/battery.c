@@ -9,6 +9,11 @@ static uint16_t millivolts,raw12;
 static uint8_t state,raw,fast;
 void board_battery_fast(uint8_t enabled){fast=enabled;}
 bool board_battery_idle(void){return state==6 && !fast;}
+uint32_t board_battery_deadline(uint32_t now) {
+    if(state==6)return since+(fast?BOARD_BATTERY_FAST_MS:1000u);
+    if(state==7)return since+1000u;
+    return now+1u;
+}
 void board_battery_init(uint32_t now) {
     CRM->CFGR=(CRM->CFGR&~0xc000u)|0x8000u; /* APB2 /6 */
     CRM->APB2EN|=CRM_APB2EN_ADC2EN;

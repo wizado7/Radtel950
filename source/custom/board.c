@@ -5,6 +5,12 @@
 #include "drivers/gpio.h"
 #include "drivers/lcd.h"
 
+#define EXTI_REG(off) (*(volatile uint32_t *)(EXTI_BASE+(off)))
+enum { PttLines=(1u<<2)|(1u<<3)|(1u<<5) };
+void EXTI2_IRQHandler(void) {EXTI_REG(0x14)=1u<<2;}
+void EXTI3_IRQHandler(void) {EXTI_REG(0x14)=1u<<3;}
+void EXTI9_5_IRQHandler(void) {EXTI_REG(0x14)=1u<<5;}
+
 volatile uint32_t custom_heartbeat;
 volatile uint8_t custom_watchdog_armed;
 #define RING_SIZE 2048u
@@ -55,6 +61,12 @@ void board_init(void) {
     for(unsigned i=4;i<8;++i) input(GPIOD,(uint16_t)(1u<<i));
     input(GPIOE,GPIO_PIN_0);input(GPIOE,GPIO_PIN_2);input(GPIOE,GPIO_PIN_3);
     input(GPIOE,GPIO_PIN_5);input(GPIOA,GPIO_PIN_12);
+    // Both edges wake the foreground for keying and immediate PA release.
+    AFIO->EXTICR[0]=(AFIO->EXTICR[0]&~0xff00u)|0x4400u;
+    AFIO->EXTICR[1]=(AFIO->EXTICR[1]&~0x00f0u)|0x0040u;
+    EXTI_REG(0x08)|=PttLines;EXTI_REG(0x0c)|=PttLines;
+    EXTI_REG(0x14)=PttLines;EXTI_REG(0x00)|=PttLines;
+    NVIC_EnableIRQ(EXTI2_IRQn);NVIC_EnableIRQ(EXTI3_IRQn);NVIC_EnableIRQ(EXTI9_5_IRQn);
 }
 /* OEM 0.29 0x08016B90..0x08016BA8 configures GPIOC mask 0x7E7F
  * mode 0x10 + speed 2: push-pull 2 MHz, including PC0..3.
@@ -63,7 +75,7 @@ static void columns(uint16_t low) {
     gpio_set_pin(GPIOC,(uint16_t)(15u & ~low));
     gpio_clear_pin(GPIOC,low);
 }
-static void settle(void) {for(volatile unsigned n=0;n<310;++n) __asm volatile("nop");}
+static void settle(void) {const unsigned cycles=custom_clock_low?62u:310u;for(volatile unsigned n=0;n<cycles;++n) __asm volatile("nop");}
 uint8_t board_scan_key(void) {
     /* Reconstructed from 0.29 scanner 0x08016160 and tables 0x08030916.
      * col 0 has ALL HIGH, the four subsequent columns drive one line LOW.
@@ -146,7 +158,7 @@ void board_gps_enable(uint8_t on) {
     CRM->APB1RST &= ~CRM_APB1EN_USART3EN;
     input(GPIOB,GPIO_PIN_11);
     gpio_config_pin(GPIOB,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_FLOATING);
-    USART3->CR2=0;USART3->CR3=0;USART3->BRR=6250;
+    USART3->CR2=0;USART3->CR3=0;USART3->BRR=clock_brr(clock_mult(),9600);
     (void)USART3->SR;(void)USART3->DR;
     USART3->CR1=USART_CR1_RE|USART_CR1_RXNEIE|USART_CR1_UE;
     gps_on=1;

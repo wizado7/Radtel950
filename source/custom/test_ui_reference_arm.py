@@ -12,7 +12,7 @@ source=(root/'test_board_arm.py').read_text(encoding='utf-8')
 sys.argv=[str(root/'test_board_arm.py'),'--prefix',a.prefix,'--raw',str(a.raw)]
 env={'__file__':str(root/'test_board_arm.py')}
 exec(source[:source.index('startup=Machine')],env)
-exec(source[source.index('screen_text=next(n for n in symbols'):source.index('m=Foreground();m.call')],env)
+exec(source[source.index('screen_text=next(n for n in symbols'):source.index('m=Foreground();')],env)
 Machine,Foreground,symbols=env['Machine'],env['Foreground'],env['symbols']
 from unicorn import UC_HOOK_CODE
 from unicorn.arm_const import *
@@ -145,17 +145,22 @@ m.key('Ok');m.key('Back')
 m.key('Menu')
 for _ in range(5):m.key('Down')
 m.key('Ok');m.draw(100)
-assert 'Экран и питание' in m.texts and '1/7' in m.texts
+assert 'Экран и питание' in m.texts and '1/8' in m.texts
 m.canvas.save(a.output/'display-settings-ru.png')
 for _ in range(6):m.key('Down')
 m.draw(100)
-assert 'Размер шрифта' in m.texts and '7/7' in m.texts
+assert 'Размер шрифта' in m.texts and '7/8' in m.texts
 m.key('Ok');m.draw(100)
 assert 'Обычный' in m.texts
 m.key('Right');m.draw(100)
 assert 'Крупный' in m.texts
 m.canvas.save(a.output/'font-size-ru.png')
+m.key('Ok');m.key('Down');m.draw(100)
+assert 'Экономия батареи' in m.texts and '8/8' in m.texts and 'ВЫКЛ' in m.texts
+m.key('Ok');m.draw(101);assert 'ВКЛ' in m.texts
+m.key('Ok');m.draw(102);assert 'АВТО 20%' in m.texts
 m.key('Ok');m.key('Back');m.key('Back')
+print('ARM Low Power menu: additional page, Russian labels and Off/On/Auto control PASS')
 for light in (True,False):
  suffix='light' if light else 'dark'
  if not light:

@@ -4,6 +4,7 @@
 #include "voice_sql.hpp"
 extern "C" {
 #include "drivers/gpio.h"
+#include "custom_clock.h"
 #include "drivers/dac_audio.h"
 }
 
@@ -55,7 +56,7 @@ static bool with_factory_spi(Load load) {
     SPI2->CR2=0;
     SPI2->I2SCFGR=i2s&~(1u<<11);
     // Stock 0.29 0x08017168 and 0x0801F636: mode 3, /4, software NSS.
-    SPI2->CR1=SPI_CR1_CPHA|SPI_CR1_CPOL|SPI_CR1_MSTR|(1u<<3)|
+    SPI2->CR1=SPI_CR1_CPHA|SPI_CR1_CPOL|SPI_CR1_MSTR|(custom_clock_low?0u:1u<<3)|
               SPI_CR1_SSI|SPI_CR1_SSM|SPI_CR1_SPE;
     FactorySpi spi;
     const bool valid=load([&](uint32_t address,uint8_t *data,size_t length) {

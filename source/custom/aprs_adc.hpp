@@ -5,6 +5,7 @@ extern "C" {
 #include "drivers/adc.h"
 #include "drivers/dma.h"
 #include "drivers/gpio.h"
+#include "custom_clock.h"
 }
 
 namespace rt950::aprs {
@@ -84,7 +85,8 @@ private:
         // TIM4 CH4 triggers ADC1 while TIM2 drives the keypad PWM.
         // ADC1 CH2, DMA1 CH1 and 120 MHz / 12501 remain as in OEM 0.29.
         TIM4->CR1=0;TIM4->CR2=0;TIM4->SMCR=0;
-        TIM4->PSC=0;TIM4->ARR=12500;TIM4->CCR4=6250;
+        const uint32_t period=custom_clock_low?2500u:12501u;
+        TIM4->PSC=0;TIM4->ARR=period-1u;TIM4->CCR4=period/2u;
         TIM4->CCMR2=0x6000;TIM4->CCER=0x1000;
         TIM4->EGR=1;TIM4->SR=0;
         auto *dma=DMA1_CH(1);

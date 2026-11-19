@@ -11,7 +11,11 @@ for line in subprocess.check_output([a.prefix+'nm','-n',str(r/'build/rt950-custo
  if len(t)==3:syms[t[2]]=int(t[0],16)
 u=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)
 for addr,size in [(0x08000000,0x100000),(0x20000000,0x18000),(0x40010000,0x4000),(0x40020000,0x4000),(0x40000000,0x1000)]:u.mem_map(addr,size)
-u.mem_write(0x08003000,(a.raw or r/'build/rt950-custom-ui.bin').read_bytes())
+raw=(a.raw or r/'build/rt950-custom-ui.bin').read_bytes()
+u.mem_write(0x08003000,raw)
+if syms['_edata']>syms['_sdata']:
+ start=syms['_sidata']-0x08003000;size=syms['_edata']-syms['_sdata']
+ u.mem_write(syms['_sdata'],raw[start:start+size])
 ports={p:0xffff for p in (0x40010800,0x40010c00,0x40011000,0x40011400,0x40011800)}
 trace=[];delays=[];led_on=[];bus_events=[];reset_delays=[];backlight_high=[]
 def write(u,access,addr,size,value,data):
@@ -184,6 +188,15 @@ assert get(0x40021018)&(1<<13) and get(0x4002101c)&1
 assert get(0x40013434)==get(0x40000038)==0
 call('board_display_brightness',500)
 assert get(0x40013434)==2400 and get(0x40000038)==1200
+u.mem_write(syms['custom_clock_low'],b'\x01')
+call('board_display_retime')
+assert get(0x4001342c)==959 and get(0x40013434)==480 and get(0x40000038)==240
+call('board_display_keypad',0)
+assert get(0x40013434)==480 and not get(0x40000038)
+u.mem_write(syms['custom_clock_low'],b'\0')
+call('board_display_retime');call('board_display_keypad',1)
+assert get(0x4001342c)==4799 and get(0x40013434)==2400 and get(0x40000038)==1200
+print('ARM LCD PWM: display duty across both clock rates and keypad override PASS')
 # A wake cancelled while the panel settles returns it to sleep without revealing it.
 assert not call('board_display_poll',0,345)
 assert not call('board_display_poll',1,465)

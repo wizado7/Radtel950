@@ -8,28 +8,29 @@ extern "C" {
 namespace {
 
 /* PC6 drives the screen backlight (TIM8 CH1), PB3 drives the keypad light (TIM2 CH2).
- * The APB timer clocks are both 120 MHz. Hardware PWM keeps running
- * during flash erase and with interrupts masked. */
+ * Both timers follow SYSCLK. Hardware PWM also runs with interrupts masked. */
 volatile uint32_t &timer8_main_output() {
     return *reinterpret_cast<volatile uint32_t *>(TIM8_BASE+0x44u);
 }
-constexpr uint32_t Period=4800,PanelDelay=120;
+constexpr uint32_t PanelDelay=120;
+unsigned period() {return clock_mhz(clock_mult())*40u;}
 enum class Panel {Awake,Asleep,Waking,Stopped};
 Panel panel=Panel::Stopped;
 uint32_t transition_at;
 
 void start_pwm(TIM_TypeDef *timer,uint32_t mode,uint32_t channel) {
     timer->CR1=0;timer->CR2=0;timer->SMCR=0;timer->DIER=0;
-    timer->PSC=0;timer->ARR=Period-1;timer->CCR1=0;timer->CCR2=0;
+    timer->PSC=0;timer->ARR=period()-1;timer->CCR1=0;timer->CCR2=0;
     timer->CCMR1=mode;timer->CCER=channel;timer->EGR=1;timer->SR=0;
     timer->CR1=0x81;
 }
 uint16_t applied=0;
+bool keypad_enabled=true;
 void lights(uint16_t permille) {
     if(permille==applied)return;
     applied=permille;
-    const uint32_t screen=(uint32_t)permille*Period/1000u;
-    TIM8->CCR1=screen;TIM2->CCR2=screen/2u;
+    const uint32_t screen=(uint32_t)permille*period()/1000u;
+    TIM8->CCR1=screen;TIM2->CCR2=keypad_enabled?screen/2u:0;
 }
 void pwm_pins(bool timer) {
     const auto mode=timer?GPIO_MODE_OUT_50MHZ:GPIO_MODE_OUT_2MHZ;
@@ -66,6 +67,19 @@ void board_display_init(uint32_t now) {
     AFIO->MAPR=(AFIO->MAPR&~((3u<<8)|AFIO_MAPR_SWJ_CFG_MASK))|(1u<<8)|(2u<<24);
     enable_pwm();
     transition_at=now;panel=Panel::Awake;
+}
+void board_display_keypad(bool enabled) {
+    if(keypad_enabled==enabled)return;
+    keypad_enabled=enabled;
+    if(panel==Panel::Awake)TIM2->CCR2=enabled?TIM8->CCR1/2u:0;
+}
+void board_display_retime(void) {
+    if(panel!=Panel::Awake)return;
+    TIM8->ARR=TIM2->ARR=period()-1u;
+    const auto level=applied;
+    applied=0xffffu;
+    lights(level);
+    TIM8->EGR=TIM2->EGR=1;
 }
 void board_display_brightness(uint16_t permille) {
     if(panel==Panel::Awake)lights(permille<=1000u?permille:1000u);

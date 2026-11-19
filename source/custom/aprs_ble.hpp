@@ -4,6 +4,7 @@
 extern "C" {
 #include "../mvp/core.h"
 #include "drivers/gpio.h"
+#include "custom_clock.h"
 }
 
 namespace rt950::aprs {
@@ -17,7 +18,7 @@ public:
         if(enabled) {
             CRM->APB2EN|=CRM_APB2EN_USART1EN;
             USART1->CR1=0;USART1->CR2=0;USART1->CR3=0;
-            USART1->BRR=6250; // APB2 60 MHz / 9600, OEM KISS data rate
+            USART1->BRR=clock_brr(clock_mult(),9600); // OEM KISS data rate
             gpio_config_pin(GPIOA,GPIO_PIN_9,GPIO_MODE_OUT_2MHZ,GPIO_CNF_AF_PP);
             USART1->CR1=USART_CR1_UE|USART_CR1_TE;
             gpio_set_pin(GPIOB,GPIO_PIN_9);
