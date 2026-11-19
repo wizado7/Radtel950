@@ -8,6 +8,7 @@ struct Text {const char *en,*ru;};
 // user data pass through verbatim.
 constexpr Text catalog[]={
     {"User keys","Боковые клавиши"},
+    {"NOAA SAME","Тревога SAME"},
     {"FM radio","FM радио"},
     {"PF1 short","PF1 короткое"},{"PF1 hold","PF1 удержание"},
     {"PF2 short","PF2 короткое"},{"PF2 hold","PF2 удержание"},
@@ -208,7 +209,7 @@ constexpr Text catalog[]={
     {"STORAGE FORMAT NEWER","НОВЫЙ ФОРМАТ ПАМЯТИ"},
     {"Free bytes","Свободно, Б"},
     {"Raw bytes","Без сжатия"},
-    {"COMPACT V8 / AUTO SAVE","КОМПАКТ V8 / АВТОЗАПИСЬ"},
+    {"COMPACT V10 / AUTO SAVE","КОМПАКТ V10 / АВТОЗАПИСЬ"},
     {"VOX switch","VOX на сеанс"},
     {"VOX level","Порог VOX"},
     {"VOX delay","Задержка VOX"},
@@ -408,6 +409,9 @@ constexpr Text catalog[]={
     {"Save channel","Сохранить канал"},
     {"GPS status","Состояние GPS"},
     {"GPS receiver","Приёмник GPS"},
+    {"Auto","Авто"},
+    {"GPS AUTO IDLE","GPS АВТО: ОЖИДАНИЕ"},
+    {"GPS STANDBY","GPS СОН"},
     {"Time zone","Часовой пояс"},
     {"Coordinate format","Формат координат"},
     {"Speed units","Единицы скорости"},
@@ -518,6 +522,14 @@ constexpr Text catalog[]={
     {"OK: CLEAR  BACK: CANCEL","OK: ОЧИСТИТЬ  НАЗАД: ОТМЕНА"},
     {"APRS LIST CLEARED","СПИСОК APRS ОЧИЩЕН"},
     {"BLE export","Экспорт BLE"},
+    {"MODE NOT AVAILABLE","РЕЖИМ НЕДОСТУПЕН"},
+    {"Screen theme","Тема экрана"},
+    {"Font size","Размер шрифта"},
+    {"Standard","Обычный"},
+    {"Large","Крупный"},
+    {"STARTING...","ЗАГРУЗКА..."},
+    {"Slot proportions","Пропорции слотов"},
+    {"Battery voltage","Напряжение батареи"},
     {"LCD brightness","Яркость экрана"},
     {"Screen timeout","Таймер экрана"},
     {"Battery status","Аккумулятор"},
@@ -749,11 +761,33 @@ constexpr size_t russian_bytes() {
     }
     return size;
 }
+// Store each two-byte Cyrillic sequence in a single byte. Escape any
+// other non-ASCII byte so the expansion preserves exact UTF-8.
+constexpr size_t pack_russian(char *out=nullptr) {
+    size_t size=0;
+    for(const auto &entry:catalog) {
+        const char *ch=entry.ru;
+        uint8_t byte=0;
+        do {
+            byte=uint8_t(*ch++);
+            if(byte==0xd0 || byte==0xd1) {
+                const uint8_t part=uint8_t(*ch++);
+                byte=uint8_t((part&0x3f)|((byte==0xd0)?0x80:0xc0));
+            } else if(byte>=0x7f) {
+                if(out)out[size]=0x7f;
+                ++size;
+            }
+            if(out)out[size]=char(byte);
+            ++size;
+        } while(byte);
+    }
+    return size;
+}
 static_assert(russian_bytes()<=65535);
 struct PackedCatalog {
     const char *english[count]{};
     uint16_t offsets[count]{};
-    char russian[russian_bytes()]{};
+    char russian[pack_russian()]{};
 
     constexpr PackedCatalog() {
         size_t at=0;
@@ -761,11 +795,30 @@ struct PackedCatalog {
             english[i]=catalog[i].en;
             offsets[i]=uint16_t(at);
             const char *ch=catalog[i].ru;
-            do {russian[at++]=*ch;} while(*ch++);
+            do {++at;} while(*ch++);
         }
+        pack_russian(russian);
     }
 };
 constexpr PackedCatalog packed;
+
+// Foreground only. Stable pointers are required by the drawing code.
+const char *russian_text() {
+    static char text[russian_bytes()];
+    if(!text[0]) {
+        size_t at=0;
+        for(size_t i=0;i<sizeof packed.russian;++i) {
+            const uint8_t byte=uint8_t(packed.russian[i]);
+            if(byte==0x7f)text[at++]=packed.russian[++i];
+            else if(byte<0x80)text[at++]=char(byte);
+            else {
+                text[at++]=char(0xd0+(byte>=0xc0));
+                text[at++]=char(0x80|(byte&0x3f));
+            }
+        }
+    }
+    return text;
+}
 bool equal(const char *a,const char *b) {
     while(*a && *a==*b){++a;++b;}
     return *a==*b;
@@ -774,7 +827,7 @@ bool equal(const char *a,const char *b) {
 const char *translate(Language language,const char *english) {
     if(language==Language::Russian && *english)
         for(size_t i=0;i<count;++i)
-            if(equal(packed.english[i],english))return packed.russian+packed.offsets[i];
+            if(equal(packed.english[i],english))return russian_text()+packed.offsets[i];
     return english;
 }
 }

@@ -25,6 +25,21 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['menu_timeout_tests']|1,0x080ff000,count=2000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'menu timeout test failed at C++ line {result}'
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['display_ui_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'display UI failed at C++ line {result}'
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['gps_idle_tests']|1,0x080ff000,count=3000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'GPS demand failed at C++ line {result}'
+print('ARM GPS demand: idle boot, navigation, export, live vs saved beacon, immediate OFF, delayed power-off and tick wrap PASS')
+u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+u.emu_start(symbols['gps_power_tests']|1,0x080ff000,count=5000000)
+assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'GPS standby failed at C++ line {result}'
+print('ARM GPS standby: explicit On persistence, ephemeris hold, checksum, PTT, timed wake and PA8 fallback PASS')
+print('ARM reference UI logic: ABC hold without short action, per-slot tones/modes, unavailable AM/USB, ratio bounds and font size and v10/legacy persistence PASS')
 print('ARM menu timeout: inactivity, input, wrap, draft cancellation, status/scan exclusion, OFF, snapshot migration and tail defaults PASS')
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['measured_power_tests']|1,0x080ff000,count=3000000)
@@ -278,7 +293,7 @@ class UploadSerial:
    self.at+=len(data);self.answer=b'CHECKED\n' if self.at==len(self.frame) else b'NEXT\n'
   return len(data)
 fake=UploadSerial(fixture);backup.upload_backup(fake,fixture,clock=fake.clock)
-assert fake.at==8164 and b''.join(fake.writes[1:])==fixture
+assert fake.at==8180 and b''.join(fake.writes[1:])==fixture
 fake=UploadSerial(fixture)
 try:backup.upload_backup(fake,fixture[:-1],clock=fake.clock)
 except ValueError:pass
@@ -298,14 +313,14 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['user_key_tests']|1,0x080ff000,count=6000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'user keys failed at C++ line {result}'
-print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v8 and portable schema1/2 migration PASS')
+print('ARM user keys: four bindings, release-only short/700ms hold/wrap, PTT-C priority, editor/lock guards, reset, compact v1–v10 and portable schema1/2 migration PASS')
 legacy=bytearray(fixture[:48+7992])
 import zlib
 struct.pack_into('<I',legacy,12,7992);struct.pack_into('<I',legacy,16,1)
 struct.pack_into('<I',legacy,20,zlib.crc32(legacy[48:]));struct.pack_into('<I',legacy,44,zlib.crc32(legacy[:44]))
 assert backup.inspect_backup(legacy)['snapshot_schema']==1
 fake=UploadSerial(legacy);backup.upload_backup(fake,legacy,clock=fake.clock);assert fake.at==8040
-assert backup.inspect_backup(fixture)['snapshot_schema']==8
+assert backup.inspect_backup(fixture)['snapshot_schema']==10
 v2=bytearray(fixture[:48+8008])
 struct.pack_into('<II',v2,12,8008,2)
 struct.pack_into('<I',v2,20,zlib.crc32(v2[48:]));struct.pack_into('<I',v2,44,zlib.crc32(v2[:44]))
@@ -320,8 +335,8 @@ scan_backup=bytearray(fixture)
 struct.pack_into('<4I',scan_backup,48+7992,8,9,2,11)
 struct.pack_into('<I',scan_backup,20,zlib.crc32(scan_backup[48:]))
 struct.pack_into('<I',scan_backup,44,zlib.crc32(scan_backup[:44]))
-assert backup.inspect_backup(scan_backup)['snapshot_schema']==8
-fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8164
+assert backup.inspect_backup(scan_backup)['snapshot_schema']==10
+fake=UploadSerial(scan_backup);backup.upload_backup(fake,scan_backup,clock=fake.clock);assert fake.at==8180
 old=bytearray(fixture[:48+8096])
 for schema in (4,5):
  struct.pack_into('<II',old,12,8096,schema)
@@ -333,7 +348,18 @@ struct.pack_into('<II',old,12,8108,6)
 struct.pack_into('<I',old,20,zlib.crc32(old[48:]));struct.pack_into('<I',old,44,zlib.crc32(old[:44]))
 assert backup.inspect_backup(old)['snapshot_schema']==6
 fake=UploadSerial(old);backup.upload_backup(fake,old,clock=fake.clock);assert fake.at==8156
-print('HOST portable migration: schema1–7 retained and schema8 8164-byte container validated PASS')
+for schema in (7,8):
+ old=bytearray(fixture[:48+8116])
+ struct.pack_into('<II',old,12,8116,schema)
+ struct.pack_into('<I',old,20,zlib.crc32(old[48:]));struct.pack_into('<I',old,44,zlib.crc32(old[:44]))
+ assert backup.inspect_backup(old)['snapshot_schema']==schema
+ fake=UploadSerial(old);backup.upload_backup(fake,old,clock=fake.clock);assert fake.at==8164
+v9=bytearray(fixture[:48+8128])
+struct.pack_into('<II',v9,12,8128,9)
+struct.pack_into('<I',v9,20,zlib.crc32(v9[48:]));struct.pack_into('<I',v9,44,zlib.crc32(v9[:44]))
+assert backup.inspect_backup(v9)['snapshot_schema']==9
+fake=UploadSerial(v9);backup.upload_backup(fake,v9,clock=fake.clock);assert fake.at==8176
+print('HOST portable migration: schemas 1–9 retained and schema 10 8180-byte container validated PASS')
 print('ARM APRS background: idle gate, 10 s rest, 1.2 s window, cancellation and tick wrap PASS')
 print('ARM APRS beacon: uncompressed position, manual permit, RF/DAC cancellation and DAC failure PASS')
 print('ARM APRS TX framing: bounded NRZI encoder, FCS and round trip PASS')
@@ -957,8 +983,17 @@ if a.stock:
  assert word_read(0x4000741c)==0 and word_read(0x40010800)==0x44044444
  word_write(0x4000741c,0x80)
  call_tx(u,clear_dac)
- assert word_read(0x4000741c)==0
- print('ARM voice PA board: DAC2 initialized at zero, DAC1 preserved, zero on stop PASS')
+ assert word_read(0x4000741c)==0 and word_read(0x40007400)==0x10005
+ release_dac=next(value for name,value in symbols.items() if 'release_board_pa_bias' in name)
+ word_write(0x4000741c,0x80)
+ call_tx(u,release_dac)
+ assert word_read(0x4000741c)==0 and word_read(0x40007400)==5
+ assert word_read(0x40010800)==0x44244444 and word_read(0x40010814)==0x20
+ call_tx(u,prepare_dac)
+ assert word_read(0x4000741c)==0 and word_read(0x40007400)==0x10005
+ assert word_read(0x40010800)==0x44044444
+ call_tx(u,release_dac)
+ print('ARM voice PA board: zero during TX setup, released DAC2, PA5 GPIO low and preserved DAC1 PASS')
 
  # Execute the OEM register sequence for untoned simplex UHF, chip 0,
  # using known synthetic calibration and mocked RF bus reads/writes.
@@ -1264,6 +1299,37 @@ if a.stock:
   assert filters==[0x3028,0x4008,0x4008],filters
   assert (0,0x30,0x0200,0) in transfers
   print('ARM board FM RX: Wide, Narrow and CTCSS share the selected slot profile PASS')
+  transfers.clear()
+  words=[iter((0xa800,0,55,0,55)),iter(())]
+  assert call_tx(u,symbols['voice_board_idle_decode_probe'],0,budget=6000000)==0
+  rf=[(reg,value) for chip,reg,value,_ in transfers if chip==0 and reg in (0x37,0x30)]
+  sleep=rf.index((0x37,0x1d00))
+  assert rf[sleep-1]==(0x30,0) and rf[sleep+1:sleep+3]==[(0x37,0x9d1f),(0x30,0xbff1)],rf
+  transfers.clear()
+  words=[iter((0xa800,0,55,0,55)),iter(())]
+  assert call_tx(u,symbols['voice_board_idle_decode_probe'],3,budget=6000000)==0
+  assert sum(1 for chip,reg,value,_ in transfers if (chip,reg,value)==(0,0x37,0x1d00))==2
+  print('ARM active BK4829 doze: settled quiet RX, timed 300/300 phases, external RX GPIO isolation and restore, PTT and RF/LDO ordering PASS')
+  transfers.clear()
+  words=[iter((0xa800,0,170,0x07fe,1,0x0800,0x0a00,0x0ffe)),iter(())]
+  assert call_tx(u,symbols['voice_board_idle_decode_probe'],1,budget=6000000)==0
+  assert len([x for x in transfers if x[0]==0 and x[1]==9])==16
+  assert (0,0x3f,0x0ffe,0) in transfers and (0,0x3f,0x07fe,0) in transfers
+  assert (0,0x70,0xc5c5,0) in transfers and (0,0x70,0,0) in transfers
+  print('ARM DTMF RX: BK4829 detector and flag, symbol from REG0B, teardown PASS')
+  transfers.clear()
+  same=b'-WXR-SVR-024031+0045-2761828-KLWX/NWS-'.ljust(40,b' ')
+  header=[int.from_bytes(same[i:i+2],'big') for i in range(0,len(same),2)]
+  bits=[]
+  for i in range(0,len(header),4):
+   bits.extend([1,0x1002 if i==0 else 0x1000,*header[i:i+4]])
+  words=[iter((0xa800,0,170,0x07fe,*bits,0x37fe)),iter(())]
+  result=call_tx(u,symbols['voice_board_idle_decode_probe'],2,budget=6000000)
+  assert result==0,(result,transfers[-30:])
+  assert (0,0x58,0x03c5,0) in transfers and (0,0x58,0,0) in transfers
+  assert (0,0x3f,0x37fe,0) in transfers and (0,0x59,0x10f8,0) in transfers
+  assert call_tx(u,symbols['same_rx_probe'],budget=2000000)==0
+  print('ARM NOAA SAME: BK4829 FSK setup, sync and FIFO, four word orders, malformed and duplicate headers rejected PASS')
   audio_pins=[]
   def capture_audio_pins(machine,access,address,size,value,_):
    if address in (ep+16,ep+20) and value==2:
@@ -1271,10 +1337,19 @@ if a.stock:
   audio_hook=u.hook_add(UC_HOOK_MEM_WRITE,capture_audio_pins)
   for packet in (False,True):
    transfers.clear();audio_pins.clear()
-   words=[iter((0xa800,)+(0x0800,170)*3+(0x0400,170)*3),iter(())]
+   sql_bit=2 if packet else 0
+   words=[iter((0xa800,)+(0x0800|sql_bit,170)*3+(0x0400|sql_bit,170)*3),iter(())]
    assert call_tx(u,symbols['voice_board_rx_tone_probe'],0x109|(int(packet)<<17),budget=6000000)==0
    assert (0,0x47,0x6142,0) in transfers
    assert audio_pins==([] if packet else [False,True]),audio_pins
+  transfers.clear();audio_pins.clear()
+  words=[iter((0xa800,0,55,2,55,0,55,0,55,2,55)),iter(())]
+  assert call_tx(u,symbols['voice_board_idle_decode_probe'],4,budget=6000000)==0
+  assert not audio_pins
+  print('ARM APRS hardware SQL: silent window stays muted, opens and holds AF tail, immediate PTT mute PASS')
+  words=[iter((0xa800,0,115,0,115)),iter(())]
+  assert call_tx(u,symbols['voice_board_idle_decode_probe'],5,budget=6000000)==0
+  print('ARM RX idle hold: configured SQL overrides raw carrier and APRS retune preserves hold PASS')
   audio_pins.clear()
   words=[iter((0xa800,0x0280,120,0x0280,150,0x0280,130,0x0280,120,0x0280,55)),iter(())]
   assert call_tx(u,symbols['voice_board_sql_probe'],budget=6000000)==0
@@ -1474,7 +1549,7 @@ if a.stock:
  for mode in range(5):
   result=call_tx(u,symbols['aprs_dac_probe'],mode,budget=1000000)
   assert result==0,(mode,result)
- print('ARM APRS DAC1: timer and DMA setup, sample buffer, completion, timeout, cancellation, busy ownership, overrun and PB8 restore PASS')
+ print('ARM APRS DAC1: timer and DMA setup, sample buffer, completion, timeout, cancellation, busy ownership, overrun, clock gating and PB8 restore PASS')
 
  for page in (0x40000000,0x40012000):
   u.mem_map(page,0x1000)
@@ -1484,7 +1559,7 @@ if a.stock:
  for mode in (0,1,2):
   result=call_tx(u,symbols['aprs_adc_probe'],mode,budget=5000000)
   assert result==0,(mode,result)
- print('ARM APRS ADC1: TIM4/CH4, keypad TIM2 independent, DMA1/CH1 to AX.25, overrun and calibration timeout PASS')
+ print('ARM APRS ADC1: TIM4/CH4, keypad TIM2 independent, DMA1/CH1 to AX.25, overrun, calibration timeout and clock gating PASS')
  result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
  assert result==0,f'MCU diagnostics failed at C++ line {result}'
  print('ARM MCU diagnostics and VOX ADC1: temperature trend, PA0, busy ownership, internal channels, restoration, cancellation and timeout PASS')
@@ -1492,6 +1567,6 @@ if a.stock:
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)
  assert result==0,result
- print('ARM BLE KISS: USART1 setup, escaped bytes, queue bound, timeout and revocation PASS')
+ print('ARM BLE KISS: USART1 setup, escaped bytes, queue bound, timeout, revocation and USART/GPIO isolation on OFF PASS')
  print('ARM BLE GPS: five states, coordinate validity, private command and AX.25 priority PASS')
 

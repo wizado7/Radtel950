@@ -29,64 +29,183 @@
 #include "at32f403a.h"
 #include "debug_uart.h"
 
-/* Global tick counter ----------------------------------------------- */
-static volatile uint32_t systick_ms;
-
-/* SysTick ISR (overrides weak default in startup.c) ----------------- */
-void SysTick_Handler(void)
-{
-    systick_ms++;
 #ifdef RT950_CUSTOM
-    /* After boot, a stalled foreground loop must stop feeding the watchdog. */
+#include "cortex_m4.h"
+#include <stdbool.h>
+
+enum { TimerOverflow=1u, TimerWake=2u, CountsPerMs=2u };
+static volatile uint32_t timer_epoch_ms;
+volatile uint8_t custom_encoder_interval=2;
+volatile uint8_t custom_idle_wake_ms=1;
+bool custom_clock_low;
+
+uint32_t get_tick(void)
+{
+    uint32_t epoch, count, pending;
+    do {
+        epoch=timer_epoch_ms;
+        count=TIM3->CNT;
+        pending=TIM3->SR&TimerOverflow;
+        if(pending)count=TIM3->CNT;
+    } while(epoch!=timer_epoch_ms);
+    return epoch+(pending?0x8000u:0u)+(count/CountsPerMs);
+}
+
+// Treat rollover as a distinct IRQ action (also when compare is not pending).
+__attribute__((noinline)) static void advance_timer_epoch(void)
+{
+    timer_epoch_ms+=0x8000u;
+}
+
+void TIM3_IRQHandler(void)
+{
+    const uint32_t flags=TIM3->SR;
+    TIM3->SR=~flags;
+    if(flags&TimerOverflow)advance_timer_epoch();
+    if(!(flags&TimerWake))return;
+
+    const uint16_t count=(uint16_t)TIM3->CNT;
+    const uint16_t interval=CountsPerMs*custom_idle_wake_ms;
+    TIM3->CCR1=(uint16_t)(count+interval);
+    if((uint16_t)((uint16_t)TIM3->CNT-count)>=interval)TIM3->EGR=TimerWake;
+
     extern volatile uint32_t custom_heartbeat;
     extern volatile uint8_t custom_watchdog_armed;
-    if (custom_watchdog_armed && (uint32_t)(systick_ms-custom_heartbeat)>=500u)
-        return;
-#endif
-#ifdef RT950_CUSTOM
+    const uint32_t now=get_tick();
+    if(custom_watchdog_armed && (uint32_t)(now-custom_heartbeat)>=500u)return;
+
     extern void encoder_tick(void);
-    encoder_tick();
-#endif
-    /* Feed IWDG (Independent Watchdog) every tick.
-     * Bootloader enables IWDG before jumping to app firmware.
-     * Key register = 0x40003000, reload key = 0xAAAA. */
-    *(volatile uint32_t *)0x40003000UL = 0x0000AAAAUL;
-}
-
-/* ========================================================================
- *  delay_ms - Blocking delay using SysTick counter.
- * ======================================================================== */
-
-void delay_ms(uint32_t ms)
-{
-    uint32_t start = systick_ms;
-    while ((systick_ms - start) < ms) {
-        /* spin */
+    static uint32_t encoder_last;
+    if((uint32_t)(now-encoder_last)>=custom_encoder_interval) {
+        encoder_last=now;
+        encoder_tick();
     }
+    *(volatile uint32_t *)0x40003000UL=0xAAAAu;
 }
 
-/* ========================================================================
- *  get_tick - Return current millisecond tick count.
- * ======================================================================== */
+static bool clock_ready(volatile uint32_t *reg,uint32_t mask,uint32_t state)
+{
+    for(unsigned spin=0;spin<16000;++spin)if((*reg&mask)==state)return true;
+    return false;
+}
+
+static bool select_clock(uint32_t selection)
+{
+    CRM->CFGR=(CRM->CFGR&~CRM_CFGR_SW_MASK)|selection;
+    return clock_ready(&CRM->CFGR,CRM_CFGR_SWS_MASK,selection<<2);
+}
+
+static bool start_pll(uint32_t multiplier)
+{
+    CRM->CR&=~CRM_CR_PLLEN;
+    if(!clock_ready(&CRM->CR,CRM_CR_PLLRDY,0))return false;
+    CRM->CFGR=(CRM->CFGR&0x1fc0ffffu)|multiplier;
+    CRM->CR|=CRM_CR_PLLEN;
+    return clock_ready(&CRM->CR,CRM_CR_PLLRDY,CRM_CR_PLLRDY);
+}
+
+bool board_idle_clock(bool low)
+{
+    const uint32_t gated1=CRM_APB1EN_TIM2EN|CRM_APB1EN_TIM4EN|CRM_APB1EN_TIM6EN|
+                         CRM_APB1EN_SPI2EN|CRM_APB1EN_USART3EN|CRM_APB1EN_UART4EN;
+    const uint32_t gated2=CRM_APB2EN_TIM8EN|CRM_APB2EN_ADC1EN|CRM_APB2EN_USART1EN;
+    if(low && ((CRM->APB1EN&gated1) || (CRM->APB2EN&gated2) ||
+               (CRM->AHBEN&(CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN))))return false;
+
+    const uint32_t normal=0x80350000u, reduced=0x00050000u;
+    const uint32_t mhz=low?120u:24u;
+    volatile uint32_t *const dwt=(volatile uint32_t *)0xe0001000u;
+    *(volatile uint32_t *)0xe000edfcu|=1u<<24;
+    dwt[0]|=1;
+    // Start near a timer edge so resetting PSC does not discard a partial tick.
+    const uint16_t next=(uint16_t)(TIM3->CNT+1u);
+    clock_ready(&TIM3->CNT,0xffffu,next);
+    __disable_irq();
+    TIM3->CR1=0;
+    uint32_t count=TIM3->CNT;
+    if(TIM3->SR&TimerOverflow)timer_epoch_ms+=0x8000u;
+    const uint32_t start=dwt[1];
+    CRM->MISC3|=CRM_MISC3_AUTO_STEP_EN;
+    bool switched=false;
+    uint32_t before=0, crystal=0;
+    if((CRM->CR&CRM_CR_HSERDY) && select_clock(CRM_CFGR_SW_HSE)) {
+        const uint32_t on_crystal=dwt[1];
+        before=(on_crystal-start)/mhz;
+        if(low && start_pll(reduced))switched=select_clock(CRM_CFGR_SW_PLL);
+        if(!switched) {
+            if(!select_clock(CRM_CFGR_SW_HSE) || !start_pll(normal) ||
+               !select_clock(CRM_CFGR_SW_PLL)) {
+                // Keep PA idle and let the independent watchdog reset.
+                for(;;) __asm volatile("nop");
+            }
+        }
+        crystal=(dwt[1]-on_crystal)/8u;
+    } else if(!low || (CRM->CFGR&CRM_CFGR_SWS_MASK)!=CRM_CFGR_SWS_PLL) {
+        for(;;) __asm volatile("nop");
+    } else {
+        CRM->CFGR=(CRM->CFGR&~CRM_CFGR_SW_MASK)|CRM_CFGR_SW_PLL;
+        before=(dwt[1]-start)/mhz;
+    }
+    CRM->MISC3&=~CRM_MISC3_AUTO_STEP_EN;
+
+    // TIM3 is the only active clock-rate consumer during this wait.
+    static uint32_t carry_us;
+    carry_us+=before+crystal;
+    count+=carry_us/500u;
+    carry_us%=500u;
+    if(count>=65536u)timer_epoch_ms+=0x8000u;
+    TIM3->PSC=switched?11999u:59999u;
+    TIM3->EGR=TimerOverflow;
+    TIM3->CNT=(uint16_t)count;
+    TIM3->SR=0;
+    TIM3->CCR1=(uint16_t)(count+CountsPerMs*custom_idle_wake_ms);
+    TIM3->CR1=1;
+    custom_clock_low=switched;
+    __enable_irq();
+    return switched;
+}
+
+static void tick_init(void)
+{
+    CRM->APB1EN|=CRM_APB1EN_TIM3EN;
+    CRM->APB1RST|=CRM_APB1EN_TIM3EN;
+    CRM->APB1RST&=~CRM_APB1EN_TIM3EN;
+    TIM3->PSC=59999u; /* 120 MHz timer clock / 60000 = 2 kHz. */
+    TIM3->ARR=0xffffu;
+    TIM3->CCR1=CountsPerMs;
+    TIM3->EGR=TimerOverflow;
+    TIM3->SR=0;
+    TIM3->DIER=TimerOverflow|TimerWake;
+    NVIC->ICPR[0]=1u<<TIM3_IRQn;
+    NVIC_EnableIRQ(TIM3_IRQn);
+    TIM3->CR1=1;
+}
+#else
+static volatile uint32_t systick_ms;
+
+void SysTick_Handler(void)
+{
+    ++systick_ms;
+    *(volatile uint32_t *)0x40003000UL=0xAAAAu;
+}
 
 uint32_t get_tick(void)
 {
     return systick_ms;
 }
 
-/* ========================================================================
- *  SysTick_Init - Configure SysTick for 1 ms interrupt.
- *
- *  Reload = (HCLK / 1000) - 1 = (120000000 / 1000) - 1 = 119999
- * ======================================================================== */
-
-static void SysTick_Init(void)
+static void tick_init(void)
 {
-    SysTick->LOAD = (120000000UL / 1000UL) - 1UL;
-    SysTick->VAL  = 0;
-    SysTick->CTRL = SYSTICK_CTRL_CLKSOURCE  /* processor clock */
-                   | SYSTICK_CTRL_TICKINT    /* enable interrupt */
-                   | SYSTICK_CTRL_ENABLE;    /* enable counter */
+    SysTick->LOAD=119999u;
+    SysTick->VAL=0;
+    SysTick->CTRL=SYSTICK_CTRL_CLKSOURCE|SYSTICK_CTRL_TICKINT|SYSTICK_CTRL_ENABLE;
+}
+#endif
+
+void delay_ms(uint32_t ms)
+{
+    const uint32_t start=get_tick();
+    while((uint32_t)(get_tick()-start)<ms) {}
 }
 
 /* ========================================================================
@@ -211,6 +330,15 @@ void SystemInit(void)
 
     /* ---- 8. Configure PLL: HEXT 8 MHz x 15 = 120 MHz - fw 0x08021730 ---- */
     clock_config();
+#ifdef RT950_CUSTOM
+    // The crystal supplies the running PLL. Leave the internal oscillator
+    // available unless both the clock source and its ready flags agree.
+    if ((CRM->CFGR & (CRM_CFGR_SWS_MASK | CRM_CFGR_PLLSRC)) ==
+            (CRM_CFGR_SWS_PLL | CRM_CFGR_PLLSRC) &&
+        (CRM->CR & (CRM_CR_HSERDY | CRM_CR_PLLRDY)) ==
+            (CRM_CR_HSERDY | CRM_CR_PLLRDY))
+        CRM->CR &= ~CRM_CR_HSIEN;
+#endif
 
     /* ---- 9. Set VTOR ---- */
     /* OEM SystemInit writes 0x08000000 here (fw 0x08021734), then relocates
@@ -248,8 +376,8 @@ void SystemInit(void)
         *iomux_remap = val;
     }
 
-    /* ---- 12. Start SysTick (1 ms tick, our addition) ---- */
-    SysTick_Init();
+    /* ---- 12. Start the application time base ---- */
+    tick_init();
 
     /* ---- 13. Debug UART (compile-time optional) ---- */
     dbg_init();

@@ -11,6 +11,9 @@ volatile uint8_t custom_watchdog_armed;
 static volatile uint8_t ring[RING_SIZE];
 static volatile uint32_t head,tail,rx_bytes,rx_errors,rx_dropped;
 static uint8_t gps_on;
+static bool gps_sleeping;
+static uint32_t gps_tx_deadline;
+static uint8_t gps_tx[20],gps_tx_pos,gps_tx_len;
 
 static void output(GPIO_TypeDef *p,uint16_t pin,uint8_t high) {
     if(high) gpio_set_pin(p,pin); else gpio_clear_pin(p,pin);
@@ -21,8 +24,15 @@ static void input(GPIO_TypeDef *p,uint16_t pin) {
     gpio_config_pin(p,pin,GPIO_MODE_INPUT,GPIO_CNF_PULL);
 }
 void board_init(void) {
+    if(CRM->APB2EN&CRM_APB2EN_USART1EN) {
+        USART1->CR1=0;
+        CRM->APB2EN&=~CRM_APB2EN_USART1EN;
+    }
+    gpio_config_pin(GPIOA,GPIO_PIN_9,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
+    gpio_config_pin(GPIOA,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     output(GPIOB,GPIO_PIN_9,0); // OEM Bluetooth module enable
     output(GPIOA,GPIO_PIN_11,1);
+    output(GPIOA,GPIO_PIN_6,0); // Hold the broadcast tuner in reset.
     output(GPIOC,GPIO_PIN_13,0);output(GPIOC,GPIO_PIN_14,0); // no RF activity yet
     /* Tested idle routing from GPS v0.4; NEVER activate active-low TX paths. */
     output(GPIOE,GPIO_PIN_7,1);output(GPIOE,GPIO_PIN_12,1);
@@ -30,9 +40,13 @@ void board_init(void) {
     output(GPIOB,GPIO_PIN_0,1);output(GPIOB,GPIO_PIN_1,1);
     output(GPIOB,GPIO_PIN_8,0);output(GPIOE,GPIO_PIN_4,0);
     output(GPIOE,GPIO_PIN_1,1);output(GPIOA,GPIO_PIN_8,1);
-    CRM->AHBEN |= 3u;
-    for(uint32_t i=0;i<7;++i) *(volatile uint32_t *)(0x40020008u+i*0x14u)=0;
-    for(uint32_t i=0;i<5;++i) *(volatile uint32_t *)(0x40020408u+i*0x14u)=0;
+    // Stop channels inherited from the loader. The audio drivers own the
+    // clock gates while capture or playback is actually running.
+    const uint32_t dma_clocks=CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN;
+    CRM->AHBEN|=dma_clocks;
+    for(unsigned i=1;i<=7;++i) DMA1_CH(i)->CCR=0;
+    for(unsigned i=1;i<=5;++i) DMA2_CH(i)->CCR=0;
+    CRM->AHBEN&=~dma_clocks;
     for(unsigned i=0;i<4;++i) {
         const uint16_t pin=(uint16_t)(1u<<i);
         gpio_set_pin(GPIOC,pin);
@@ -77,7 +91,7 @@ uint8_t board_ptt_mask(void) {
     return (uint8_t)((pins&GPIO_PIN_3?0u:1u)|(pins&GPIO_PIN_2?0u:2u)|(pins&GPIO_PIN_5?0u:4u));
 }
 void board_power_cut(void) {
-    USART3->CR1=0;
+    board_gps_enable(0);
     /* Safe idle, not LOW: LOW would activate routing pins. */
     gpio_set_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_1);
     gpio_set_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
@@ -87,7 +101,7 @@ void board_power_cut(void) {
     /* Match OEM 0.29 0x0800C460..0x0800C476: dark, 100 ms, PA11 LOW.
      * No immediate Sleep In -> rail cut; panel supply topology is unmeasured. */
     extern void delay_ms(uint32_t);
-    /* delay_ms needs SysTick: never mask interrupts before this wait. */
+    /* Keep the clock interrupt active during the panel shutdown wait. */
     delay_ms(100);
     __disable_irq();
     /* OEM 0.29 0x0800C476 clears PA11. Release PB9 as well, matching
@@ -97,6 +111,7 @@ void board_power_cut(void) {
     for(;;) {*(volatile uint32_t *)0x40003000u=0xAAAAu;}
 }
 void USART3_IRQHandler(void) {
+    if(!gps_on)return;
     const uint32_t sr=USART3->SR;
     if(sr & ((1u<<5)|15u)) {
         const uint8_t ch=(uint8_t)USART3->DR;
@@ -110,11 +125,21 @@ void USART3_IRQHandler(void) {
 }
 void board_gps_enable(uint8_t on) {
     NVIC_DisableIRQ(USART3_IRQn);
-    CRM->APB1EN |= CRM_APB1EN_USART3EN;
-    USART3->CR1=0;gps_on=on;
+    gps_on=0;gps_sleeping=false;gps_tx_pos=gps_tx_len=0;
     head=tail=0;
     nav_reset();
-    if(!on) {gpio_set_pin(GPIOA,GPIO_PIN_8);return;}
+    if(!on) {
+        if(CRM->APB1EN & CRM_APB1EN_USART3EN) {
+            USART3->CR1=0;
+            CRM->APB1EN&=~CRM_APB1EN_USART3EN;
+        }
+        // Disable both digital inputs/pull-ups before removing module power.
+        gpio_config_pin(GPIOB,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
+        gpio_config_pin(GPIOB,GPIO_PIN_11,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
+        gpio_set_pin(GPIOA,GPIO_PIN_8);
+        return;
+    }
+    CRM->APB1EN|=CRM_APB1EN_USART3EN;
     AFIO->MAPR=(AFIO->MAPR&~((3u<<4)|AFIO_MAPR_SWJ_CFG_MASK))|(2u<<24);
     *(volatile uint32_t *)0x4001002Cu &= ~(15u<<24);
     CRM->APB1RST |= CRM_APB1EN_USART3EN;
@@ -123,8 +148,9 @@ void board_gps_enable(uint8_t on) {
     gpio_config_pin(GPIOB,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_FLOATING);
     USART3->CR2=0;USART3->CR3=0;USART3->BRR=6250;
     (void)USART3->SR;(void)USART3->DR;
-    NVIC_SetPriority(USART3_IRQn,1);NVIC_EnableIRQ(USART3_IRQn);
     USART3->CR1=USART_CR1_RE|USART_CR1_RXNEIE|USART_CR1_UE;
+    gps_on=1;
+    NVIC_SetPriority(USART3_IRQn,1);NVIC_EnableIRQ(USART3_IRQn);
     gpio_clear_pin(GPIOA,GPIO_PIN_8);
 }
 void board_gps_poll(uint32_t now) {
@@ -139,6 +165,28 @@ void board_gps_poll(uint32_t now) {
         nav_feed(ch,now);
     }
 }
+void board_gps_send(const uint8_t *data,unsigned size,uint32_t now) {
+    if(!gps_on || gps_tx_len || !size || size>sizeof gps_tx)return;
+    for(unsigned i=0;i<size;++i)gps_tx[i]=data[i];
+    gps_tx_pos=0;gps_tx_len=(uint8_t)size;gps_tx_deadline=now+500u;
+    USART3->CR1|=USART_CR1_TE;
+    gpio_config_pin(GPIOB,GPIO_PIN_10,GPIO_MODE_OUT_2MHZ,GPIO_CNF_AF_PP);
+}
+bool board_gps_transmit(bool inhibit,uint32_t now) {
+    if(!gps_on || !gps_tx_len)return false;
+    if(inhibit)gps_tx_pos=gps_tx_len;
+    const uint32_t status=USART3->SR;
+    if((int32_t)(now-gps_tx_deadline)>=0 ||
+       (gps_tx_pos==gps_tx_len && status&USART_SR_TC)) {
+        gps_tx_pos=gps_tx_len=0;
+        return false;
+    }
+    if(gps_tx_pos<gps_tx_len && status&USART_SR_TXE)USART3->DR=gps_tx[gps_tx_pos++];
+    return true;
+}
+void board_gps_sleeping_set(bool sleeping) {gps_sleeping=sleeping;}
+bool board_gps_sleeping(void) {return gps_sleeping;}
+uint8_t board_gps_powered(void) {return gps_on;}
 uint32_t board_gps_bytes(void) {return rx_bytes;}
 uint32_t board_gps_errors(void) {return rx_errors;}
 uint32_t board_gps_dropped(void) {return rx_dropped;}

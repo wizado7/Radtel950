@@ -96,7 +96,7 @@ struct BeaconReport {
     uint16_t course=0,speed_knots=0;
 };
 
-// Ferrite's handheld SmartBeaconing curve. Times are elapsed milliseconds.
+// SmartBeaconing curve for a handheld radio. Times are elapsed milliseconds.
 inline bool smart_beacon_due(uint32_t elapsed,unsigned kmh,int heading,int last_heading) {
     const unsigned seconds=kmh<3?1800u:kmh>=10?180u:1800u/kmh;
     if(elapsed>=seconds*1000u)return true;

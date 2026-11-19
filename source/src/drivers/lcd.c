@@ -2,7 +2,7 @@
  * lcd.c - 8080-parallel LCD driver for the RT-950 Pro
  *
  * ST7789-compatible 240x320 panel (silicon ID has not been read).
- * Custom UI uses the Ferrite reset, ST7789 startup and 8080 timings.
+ * Custom UI defines its own ST7789 reset, startup and 8080 timings.
  * Legacy V0.27 comments below are historical; see LCD-AUDIT-029-RU.md.
  *
  * Bus wiring (ALL on GPIOD, verified from firmware):

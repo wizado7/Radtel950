@@ -24,12 +24,12 @@ struct Reader {
 };
 // Compact container v1: magic, version, canonical word count, encoded length,
 // CRC32 over the first 16 header bytes and encoded bytes, then zero alignment.
-constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=8;
+constexpr uint32_t PackedMagic=0x32535452u,PackedVersion=10;
 constexpr size_t PackedHeader=20;
 // Changing array capacities requires a separate historical decoder, not a
 // silent reinterpretation of the released v1/v2 canonical field order.
 static_assert(Application::MemoryCount==64 && Application::ZoneCount==15 && Application::BroadcastCount==8);
-static_assert(Application::PortableSize==8008+27*4);
+static_assert(Application::PortableSize==8008+31*4);
 struct WordCounter {
     size_t words=0;
     template<class T> void field(T){++words;}
@@ -175,10 +175,14 @@ template<class Archive,class App>
 void Application::vox_fields(Archive &archive,App &s) {
     archive.field(s.vox_level_);archive.field(s.vox_delay_);
 }
+template<class Archive,class App>
+void Application::display_fields(Archive &a,App &s) {
+    a.field(s.light_theme_);a.field(s.show_voltage_);a.field(s.slot_ratio_);
+}
 size_t Application::save_portable_snapshot(uint8_t *data,size_t capacity) const {
     if(!data)return 0;
     Writer writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);display_fields(writer,*this);writer.field(large_font_);
     return writer.good?writer.pos:0;
 }
 bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsigned schema) {
@@ -192,6 +196,8 @@ bool Application::restore_portable_snapshot(const uint8_t *data,size_t size,unsi
         if(schema>=4)reader.field(candidate.beacon_altitude_code_);
         if(schema>=6)beacon_fields(reader,candidate);
         if(schema>=7)vox_fields(reader,candidate);
+        if(schema>=9)display_fields(reader,candidate);
+        if(schema>=10)reader.field(candidate.large_font_);
         if(!reader.good || reader.pos!=reader.capacity || !candidate.valid_snapshot())return false;
     }
     if(schema<8)candidate.upgrade_pmr_presets();
@@ -204,18 +210,18 @@ size_t Application::save_snapshot(uint8_t *data,size_t capacity) const {
 }
 size_t Application::canonical_snapshot_size() const {
     WordCounter counter;portable_snapshot_fields(counter,*this);aprs_routing_fields(counter,*this);
-    counter.field(beacon_altitude_code_);beacon_fields(counter,*this);vox_fields(counter,*this);return counter.words*4u;
+    counter.field(beacon_altitude_code_);beacon_fields(counter,*this);vox_fields(counter,*this);display_fields(counter,*this);counter.field(large_font_);return counter.words*4u;
 }
 size_t Application::compact_snapshot_size() const {
     PackedWriter writer{nullptr,SnapshotCapacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);display_fields(writer,*this);writer.field(large_font_);
     const size_t size=(writer.pos+3u)&~size_t(3);
     return writer.good && size<=SnapshotCapacity?size:0;
 }
 size_t Application::save_compact_snapshot(uint8_t *data,size_t capacity) const {
     if(!data || capacity<PackedHeader)return 0;
     PackedWriter writer{data,capacity};portable_snapshot_fields(writer,*this);aprs_routing_fields(writer,*this);
-    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);
+    writer.field(beacon_altitude_code_);beacon_fields(writer,*this);vox_fields(writer,*this);display_fields(writer,*this);writer.field(large_font_);
     const size_t size=(writer.pos+3u)&~size_t(3);
     if(!writer.good || size>capacity)return 0;
     storage::put(data,PackedMagic);storage::put(data+4,PackedVersion);
@@ -246,6 +252,8 @@ bool Application::restore_snapshot(const uint8_t *data,size_t size) {
         if(version>=4)reader.field(candidate.beacon_altitude_code_);
         if(version>=6)beacon_fields(reader,candidate);
         if(version>=7)vox_fields(reader,candidate);
+        if(version>=9)display_fields(reader,candidate);
+        if(version>=10)reader.field(candidate.large_font_);
         if(!reader.good || reader.pos!=reader.end || reader.words!=storage::word(data+8) || !candidate.valid_snapshot())return false;
         candidate.config_.ble_export=false;candidate.reconcile_channels();
         if(version<8)candidate.upgrade_pmr_presets();
@@ -316,6 +324,7 @@ bool Application::import_snapshot(const uint8_t *data,size_t size,uint32_t now,u
 }
 
 bool Application::valid_snapshot() const {
+    if(slot_ratio_<66 || slot_ratio_>160 || config_.gps_on>RT_GPS_ON)return false;
     for(auto action:key_actions_)if(unsigned(action)>=unsigned(KeyAction::Count))return false;
     for(const auto &hop:aprs_routing_.hops)if(!aprs::valid_address(hop,true))return false;
     if(aprs_routing_.beacon>aprs::BeaconPath::Custom || aprs_routing_.relay>aprs::RelayMode::Wide ||

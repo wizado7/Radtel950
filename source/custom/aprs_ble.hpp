@@ -24,9 +24,11 @@ public:
             started_=now;
         } else {
             clear();
-            gpio_clear_pin(GPIOB,GPIO_PIN_9);
             USART1->CR1=0;
+            gpio_config_pin(GPIOA,GPIO_PIN_9,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
+            gpio_config_pin(GPIOA,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
             CRM->APB2EN&=~CRM_APB2EN_USART1EN;
+            gpio_clear_pin(GPIOB,GPIO_PIN_9);
         }
     }
 

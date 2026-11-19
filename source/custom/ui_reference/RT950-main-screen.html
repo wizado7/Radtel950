@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+
+<html lang="ru"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>RT-950 Pro · Главный экран (LCD UI Спецификация)</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              bg: '#e9eef2',
+              card: '#ffffff',
+              border: '#cbd5e1',
+              text: '#1e293b'
+            },
+            lcdDark: {
+              bg: '#0e1217',
+              panel: '#151b22',
+              active: '#1c2430',
+              border: '#2d3748',
+              text: '#f8fafc',
+              dim: '#64748b',
+              accent: '#38bdf8'
+            },
+            lcdLight: {
+              bg: '#ffffff',
+              panel: '#f1f5f9',
+              active: '#e2e8f0',
+              border: '#94a3b8',
+              text: '#0f172a',
+              dim: '#64748b',
+              accent: '#0284c7'
+            }
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', '"SF Mono"', 'Consolas', '"Courier New"', 'monospace'],
+            sans: ['"Inter"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+<!-- BEGIN: CustomLCDStyles -->
+<style data-purpose="lcd-pixel-grid">
+    /* LCD Sharp Viewport Canvas */
+    .lcd-viewport {
+      width: 240px;
+      height: 320px;
+      min-width: 240px;
+      min-height: 320px;
+      image-rendering: pixelated;
+      user-select: none;
+      box-sizing: border-box;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border-radius: 2px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    
+    /* Monospace frequency digits */
+    .freq-mono {
+      font-family: "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Scaling wrappers */
+    .scale-wrapper {
+      transform-origin: top left;
+      transition: transform 0.15s ease-out;
+    }
+    .zoom-1x { transform: scale(1); }
+    .zoom-15x { transform: scale(1.5); }
+    .zoom-2x { transform: scale(2); }
+
+    /* Custom range slider appearance */
+    input[type=range]::-webkit-slider-thumb {
+      height: 14px;
+      width: 14px;
+      border-radius: 9999px;
+      background: #0f172a;
+      cursor: pointer;
+      -webkit-appearance: none;
+      margin-top: -4px;
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 9999px;
+      background: #cbd5e1;
+    }
+  </style>
+<style data-purpose="rssi-bars">
+    /* RSSI 8 Segment Bar */
+    .rssi-container {
+      display: flex;
+      gap: 3px;
+      height: 6px;
+      width: 100%;
+    }
+    .rssi-bar {
+      flex: 1;
+      height: 100%;
+    }
+  </style>
+<!-- END: CustomLCDStyles -->
+</head>
+<body class="bg-brand-bg text-brand-text min-h-screen p-4 md:p-8 font-sans antialiased">
+<!-- BEGIN: MainWorkbenchHeader -->
+<header class="max-w-6xl mx-auto mb-6" data-purpose="workbench-header">
+<div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-300 pb-4">
+<div>
+<h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
+          RT-950 Pro <span class="text-slate-400 font-normal">·</span> <span id="lblTitleMain">Main Screen</span>
+</h1>
+<p class="text-sm md:text-base text-slate-600 mt-1" id="lblTitleDesc">Interactive 3-slot ratio configuration (280 px total). Zero Dead-Space 240 × 320 LCD architecture.</p>
+</div>
+<!-- Language Switcher & Scale Controls -->
+<div class="flex items-center gap-3">
+<div class="flex rounded-md border border-slate-300 bg-white p-0.5 shadow-sm text-xs font-semibold">
+<button class="px-2.5 py-1 rounded text-slate-600 hover:text-slate-900" id="btnLangRu" onclick="setLanguage('RU')">RU</button>
+<button class="px-2.5 py-1 rounded bg-slate-800 text-white" id="btnLangEn" onclick="setLanguage('EN')">EN</button>
+</div>
+<div class="flex rounded-md border border-slate-300 bg-white p-0.5 shadow-sm text-xs font-semibold">
+<span class="px-2 py-1 text-slate-400">Zoom:</span>
+<button class="px-2 py-1 rounded bg-slate-200 text-slate-800 font-bold" id="btnZoom1" onclick="setZoom('1x')">1x</button>
+<button class="px-2 py-1 rounded text-slate-600 hover:bg-slate-100" id="btnZoom15" onclick="setZoom('1.5x')">1.5x</button>
+<button class="px-2 py-1 rounded text-slate-600 hover:bg-slate-100" id="btnZoom2" onclick="setZoom('2x')">2x</button>
+</div>
+</div>
+</div>
+<!-- BEGIN: InteractiveControlBar -->
+<section class="mt-4 flex flex-col gap-3 bg-white p-3.5 rounded-lg border border-slate-200 shadow-sm" data-purpose="simulator-controls">
+<!-- Row 1: Active Slot Switcher & TX / Voltage -->
+<div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
+<!-- Slot Switcher Buttons -->
+<div class="flex items-center gap-2">
+<span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1" id="lblActiveSlotGroup">Active Slot:</span>
+<button class="h-8 px-3 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs uppercase tracking-wider transition-colors shadow-sm active:bg-slate-200" id="btnCycle" onclick="cycleSlot()" title="Переключить A-B-C">
+      ABC
+    </button>
+<div class="flex items-center gap-1">
+<button class="h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm" id="btnSlotA" onclick="setActiveSlot('A')">A</button>
+<button class="h-8 w-8 rounded border border-slate-800 bg-slate-800 text-white font-bold text-xs shadow-sm" id="btnSlotB" onclick="setActiveSlot('B')">B</button>
+<button class="h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm" id="btnSlotC" onclick="setActiveSlot('C')">C</button>
+</div>
+</div>
+<!-- Action Toggles -->
+<div class="flex items-center gap-4 flex-wrap">
+<!-- TX Toggle Button -->
+<button class="h-8 px-3.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-medium text-xs shadow-sm flex items-center gap-2 transition-all" id="btnTxToggle" onclick="toggleTX()">
+<span class="w-2 h-2 rounded-full bg-slate-400" id="indicatorTxDot"></span>
+<span id="lblTxBtn">Показать TX</span>
+</button>
+<!-- Voltmeter Checkbox -->
+<label class="inline-flex items-center cursor-pointer select-none text-xs font-medium text-slate-700">
+<input class="rounded border-slate-300 text-slate-800 focus:ring-0 w-4 h-4 mr-2" id="chkVolt" onchange="toggleVolt(this.checked)" placeholder="on" type="checkbox" value=""/>
+<span id="lblVolt">Status Bar Voltage</span>
+</label>
+</div>
+</div>
+<!-- Row 2: Slot Ratio Presets & Smooth Slider -->
+<div class="flex flex-wrap items-center justify-between gap-4 pt-0.5">
+<div class="flex flex-wrap items-center gap-2">
+<span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1" id="lblRatioPresets">Slot Ratio Presets:</span>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-xs transition-all shadow-sm" id="btnRatio70" onclick="setRatioPreset(70)">
+      70% / 15% / 15% <span class="font-normal opacity-80 text-[10px] ml-1">(196/42)</span>
+</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-xs transition-all shadow-sm" id="btnRatio60" onclick="setRatioPreset(60)">
+      60% / 20% / 20% <span class="font-normal opacity-70 text-[10px] ml-1">(168/56)</span>
+</button>
+<button class="h-7 px-2.5 rounded border border-slate-800 bg-slate-800 text-white font-semibold text-xs transition-all shadow-sm" id="btnRatio50" onclick="setRatioPreset(50)">
+      50% / 25% / 25% <span class="font-normal opacity-70 text-[10px] ml-1">(140/70)</span>
+</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-xs transition-all shadow-sm" id="btnRatio33" onclick="setRatioPreset(33.33)">
+      33% / 33% / 33% <span class="font-normal opacity-70 text-[10px] ml-1">(94/93)</span>
+</button>
+</div>
+<!-- Hero Ratio Slider -->
+<div class="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded border border-slate-200 min-w-[270px]">
+<span class="text-xs text-slate-600 font-medium whitespace-nowrap" id="lblSliderHero">Hero Ratio:</span>
+<input class="w-28 accent-slate-900 cursor-pointer" id="ratioSlider" max="80" min="33.33" oninput="onRatioSliderInput(parseFloat(this.value))" step="0.5" type="range" value="50"/>
+<div class="text-xs font-mono font-bold text-slate-900 flex items-center gap-1">
+<span id="sliderValuePercent">50.0%</span>
+<span class="text-slate-400 font-normal text-[10px]" id="sliderValuePx">(140 px)</span>
+</div>
+</div>
+</div>
+</section>
+<!-- END: InteractiveControlBar -->
+</header>
+<!-- END: MainWorkbenchHeader -->
+<!-- BEGIN: DisplaysDualShowcase -->
+<main class="max-w-6xl mx-auto" data-purpose="viewport-container">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+<!-- ================= DARK THEME DISPLAY ================= -->
+<div class="flex flex-col items-center">
+<div class="w-full flex items-center justify-between mb-2 px-1">
+<span class="font-bold text-sm tracking-wide text-slate-800 uppercase" id="lblThemeDark">Dark Theme</span>
+<span class="text-xs text-slate-500 font-mono">240 × 320 px (0x0C1015)</span>
+</div>
+<!-- Scaling Canvas Parent -->
+<div class="overflow-visible p-1">
+<div class="scale-wrapper zoom-1x" id="darkZoomWrapper">
+<div class="lcd-viewport bg-[#0c1015] text-[#f8fafc] border border-slate-700 shadow-2xl" data-theme="dark" id="darkLCD">
+<!-- TOP STATUS BAR (H: 20px) -->
+<div class="h-[20px] px-2 flex items-center justify-between text-[11px] border-b border-[#222a35] bg-[#0c1015] z-10 shrink-0">
+<!-- Status Icons Left -->
+<div class="flex items-center gap-2 text-slate-300">
+<!-- GPS Icon -->
+<svg class="w-3 h-3 fill-current text-slate-200" title="GPS 3D Fix" viewbox="0 0 24 24">
+<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"></path>
+</svg>
+<!-- Bluetooth Active -->
+<svg class="w-3 h-3 fill-current text-slate-200" title="Bluetooth Connected" viewbox="0 0 24 24">
+<path d="M14.88 16.29L13 18.17V14.41m0-4.82V5.83l1.88 1.88M13 12l4.59-4.59a1 1 0 000-1.41l-4.59-4.59A1 1 0 0011 2v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19l4.59-4.59V22a1 1 0 001.71.71l4.59-4.59a1 1 0 000-1.41L13 12z"></path>
+</svg>
+<!-- APRS Message Envelope -->
+<div class="relative flex items-center" title="APRS Message">
+<svg class="w-3 h-3 fill-current text-slate-200" viewbox="0 0 24 24">
+<path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"></path>
+</svg>
+<span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full"></span>
+</div>
+</div>
+<!-- Status Icons Right: Volt + Battery -->
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono font-semibold text-slate-300 hidden" id="darkVoltVal">8.2V</span>
+<!-- Battery Gauge -->
+<div class="w-5 h-2.5 border border-slate-300 rounded-xs p-[1px] flex items-center gap-[1px] relative">
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="absolute -right-1 top-0.5 w-0.5 h-1.5 bg-slate-300 rounded-r-xs"></div>
+</div>
+</div>
+</div>
+<!-- MIDDLE THREE SLOTS CONTAINER (H: 280px total) -->
+<div class="h-[280px] max-h-[280px] flex flex-col justify-start overflow-hidden" id="darkSlotsBox">
+<!-- SLOT A (PMR) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1 border-b border-[#222a35] bg-[#0c1015] overflow-hidden select-none cursor-pointer" data-slot="A" id="darkSlotA" onclick="setActiveSlot('A')" style="height: 70px; background-color: rgb(12, 16, 21);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-400 bg-[#161c24] text-white" id="darkBadgeA">A</span>
+<span class="font-bold tracking-tight text-slate-200">PMR 02 <span class="text-[10px] font-normal text-slate-400">CH 02</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[15px]" id="darkFreqLineA">446.01875</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-200 text-black" id="darkBadgeSlotA">RX</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 hidden">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[25px]" id="darkFreqA">446.01875</div>
+<span class="text-[10px] text-slate-400 font-mono">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 hidden">
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span>R 67.0 / T 67.0</span>
+<span class="text-slate-300 font-sans">SIMPLEX</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span>NFM LOW SQL3 BCL+ TOT60</span>
+<span class="step-label">STEP 6.25k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-400 font-mono pt-0.5 flex" id="darkTxDetailLineA">
+<span>TX 446.01875 MHz</span>
+<span>LOW</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-[#1a2330] rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-200 transition-all duration-150" style="width: 80%;"></div>
+</div>
+</section>
+<!-- SLOT B (VHF VFO) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1.5 border-b border-[#222a35] bg-[#161c24] overflow-hidden select-none cursor-pointer" data-slot="B" id="darkSlotB" onclick="setActiveSlot('B')" style="height: 140px; background-color: rgb(22, 28, 36);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-300 bg-slate-100 text-black" id="darkBadgeB">B</span>
+<span class="font-bold tracking-tight text-white">VHF <span class="text-[10px] font-normal text-slate-400">VFO</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[15px] hidden" id="darkFreqLineB">145.50000</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-700 text-slate-300" id="darkBadgeSlotB">STBY</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 flex">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[25px]" id="darkFreqB">145.50000</div>
+<span class="text-[10px] text-slate-400 font-mono">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 flex">
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span id="darkSubtonesB">R D023N / T 88.5</span>
+<span class="text-slate-300 font-sans" id="darkOffsetB">+0.600</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span id="darkParamsB">WFM MID SQL4 BCL+ TOT90</span>
+<span id="darkStepB">STEP 12.5k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-400 font-mono pt-0.5 flex" id="darkTxDetailLineB">
+<span>TX 146.10000 MHz</span>
+<span id="darkPowerLabel">MID</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-[#1a2330] rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-200 transition-all duration-150" id="darkRssiBarB" style="width: 35%;"></div>
+</div>
+</section>
+<!-- SLOT C (LPD) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1 bg-[#0c1015] overflow-hidden select-none cursor-pointer" data-slot="C" id="darkSlotC" onclick="setActiveSlot('C')" style="height: 70px; background-color: rgb(12, 16, 21);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-400 bg-[#161c24] text-white" id="darkBadgeC">C</span>
+<span class="font-bold tracking-tight text-slate-200">LPD 01 <span class="text-[10px] font-normal text-slate-400">CH 17</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[15px]" id="darkFreqLineC">433.07500</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded border border-slate-500 text-slate-300" id="darkBadgeSlotC">RX ONLY</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 hidden">
+<div class="freq-mono font-bold tracking-tight text-white leading-none text-[25px]" id="darkFreqC">433.07500</div>
+<span class="text-[10px] text-slate-400 font-mono">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 hidden">
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span>R OFF / T OFF</span>
+<span class="text-slate-300 font-sans">RX ONLY</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-400 font-mono">
+<span>NFM LOW SQL3 BCL- TOT-</span>
+<span class="step-label">STEP 25k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-400 font-mono pt-0.5 flex" id="darkTxDetailLineC">
+<span>TX DISABLED</span>
+<span>OFF</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-[#1a2330] rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-200 transition-all duration-150" style="width: 10%;"></div>
+</div>
+</section>
+</div>
+<!-- BOTTOM SOFTKEYS (H: 20px) -->
+<footer class="h-[20px] px-2 flex items-center justify-between text-[9px] border-t border-[#222a35] bg-[#0c1015] font-sans font-medium text-slate-300 shrink-0">
+<span class="soft-key" id="darkKey1">OK Menu</span>
+<span class="soft-key" id="darkKey2">ABC Slot</span>
+<span class="soft-key" id="darkKey3">V/M CH</span>
+<span class="soft-key flex items-center gap-0.5" id="darkKey4"><span style='font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";'>◄►Step</span></span>
+</footer>
+</div>
+</div>
+</div>
+</div>
+<!-- ================= LIGHT THEME DISPLAY ================= -->
+<div class="flex flex-col items-center">
+<div class="w-full flex items-center justify-between mb-2 px-1">
+<span class="font-bold text-sm tracking-wide text-slate-800 uppercase" id="lblThemeLight">Light Theme</span>
+<span class="text-xs text-slate-500 font-mono">Solar Outdoor (0xFFFFFF)</span>
+</div>
+<!-- Scaling Canvas Parent -->
+<div class="overflow-visible p-1">
+<div class="scale-wrapper zoom-1x" id="lightZoomWrapper">
+<div class="lcd-viewport bg-white text-slate-900 border border-slate-400 shadow-2xl" data-theme="light" id="lightLCD">
+<!-- TOP STATUS BAR (H: 20px) -->
+<div class="h-[20px] px-2 flex items-center justify-between text-[11px] border-b border-slate-300 bg-white z-10 shrink-0">
+<!-- Status Icons Left -->
+<div class="flex items-center gap-2 text-slate-800">
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"></path>
+</svg>
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M14.88 16.29L13 18.17V14.41m0-4.82V5.83l1.88 1.88M13 12l4.59-4.59a1 1 0 000-1.41l-4.59-4.59A1 1 0 0011 2v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19l4.59-4.59V22a1 1 0 001.71.71l4.59-4.59a1 1 0 000-1.41L13 12z"></path>
+</svg>
+<div class="relative flex items-center">
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"></path>
+</svg>
+<span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-slate-900 rounded-full"></span>
+</div>
+</div>
+<!-- Status Icons Right: Volt + Battery -->
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono font-bold text-slate-800 hidden" id="lightVoltVal">8.2V</span>
+<!-- Battery Gauge -->
+<div class="w-5 h-2.5 border border-slate-900 rounded-xs p-[1px] flex items-center gap-[1px] relative">
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="absolute -right-1 top-0.5 w-0.5 h-1.5 bg-slate-900 rounded-r-xs"></div>
+</div>
+</div>
+</div>
+<!-- MIDDLE THREE SLOTS CONTAINER (H: 280px total) -->
+<div class="h-[280px] max-h-[280px] flex flex-col justify-start overflow-hidden" id="lightSlotsBox">
+<!-- SLOT A (PMR) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1 border-b border-slate-300 bg-white overflow-hidden select-none cursor-pointer" data-slot="A" id="lightSlotA" onclick="setActiveSlot('A')" style="height: 70px; background-color: rgb(255, 255, 255);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-800 bg-white text-slate-900" id="lightBadgeA">A</span>
+<span class="font-bold tracking-tight text-slate-900">PMR 02 <span class="text-[10px] font-normal text-slate-600">CH 02</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-slate-950 leading-none text-[15px]" id="lightFreqLineA">446.01875</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-900 text-white" id="lightBadgeSlotA">RX</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 hidden">
+<div class="freq-mono font-bold tracking-tight text-slate-950 leading-none text-[25px]" id="lightFreqA">446.01875</div>
+<span class="text-[10px] text-slate-700 font-mono font-semibold">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 hidden">
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span>R 67.0 / T 67.0</span>
+<span class="text-slate-900 font-sans font-semibold">SIMPLEX</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span>NFM LOW SQL3 BCL+ TOT60</span>
+<span class="font-semibold text-slate-900 step-label">STEP 6.25k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-600 font-mono pt-0.5 flex" id="lightTxDetailLineA">
+<span>TX 446.01875 MHz</span>
+<span>LOW</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-slate-200 rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-900 transition-all duration-150" style="width: 80%;"></div>
+</div>
+</section>
+<!-- SLOT B (VHF VFO) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1.5 border-b border-slate-300 bg-[#e9edf2] overflow-hidden select-none cursor-pointer" data-slot="B" id="lightSlotB" onclick="setActiveSlot('B')" style="height: 140px; background-color: rgb(233, 237, 242);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-900 bg-slate-900 text-white" id="lightBadgeB">B</span>
+<span class="font-bold tracking-tight text-slate-950">VHF <span class="text-[10px] font-normal text-slate-600">VFO</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-slate-950 leading-none text-[15px] hidden" id="lightFreqLineB">145.50000</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-300 text-slate-800" id="lightBadgeSlotB">STBY</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 flex">
+<div class="freq-mono font-bold tracking-tight text-[#0b121e] leading-none text-[25px]" id="lightFreqB">145.50000</div>
+<span class="text-[10px] text-slate-700 font-mono font-semibold">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 flex">
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span id="lightSubtonesB">R D023N / T 88.5</span>
+<span class="text-slate-900 font-sans font-semibold" id="lightOffsetB">+0.600</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span id="lightParamsB">WFM MID SQL4 BCL+ TOT90</span>
+<span class="font-semibold text-slate-900" id="lightStepB">STEP 12.5k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-600 font-mono pt-0.5 flex" id="lightTxDetailLineB">
+<span>TX 146.10000 MHz</span>
+<span id="lightPowerLabel">MID</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-slate-300 rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-900 transition-all duration-150" id="lightRssiBarB" style="width: 35%;"></div>
+</div>
+</section>
+<!-- SLOT C (LPD) -->
+<section class="slot-container transition-[height,background-color] duration-150 ease-out flex flex-col justify-between px-2.5 py-1 bg-white overflow-hidden select-none cursor-pointer" data-slot="C" id="lightSlotC" onclick="setActiveSlot('C')" style="height: 70px; background-color: rgb(255, 255, 255);">
+<div class="flex items-center justify-between text-[11px] leading-tight shrink-0">
+<div class="flex items-center gap-1.5">
+<span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-800 bg-white text-slate-900" id="lightBadgeC">C</span>
+<span class="font-bold tracking-tight text-slate-900">LPD 01 <span class="text-[10px] font-normal text-slate-600">CH 17</span></span>
+</div>
+<div class="flex items-center gap-1.5">
+<div class="freq-mono font-bold tracking-tight text-slate-950 leading-none text-[15px]" id="lightFreqLineC">433.07500</div>
+<span class="badge-status px-1 py-0.2 text-[9px] font-bold rounded border border-slate-700 text-slate-900" id="lightBadgeSlotC">RX ONLY</span>
+</div>
+</div>
+<!-- Hero Box (visible only when active) -->
+<div class="hero-freq-box items-baseline justify-between my-auto py-0.5 hidden">
+<div class="freq-mono font-bold tracking-tight text-slate-950 leading-none text-[25px]" id="lightFreqC">433.07500</div>
+<span class="text-[10px] text-slate-700 font-mono font-semibold">MHz</span>
+</div>
+<!-- Details block -->
+<div class="slot-details flex-col gap-1 py-0.5 hidden">
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span>R OFF / T OFF</span>
+<span class="text-slate-900 font-sans font-semibold">RX ONLY</span>
+</div>
+<div class="flex items-center justify-between text-[9px] text-slate-700 font-mono">
+<span>NFM LOW SQL3 BCL- TOT-</span>
+<span class="font-semibold text-slate-900 step-label">STEP 25k</span>
+</div>
+<div class="detail-tx-extra items-center justify-between text-[9px] text-slate-600 font-mono pt-0.5 flex" id="lightTxDetailLineC">
+<span>TX DISABLED</span>
+<span>OFF</span>
+</div>
+</div>
+<!-- Solid RSSI Bar -->
+<div class="rssi-solid-track w-full h-1 bg-slate-200 rounded-full overflow-hidden mt-0.5 shrink-0">
+<div class="h-full bg-slate-900 transition-all duration-150" style="width: 10%;"></div>
+</div>
+</section>
+</div>
+<!-- BOTTOM SOFTKEYS (H: 20px) -->
+<footer class="h-[20px] px-2 flex items-center justify-between text-[9px] border-t border-slate-300 bg-white font-sans font-semibold text-slate-800 shrink-0">
+<span class="soft-key" id="lightKey1">OK Menu</span>
+<span class="soft-key" id="lightKey2">ABC Slot</span>
+<span class="soft-key" id="lightKey3">V/M CH</span>
+<span class="soft-key flex items-center gap-0.5" id="lightKey4"><span style='font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";'>◄►Step</span></span>
+</footer>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- END: DisplaysDualShowcase -->
+<!-- BEGIN: FirmwareSpecsTable -->
+<section class="max-w-6xl mx-auto mt-12 bg-white rounded-lg border border-slate-200 shadow-sm p-6" data-purpose="engineering-specification">
+<div class="border-b border-slate-200 pb-3 mb-4 flex flex-wrap items-center justify-between gap-2">
+<div>
+<h2 class="text-lg font-bold text-slate-900 uppercase tracking-wide flex items-center gap-2">
+<svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+    Инженерная спецификация дисплея (ST7789V / ILI9341 Driver)
+  </h2>
+<p class="text-xs text-slate-500 mt-0.5">Динамическая карта разметки пикселей, математика пропорций слотов и таблица RGB565.</p>
+</div>
+<div class="bg-slate-100 text-slate-800 font-mono text-xs font-bold px-3 py-1 rounded border border-slate-200" id="specLiveBadge">РЕЖИМ: 50.0% / 25.0% / 25.0% (140 + 70 + 70 = 280 px)</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+<!-- Box 1: Geometry -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-geometry">
+<h3 class="font-bold text-slate-800 text-sm mb-2 flex items-center justify-between">
+<span id="specGeomTitle">Slot Height Geometry</span>
+<span class="text-emerald-700 font-mono text-xs">Σ = 320 px</span>
+</h3>
+<ul class="space-y-1.5 text-slate-600">
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Строка статуса (Header):</span>
+<span class="font-mono font-bold text-slate-900">20 px</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span id="specHeroLabel">Hero Слот (50.0% от 280px):</span>
+<span class="font-mono font-bold text-emerald-800" id="specHeroPx">140 px</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span id="specStby1Label">Standby Слот 1 (25.0%):</span>
+<span class="font-mono font-bold text-slate-900" id="specStby1Px">70 px</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span id="specStby2Label">Standby Слот 2 (25.0%):</span>
+<span class="font-mono font-bold text-slate-900" id="specStby2Px">70 px</span>
+</li>
+<li class="flex justify-between">
+<span>Нижняя панель (Softkeys):</span>
+<span class="font-mono font-bold text-slate-900">20 px</span>
+</li>
+</ul>
+<div class="mt-3 pt-2 text-[11px] text-slate-500 border-t border-slate-200" id="specSummaryText">Slot order is fixed (A, B, C). The selected slot takes the calculated hero height showing full subtone and RF params; background slots adapt smoothly without empty black space (Zero Dead-Space).</div>
+</div>
+<!-- Box 2: Palette Table -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-palette">
+<h3 class="font-bold text-slate-800 text-sm mb-2">Цветовая палитра RGB565</h3>
+<table class="w-full text-left font-mono text-[11px]">
+<thead>
+<tr class="text-slate-400 border-b border-slate-200">
+<th class="pb-1">Элемент</th>
+<th class="pb-1">HEX</th>
+<th class="pb-1">RGB565</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 text-slate-700">
+<tr>
+<td class="py-1">Dark Фон</td>
+<td>#0C1015</td>
+<td class="text-slate-900 font-bold">0x0882</td>
+</tr>
+<tr>
+<td class="py-1">Dark Карточка</td>
+<td>#161C24</td>
+<td class="text-slate-900 font-bold">0x10E4</td>
+</tr>
+<tr>
+<td class="py-1">Light Фон</td>
+<td>#FFFFFF</td>
+<td class="text-slate-900 font-bold">0xFFFF</td>
+</tr>
+<tr>
+<td class="py-1">Light Карточка</td>
+<td>#E9EDF2</td>
+<td class="text-slate-900 font-bold">0xE77C</td>
+</tr>
+<tr>
+<td class="py-1">Текст Dark</td>
+<td>#F8FAFC</td>
+<td class="text-slate-900 font-bold">0xFFDF</td>
+</tr>
+<tr>
+<td class="py-1">Текст Light</td>
+<td>#0F172A</td>
+<td class="text-slate-900 font-bold">0x08A5</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Box 3: Typography & Indicators -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-typo">
+<h3 class="font-bold text-slate-800 text-sm mb-2">Шрифты и Индикация</h3>
+<ul class="space-y-1.5 text-slate-600">
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Hero Частота (Active):</span>
+<span class="font-mono font-bold text-slate-900">25 pt Mono</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Standby Частота:</span>
+<span class="font-mono font-bold text-slate-900">15 pt Mono</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Параметры / Субтоны:</span>
+<span class="font-mono font-bold text-slate-900">9 pt Sans</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Индикатор RX:</span>
+<span class="font-mono text-xs text-slate-900">Инверсный бейдж</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Индикатор TX:</span>
+<span class="font-mono text-xs text-rose-600 font-bold">Контрастный бейдж TX</span>
+</li>
+<li class="flex justify-between">
+<span>Шкала S-метра:</span>
+<span class="font-mono text-xs text-slate-700">Сплошной монолит (1-1.5 px)</span>
+</li>
+</ul>
+</div>
+</div>
+</section>
+<!-- END: FirmwareSpecsTable -->
+<!-- BEGIN: InteractiveScriptHandlers -->
+<script data-purpose="simulator-engine">
+    // State machine for the simulation
+    const TOTAL_SLOTS_HEIGHT = 280; // Total height for middle slots (320 - 20 header - 20 footer)
+
+    const state = {
+      activeSlot: 'B',       // 'A' | 'B' | 'C'
+      heroPercent: 50.0,     // 33.33 to 80%
+      isTx: false,           // boolean
+      showVoltage: false,    // boolean
+      language: 'RU',        // 'RU' | 'EN'
+      zoom: '1x'             // '1x' | '1.5x' | '2x'
+    };
+
+    // Dictionary for Localization
+    const i18n = {
+      RU: {
+        mainTitle: "Главный экран",
+        mainDesc: "Интерактивный выбор пропорций 3 слотов (всего 280 px). Zero Dead-Space архитектура LCD 240 × 320.",
+        txBtnNormal: "Показать TX",
+        txBtnActive: "Передача TX [ON]",
+        voltCheck: "Напряжение в статус-баре",
+        darkLabel: "Тёмная тема",
+        lightLabel: "Светлая тема",
+        stepLabel: "Шаг",
+        key1: "OK Меню",
+        key2: "ABC Слот",
+        key3: "V/M CH",
+        stepUnit: "ШАГ 12.5k",
+        heroShare: "Hero доля:",
+        slotRatioGroup: "Пропорции слотов:",
+        activeSlotGroup: "Активный слот:",
+        specGeom: "Геометрия высот слотов",
+        specSummary: "Порядок слотов неизменен (A, B, C). Выбранный слот занимает вычисленную высоту с показом расширенных субтонов и частоты; фоновые слоты плавно адаптируются без черных пустот (Zero Dead-Space)."
+      },
+      EN: {
+        mainTitle: "Main Screen",
+        mainDesc: "Interactive 3-slot ratio configuration (280 px total). Zero Dead-Space 240 × 320 LCD architecture.",
+        txBtnNormal: "Simulate TX",
+        txBtnActive: "Transmitting TX",
+        voltCheck: "Status Bar Voltage",
+        darkLabel: "Dark Theme",
+        lightLabel: "Light Theme",
+        stepLabel: "Step",
+        key1: "OK Menu",
+        key2: "ABC Slot",
+        key3: "V/M CH",
+        stepUnit: "STEP 12.5k",
+        heroShare: "Hero Ratio:",
+        slotRatioGroup: "Slot Ratio Presets:",
+        activeSlotGroup: "Active Slot:",
+        specGeom: "Slot Height Geometry",
+        specSummary: "Slot order is fixed (A, B, C). The selected slot takes the calculated hero height showing full subtone and RF params; background slots adapt smoothly without empty black space (Zero Dead-Space)."
+      }
+    };
+
+    // Slot frequency & standard standby labels
+    const slotData = {
+      A: {
+        freqStandby: "446.01875",
+        freqTx: "446.01875",
+        defaultBadge: "RX",
+        stbyDarkBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-200 text-black",
+        stbyLightBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-900 text-white"
+      },
+      B: {
+        freqStandby: "145.50000",
+        freqTx: "146.10000",
+        defaultBadge: "STBY",
+        stbyDarkBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-700 text-slate-300",
+        stbyLightBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded bg-slate-300 text-slate-800"
+      },
+      C: {
+        freqStandby: "433.07500",
+        freqTx: "433.07500",
+        defaultBadge: "RX ONLY",
+        stbyDarkBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded border border-slate-500 text-slate-300",
+        stbyLightBadgeClass: "badge-status px-1 py-0.2 text-[9px] font-bold rounded border border-slate-700 text-slate-900"
+      }
+    };
+
+    // DOM Reference Cache
+    const dom = {
+      // Slot elements Dark
+      darkSlotA: document.getElementById('darkSlotA'),
+      darkSlotB: document.getElementById('darkSlotB'),
+      darkSlotC: document.getElementById('darkSlotC'),
+      darkBadgeA: document.getElementById('darkBadgeA'),
+      darkBadgeB: document.getElementById('darkBadgeB'),
+      darkBadgeC: document.getElementById('darkBadgeC'),
+      // Slot elements Light
+      lightSlotA: document.getElementById('lightSlotA'),
+      lightSlotB: document.getElementById('lightSlotB'),
+      lightSlotC: document.getElementById('lightSlotC'),
+      lightBadgeA: document.getElementById('lightBadgeA'),
+      lightBadgeB: document.getElementById('lightBadgeB'),
+      lightBadgeC: document.getElementById('lightBadgeC'),
+      // Freq outputs Dark
+      darkFreqA: document.getElementById('darkFreqA'),
+      darkFreqB: document.getElementById('darkFreqB'),
+      darkFreqC: document.getElementById('darkFreqC'),
+      darkFreqLineA: document.getElementById('darkFreqLineA'),
+      darkFreqLineB: document.getElementById('darkFreqLineB'),
+      darkFreqLineC: document.getElementById('darkFreqLineC'),
+      // Freq outputs Light
+      lightFreqA: document.getElementById('lightFreqA'),
+      lightFreqB: document.getElementById('lightFreqB'),
+      lightFreqC: document.getElementById('lightFreqC'),
+      lightFreqLineA: document.getElementById('lightFreqLineA'),
+      lightFreqLineB: document.getElementById('lightFreqLineB'),
+      lightFreqLineC: document.getElementById('lightFreqLineC'),
+      // Status Badges
+      darkBadgeSlotA: document.getElementById('darkBadgeSlotA'),
+      darkBadgeSlotB: document.getElementById('darkBadgeSlotB'),
+      darkBadgeSlotC: document.getElementById('darkBadgeSlotC'),
+      lightBadgeSlotA: document.getElementById('lightBadgeSlotA'),
+      lightBadgeSlotB: document.getElementById('lightBadgeSlotB'),
+      lightBadgeSlotC: document.getElementById('lightBadgeSlotC'),
+      // Volt indicators
+      darkVoltVal: document.getElementById('darkVoltVal'),
+      lightVoltVal: document.getElementById('lightVoltVal'),
+      chkVolt: document.getElementById('chkVolt'),
+      // TX button
+      btnTxToggle: document.getElementById('btnTxToggle'),
+      indicatorTxDot: document.getElementById('indicatorTxDot'),
+      lblTxBtn: document.getElementById('lblTxBtn'),
+      // Controls
+      btnSlotA: document.getElementById('btnSlotA'),
+      btnSlotB: document.getElementById('btnSlotB'),
+      btnSlotC: document.getElementById('btnSlotC'),
+      // Preset buttons
+      btnRatio70: document.getElementById('btnRatio70'),
+      btnRatio60: document.getElementById('btnRatio60'),
+      btnRatio50: document.getElementById('btnRatio50'),
+      btnRatio33: document.getElementById('btnRatio33'),
+      ratioSlider: document.getElementById('ratioSlider'),
+      sliderValuePercent: document.getElementById('sliderValuePercent'),
+      sliderValuePx: document.getElementById('sliderValuePx'),
+      // Spec outputs
+      specLiveBadge: document.getElementById('specLiveBadge'),
+      specHeroLabel: document.getElementById('specHeroLabel'),
+      specHeroPx: document.getElementById('specHeroPx'),
+      specStby1Label: document.getElementById('specStby1Label'),
+      specStby1Px: document.getElementById('specStby1Px'),
+      specStby2Label: document.getElementById('specStby2Label'),
+      specStby2Px: document.getElementById('specStby2Px'),
+      specGeomTitle: document.getElementById('specGeomTitle'),
+      specSummaryText: document.getElementById('specSummaryText'),
+      // Zoom containers
+      darkZoom: document.getElementById('darkZoomWrapper'),
+      lightZoom: document.getElementById('lightZoomWrapper')
+    };
+
+    /**
+     * Calculate Heights for Hero and 2 Standby slots to perfectly sum to 280 px
+     */
+    function calculateSlotHeights(heroPercent) {
+      if (Math.abs(heroPercent - 33.33) < 0.5) {
+        // Equal mode 33 / 33 / 33 (280 = 94 + 93 + 93)
+        return {
+          heroPx: 94,
+          stby1Px: 93,
+          stby2Px: 93,
+          stbyPercent: 33.33
+        };
+      }
+
+      const rawHero = Math.round(TOTAL_SLOTS_HEIGHT * (heroPercent / 100));
+      const heroPx = Math.max(94, Math.min(224, rawHero));
+      const remaining = TOTAL_SLOTS_HEIGHT - heroPx;
+      const stby1Px = Math.floor(remaining / 2);
+      const stby2Px = remaining - stby1Px;
+      const stbyPercent = ((100 - heroPercent) / 2);
+
+      return {
+        heroPx,
+        stby1Px,
+        stby2Px,
+        stbyPercent
+      };
+    }
+
+    /**
+     * Switch Active Slot (A, B, C)
+     */
+    function setActiveSlot(slotLetter) {
+      state.activeSlot = slotLetter;
+
+      // Update control button highlights
+      [
+        { key: 'A', btn: dom.btnSlotA },
+        { key: 'B', btn: dom.btnSlotB },
+        { key: 'C', btn: dom.btnSlotC }
+      ].forEach(item => {
+        if (item.key === slotLetter) {
+          item.btn.className = "h-8 w-8 rounded border border-slate-800 bg-slate-800 text-white font-bold text-xs shadow-sm";
+        } else {
+          item.btn.className = "h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm";
+        }
+      });
+
+      renderSlots();
+    }
+
+    /**
+     * Cycle next slot A -> B -> C -> A
+     */
+    function cycleSlot() {
+      const order = ['A', 'B', 'C'];
+      const nextIdx = (order.indexOf(state.activeSlot) + 1) % order.length;
+      setActiveSlot(order[nextIdx]);
+    }
+
+    /**
+     * Set ratio preset (70, 60, 50, 33.33)
+     */
+    function setRatioPreset(percent) {
+      state.heroPercent = percent;
+      dom.ratioSlider.value = percent;
+      updatePresetButtonStyles(percent);
+      renderSlots();
+    }
+
+    /**
+     * On Slider Change
+     */
+    function onRatioSliderInput(val) {
+      state.heroPercent = val;
+      updatePresetButtonStyles(val);
+      renderSlots();
+    }
+
+    /**
+     * Update preset buttons active highlight
+     */
+    function updatePresetButtonStyles(val) {
+      const presets = [
+        { el: dom.btnRatio70, target: 70 },
+        { el: dom.btnRatio60, target: 60 },
+        { el: dom.btnRatio50, target: 50 },
+        { el: dom.btnRatio33, target: 33.33 }
+      ];
+
+      presets.forEach(p => {
+        if (Math.abs(p.target - val) < 1.0) {
+          p.el.className = "h-7 px-2.5 rounded border border-slate-800 bg-slate-800 text-white font-semibold text-xs transition-all shadow-sm";
+        } else {
+          p.el.className = "h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-xs transition-all shadow-sm";
+        }
+      });
+    }
+
+    /**
+     * Re-render LCD displays, slot heights, frequency text, badges & TX state
+     */
+    function renderSlots() {
+      const heights = calculateSlotHeights(state.heroPercent);
+      const is33 = Math.abs(state.heroPercent - 33.33) < 0.5;
+
+      // Update slider readout
+      dom.sliderValuePercent.textContent = is33 ? "33.3%" : `${state.heroPercent.toFixed(1)}%`;
+      dom.sliderValuePx.textContent = `(${heights.heroPx} px)`;
+
+      // Apply to Dark & Light themes
+      ['dark', 'light'].forEach(theme => {
+        const isDark = (theme === 'dark');
+        const slots = [
+          {
+            key: 'A',
+            el: isDark ? dom.darkSlotA : dom.lightSlotA,
+            badgeEl: isDark ? dom.darkBadgeA : dom.lightBadgeA,
+            badgeSlotEl: isDark ? dom.darkBadgeSlotA : dom.lightBadgeSlotA,
+            heroFreqEl: isDark ? dom.darkFreqA : dom.lightFreqA,
+            lineFreqEl: isDark ? dom.darkFreqLineA : dom.lightFreqLineA
+          },
+          {
+            key: 'B',
+            el: isDark ? dom.darkSlotB : dom.lightSlotB,
+            badgeEl: isDark ? dom.darkBadgeB : dom.lightBadgeB,
+            badgeSlotEl: isDark ? dom.darkBadgeSlotB : dom.lightBadgeSlotB,
+            heroFreqEl: isDark ? dom.darkFreqB : dom.lightFreqB,
+            lineFreqEl: isDark ? dom.darkFreqLineB : dom.lightFreqLineB
+          },
+          {
+            key: 'C',
+            el: isDark ? dom.darkSlotC : dom.lightSlotC,
+            badgeEl: isDark ? dom.darkBadgeC : dom.lightBadgeC,
+            badgeSlotEl: isDark ? dom.darkBadgeSlotC : dom.lightBadgeSlotC,
+            heroFreqEl: isDark ? dom.darkFreqC : dom.lightFreqC,
+            lineFreqEl: isDark ? dom.darkFreqLineC : dom.lightFreqLineC
+          }
+        ];
+
+        // Determine which slot gets stby1Px and which gets stby2Px
+        let stbyCount = 0;
+
+        slots.forEach(slot => {
+          const isHero = (slot.key === state.activeSlot);
+          let assignedHeight = 0;
+
+          if (isHero) {
+            assignedHeight = heights.heroPx;
+          } else {
+            stbyCount++;
+            assignedHeight = (stbyCount === 1) ? heights.stby1Px : heights.stby2Px;
+          }
+
+          slot.el.style.height = `${assignedHeight}px`;
+
+          // Visual styles: Active Card vs Standby
+          if (isHero) {
+            slot.el.style.backgroundColor = isDark ? "#161c24" : "#e9edf2";
+            if (isDark) {
+              slot.badgeEl.className = "inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-300 bg-slate-100 text-black";
+            } else {
+              slot.badgeEl.className = "inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-900 bg-slate-900 text-white";
+            }
+          } else {
+            slot.el.style.backgroundColor = isDark ? "#0c1015" : "#ffffff";
+            if (isDark) {
+              slot.badgeEl.className = "inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-400 bg-[#161c24] text-white";
+            } else {
+              slot.badgeEl.className = "inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-800 bg-white text-slate-900";
+            }
+          }
+
+          // TX vs Standby badge & frequency logic
+          const meta = slotData[slot.key];
+          const isTxTransmitting = state.isTx && isHero;
+
+          if (isTxTransmitting) {
+            // Active Hero Slot in TX mode
+            slot.badgeSlotEl.textContent = "TX";
+            slot.badgeSlotEl.className = "badge-status px-1.5 py-0.2 text-[9px] font-bold rounded bg-red-600 text-white uppercase tracking-wider animate-pulse";
+
+            // Red frequency for TX
+            const displayFreq = meta.freqTx;
+            if (slot.heroFreqEl) {
+              slot.heroFreqEl.textContent = displayFreq;
+              slot.heroFreqEl.className = "freq-mono font-bold tracking-tight text-[#ef4444] leading-none text-[25px]";
+            }
+            if (slot.lineFreqEl) {
+              slot.lineFreqEl.textContent = displayFreq;
+              slot.lineFreqEl.className = "freq-mono font-bold tracking-tight text-[#ef4444] leading-none text-[15px]";
+            }
+          } else {
+            // Standby or Active Slot with TX off
+            slot.badgeSlotEl.textContent = meta.defaultBadge;
+            slot.badgeSlotEl.className = isDark ? meta.stbyDarkBadgeClass : meta.stbyLightBadgeClass;
+
+            const displayFreq = meta.freqStandby;
+            const darkFreqClass = isHero ? "text-white" : "text-white";
+            const lightFreqClass = isHero ? "text-[#0b121e]" : "text-slate-950";
+
+            if (slot.heroFreqEl) {
+              slot.heroFreqEl.textContent = displayFreq;
+              slot.heroFreqEl.className = `freq-mono font-bold tracking-tight ${isDark ? darkFreqClass : lightFreqClass} leading-none text-[25px]`;
+            }
+            if (slot.lineFreqEl) {
+              slot.lineFreqEl.textContent = displayFreq;
+              slot.lineFreqEl.className = `freq-mono font-bold tracking-tight ${isDark ? 'text-white' : 'text-slate-950'} leading-none text-[15px]`;
+            }
+          }
+
+          // Toggle internal views: Hero frequency box vs inline freq line, and full details
+          const heroFreqBox = slot.el.querySelector('.hero-freq-box');
+          const inlineFreq = slot.lineFreqEl;
+          const slotDetails = slot.el.querySelector('.slot-details');
+          const txExtra = slot.el.querySelector('.detail-tx-extra');
+
+          if (heroFreqBox && inlineFreq) {
+            if (isHero) {
+              // Show big Hero Freq box if slot is sufficiently tall (>= 90px)
+              if (assignedHeight >= 90) {
+                heroFreqBox.classList.remove('hidden');
+                heroFreqBox.classList.add('flex');
+                inlineFreq.classList.add('hidden');
+              } else {
+                heroFreqBox.classList.add('hidden');
+                heroFreqBox.classList.remove('flex');
+                inlineFreq.classList.remove('hidden');
+              }
+            } else {
+              heroFreqBox.classList.add('hidden');
+              heroFreqBox.classList.remove('flex');
+              inlineFreq.classList.remove('hidden');
+            }
+          }
+
+          // Details visibility (only for hero slot when height >= 90px)
+          if (slotDetails) {
+            if (isHero && assignedHeight >= 90) {
+              slotDetails.classList.remove('hidden');
+              slotDetails.classList.add('flex');
+
+              // If slot is very tight (e.g. 94px in equal mode), hide tx extra row to prevent overflow
+              if (txExtra) {
+                if (assignedHeight >= 135) {
+                  txExtra.classList.remove('hidden');
+                  txExtra.classList.add('flex');
+                } else {
+                  txExtra.classList.add('hidden');
+                  txExtra.classList.remove('flex');
+                }
+              }
+            } else {
+              slotDetails.classList.add('hidden');
+              slotDetails.classList.remove('flex');
+            }
+          }
+        });
+      });
+
+      // Update Live Engineering Specification in real-time
+      updateEngineeringSpecs(heights);
+    }
+
+    /**
+     * Update specification box text and numbers
+     */
+    function updateEngineeringSpecs(heights) {
+      const heroRounded = heights.heroPx;
+      const stby1 = heights.stby1Px;
+      const stby2 = heights.stby2Px;
+      const heroPercentStr = Math.abs(state.heroPercent - 33.33) < 0.5 ? "33.3%" : `${state.heroPercent.toFixed(1)}%`;
+      const stbyPercentStr = Math.abs(state.heroPercent - 33.33) < 0.5 ? "33.3%" : `${heights.stbyPercent.toFixed(1)}%`;
+
+      dom.specLiveBadge.textContent = `РЕЖИМ: ${heroPercentStr} / ${stbyPercentStr} / ${stbyPercentStr} (${heroRounded} + ${stby1} + ${stby2} = 280 px)`;
+
+      dom.specHeroLabel.textContent = `Hero Слот (${heroPercentStr} от 280px):`;
+      dom.specHeroPx.textContent = `${heroRounded} px`;
+
+      dom.specStby1Label.textContent = `Standby Слот 1 (${stbyPercentStr}):`;
+      dom.specStby1Px.textContent = `${stby1} px`;
+
+      dom.specStby2Label.textContent = `Standby Слот 2 (${stbyPercentStr}):`;
+      dom.specStby2Px.textContent = `${stby2} px`;
+    }
+
+    /**
+     * Toggle Transmit (TX) mode
+     */
+    function toggleTX() {
+      state.isTx = !state.isTx;
+
+      if (state.isTx) {
+        // Transmitter ON
+        dom.btnTxToggle.classList.add('border-rose-500', 'bg-rose-50', 'text-rose-700');
+        dom.indicatorTxDot.classList.replace('bg-slate-400', 'bg-rose-600');
+        dom.lblTxBtn.textContent = i18n[state.language].txBtnActive;
+      } else {
+        // Transmitter OFF
+        dom.btnTxToggle.classList.remove('border-rose-500', 'bg-rose-50', 'text-rose-700');
+        dom.indicatorTxDot.classList.replace('bg-rose-600', 'bg-slate-400');
+        dom.lblTxBtn.textContent = i18n[state.language].txBtnNormal;
+      }
+
+      // Re-render slots so active slot immediately reflects TX / STBY status
+      renderSlots();
+    }
+
+    /**
+     * Toggle Voltmeter display in Status Bar
+     */
+    function toggleVolt(show) {
+      state.showVoltage = show;
+      if (show) {
+        dom.darkVoltVal.classList.remove('hidden');
+        dom.lightVoltVal.classList.remove('hidden');
+      } else {
+        dom.darkVoltVal.classList.add('hidden');
+        dom.lightVoltVal.classList.add('hidden');
+      }
+    }
+
+    /**
+     * Set Display Zoom factor (1x, 1.5x, 2x)
+     */
+    function setZoom(factor) {
+      state.zoom = factor;
+      ['btnZoom1', 'btnZoom15', 'btnZoom2'].forEach(id => {
+        document.getElementById(id).className = "px-2 py-1 rounded text-slate-600 hover:bg-slate-100";
+      });
+
+      const activeBtnId = factor === '1x' ? 'btnZoom1' : (factor === '1.5x' ? 'btnZoom15' : 'btnZoom2');
+      document.getElementById(activeBtnId).className = "px-2 py-1 rounded bg-slate-200 text-slate-800 font-bold";
+
+      const scaleClass = factor === '1x' ? 'zoom-1x' : (factor === '1.5x' ? 'zoom-15x' : 'zoom-2x');
+      dom.darkZoom.className = `scale-wrapper ${scaleClass}`;
+      dom.lightZoom.className = `scale-wrapper ${scaleClass}`;
+    }
+
+    /**
+     * Language switch RU/EN
+     */
+    function setLanguage(lang) {
+      state.language = lang;
+      const t = i18n[lang];
+
+      document.getElementById('lblTitleMain').textContent = t.mainTitle;
+      document.getElementById('lblTitleDesc').textContent = t.mainDesc;
+      document.getElementById('lblVolt').textContent = t.voltCheck;
+      document.getElementById('lblThemeDark').textContent = t.darkLabel;
+      document.getElementById('lblThemeLight').textContent = t.lightLabel;
+      document.getElementById('lblSliderHero').textContent = t.heroShare;
+      document.getElementById('lblRatioPresets').textContent = t.slotRatioGroup;
+      document.getElementById('lblActiveSlotGroup').textContent = t.activeSlotGroup;
+      dom.specGeomTitle.textContent = t.specGeom;
+      dom.specSummaryText.textContent = t.specSummary;
+      dom.lblTxBtn.textContent = state.isTx ? t.txBtnActive : t.txBtnNormal;
+
+      // Softkeys
+      document.getElementById('darkKey1').textContent = t.key1;
+      document.getElementById('lightKey1').textContent = t.key1;
+      document.getElementById('darkKey2').textContent = t.key2;
+      document.getElementById('lightKey2').textContent = t.key2;
+      document.getElementById('darkKey3').textContent = t.key3;
+      document.getElementById('lightKey3').textContent = t.key3;
+
+      document.querySelector('#darkKey4 span').textContent = t.stepLabel;
+      document.querySelector('#lightKey4 span').textContent = t.stepLabel;
+      document.getElementById('darkStepB').textContent = t.stepUnit;
+      document.getElementById('lightStepB').textContent = t.stepUnit;
+
+      // Toggle active lang buttons
+      if (lang === 'RU') {
+        document.getElementById('btnLangRu').className = "px-2.5 py-1 rounded bg-slate-800 text-white";
+        document.getElementById('btnLangEn').className = "px-2.5 py-1 rounded text-slate-600 hover:text-slate-900";
+      } else {
+        document.getElementById('btnLangRu').className = "px-2.5 py-1 rounded text-slate-600 hover:text-slate-900";
+        document.getElementById('btnLangEn').className = "px-2.5 py-1 rounded bg-slate-800 text-white";
+      }
+
+      renderSlots();
+    }
+
+    // Initial layout execution
+    window.addEventListener('DOMContentLoaded', () => {
+      setActiveSlot('B');
+      setRatioPreset(50);
+    });
+  </script>
+<!-- END: InteractiveScriptHandlers -->
+</body></html>

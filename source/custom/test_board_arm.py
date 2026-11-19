@@ -97,6 +97,59 @@ assert bytes(startup.u.mem_read(symbols['custom_reset_flags'],1))==b'\x0c'
 assert struct.unpack('<I',startup.u.mem_read(0x40021024,4))[0]==((1<<24)|1)
 print('ARM reset telemetry: real Reset_Handler captures combined CRM flags before SystemInit PASS')
 
+# Model only the read-only ready and source-status signals of the clock tree.
+crm=0x40021000
+m=Machine(raw)
+clock_changes=[]
+def clock_status(u,access,address,size,value,data):
+    old=struct.unpack('<I',u.mem_read(address,4))[0]
+    if address==crm:
+        old=(old&~0x02020002)|((old&0x01010001)<<1)
+    else:
+        selection=old&3
+        if selection==2:
+            control=struct.unpack('<I',u.mem_read(crm,4))[0]
+            assert control&0x01010000==0x01010000 and old&(1<<16)
+        old=(old&~12)|(selection<<2)
+    u.mem_write(address,struct.pack('<I',old))
+def clock_write(u,access,address,size,value,data):
+    clock_changes.append((address,value))
+    if address==crm and not value&1 and value&(1<<24):
+        assert struct.unpack('<I',u.mem_read(crm+4,4))[0]&12==8
+m.u.hook_add(UC_HOOK_MEM_READ,clock_status,begin=crm,end=crm+4)
+m.u.hook_add(UC_HOOK_MEM_WRITE,clock_write,begin=crm,end=crm+4)
+m.function('SystemInit')
+assert m.u.reg_read(UC_ARM_REG_PC)==STOP
+control,config=struct.unpack('<II',m.u.mem_read(crm,8))
+assert control&0x01010001==0x01010000
+assert config&0x80353f0f==0x8035240a
+timer=0x40000400
+def read32(machine,address):
+    return struct.unpack('<I',machine.u.mem_read(address,4))[0]
+assert read32(m,0xe000e010)==0
+assert read32(m,crm+0x1c)&2
+assert read32(m,timer)==1 and read32(m,timer+0x0c)==3
+assert read32(m,timer+0x28)==59999 and read32(m,timer+0x2c)==0xffff
+assert read32(m,timer+0x34)==2 and read32(m,0xe000e100)==1<<29
+assert read32(m,BASE+45*4)==symbols['TIM3_IRQHandler']|1
+print('ARM HICK gating: confirmed PLL, APB /2, TIM3 clock and actual IRQ vector PASS')
+
+m=Machine(raw)
+m.u.mem_write(crm+0x14,struct.pack('<I',0x40))
+dma_channels=[0x40020008+20*i for i in range(7)]+[0x40020408+20*i for i in range(5)]
+for address in dma_channels:m.u.mem_write(address,struct.pack('<I',1))
+m.u.mem_write(crm+0x18,struct.pack('<I',1<<14))
+m.u.mem_write(0x4001380c,struct.pack('<I',0x2008))
+m.u.mem_write(GPIO[0]+4,struct.pack('<I',0xaaaa))
+m.function('board_init')
+assert not read32(m,crm+0x18)&(1<<14) and read32(m,0x4001380c)==0
+assert not read32(m,GPIO[0]+4)&0xff0 and not m.odr[GPIO[1]]&(1<<9)
+assert (read32(m,GPIO[0])>>24)&15==2 and not m.odr[GPIO[0]]&64
+print('ARM BLE cold boot: inherited USART1 off, PA9/PA10 isolated and PB9 low PASS')
+assert struct.unpack('<I',m.u.mem_read(crm+0x14,4))[0]==0x40
+assert all(bytes(m.u.mem_read(address,4))==bytes(4) for address in dma_channels)
+print('ARM DMA idle gates: inherited channels cleared, both controllers off, unrelated AHB clocks preserved PASS')
+
 m=Machine(raw)
 for size in (256,512,1024,65535):
     m.u.mem_write(0x1ffff7e0,struct.pack('<H',size))
@@ -153,7 +206,7 @@ print('ARM GPIO configuration: columns match OEM push-pull PASS (electrical hypo
 m=Machine(raw);m.cut=True
 shutdown_delays=[]
 def shutdown_delay(u,address,size,data):
-    assert not u.reg_read(UC_ARM_REG_PRIMASK),'SysTick delay must run with interrupts enabled'
+    assert not u.reg_read(UC_ARM_REG_PRIMASK),'Timer delay must run with interrupts enabled'
     shutdown_delays.append(u.reg_read(UC_ARM_REG_R0));u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
 m.u.hook_add(UC_HOOK_CODE,shutdown_delay,begin=symbols['delay_ms'],end=symbols['delay_ms'])
 m.function('board_power_cut')
@@ -169,7 +222,16 @@ assert struct.unpack('<I',m.u.mem_read(0x4000480c,4))[0]==0
 print('ARM shutdown: PA11/PB9, backlight, GPS UART and safe routing PASS')
 
 m=Machine(raw)
+def gps_reg(address):
+    return struct.unpack('<I',m.u.mem_read(address,4))[0]
+def uart_requires_clock(u,access,address,size,value,data):
+    assert gps_reg(crm+0x1c)&(1<<18),'USART3 access while its clock is gated'
+m.u.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,uart_requires_clock,begin=0x40004800,end=0x4000481b)
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_gps_enable')
+assert not gps_reg(crm+0x1c)&(1<<18)
+m.function('USART3_IRQHandler')
 m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_gps_enable')
+assert gps_reg(crm+0x1c)&(1<<18) and gps_reg(0x40004808)==6250
 sentence=b'$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n'
 for ch in sentence:
     m.u.mem_write(0x40004800,struct.pack('<II',32,ch))
@@ -182,14 +244,116 @@ assert m.function('board_gps_errors')==0
 assert m.function('board_gps_dropped')==0
 m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_gps_enable')
 assert bytes(m.u.mem_read(nav+16,2))==b'\0\0','disabled GPS must not retain a live fix'
-print('ARM GPS: IRQ ring, NMEA fix, byte counters, disable/reset PASS')
+assert not gps_reg(crm+0x1c)&(1<<18) and gps_reg(GPIO[1]+4)&0xff00==0
+assert m.odr[GPIO[0]]&(1<<8)
+m.function('USART3_IRQHandler')
+m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_gps_enable')
+assert gps_reg(crm+0x1c)&(1<<18) and gps_reg(GPIO[1]+4)&0xff00==0x8400
+assert not m.odr[GPIO[0]]&(1<<8)
+print('ARM GPS: IRQ ring, NMEA fix, disable/reset, gated port access, pin isolation and restore PASS')
+gps_wire=[]
+m.u.hook_add(UC_HOOK_MEM_WRITE,lambda u,access,address,size,value,data:gps_wire.append(value),
+             begin=0x40004804,end=0x40004804)
+gps_frame=b'$PCAS12,60*28\r\n'
+m.u.mem_write(0x20011000,gps_frame)
+def queue_gps(now=1):
+    m.u.reg_write(UC_ARM_REG_R0,0x20011000)
+    m.u.reg_write(UC_ARM_REG_R1,len(gps_frame))
+    m.u.reg_write(UC_ARM_REG_R2,now)
+    m.function('board_gps_send')
+def tx_poll(inhibit=False,now=1):
+    m.u.reg_write(UC_ARM_REG_R0,int(inhibit))
+    m.u.reg_write(UC_ARM_REG_R1,now)
+    return m.function('board_gps_transmit')
+queue_gps()
+assert gps_reg(0x4000480c)&8 and gps_reg(GPIO[1]+4)&0xff00==0x8a00
+m.u.mem_write(0x40004800,struct.pack('<I',0))
+assert tx_poll() and not gps_wire
+assert not tx_poll(now=501) and not gps_wire
+queue_gps(501)
+m.u.mem_write(0x40004800,struct.pack('<I',0xc0))
+for _ in gps_frame:assert tx_poll(now=501)
+assert not tx_poll(now=501)
+assert bytes(gps_wire)==gps_frame, gps_wire
+queue_gps()
+assert tx_poll() and not tx_poll(True) and bytes(gps_wire)==gps_frame+b'$'
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_gps_enable')
+assert not gps_reg(crm+0x1c)&(1<<18) and not tx_poll()
+print('ARM GPS UART TX: PB10, nonblocking framed standby, UART timeout, PTT cancels unsent bytes and OFF isolation PASS')
 
-m=Machine(raw)
-m.u.mem_write(symbols['custom_watchdog_armed'],b'\x01')
-m.u.mem_write(symbols['custom_heartbeat'],struct.pack('<I',0))
-for _ in range(600):m.function('SysTick_Handler')
-assert m.feeds==499,m.feeds
-print('ARM watchdog: foreground stall stops tick feeding at 500ms PASS')
+class WakeTimer(Machine):
+    flags=0
+    def read(self,u,access,address,size,value,data):
+        if address==timer+0x10:
+            u.mem_write(address,struct.pack('<I',self.flags))
+        super().read(u,access,address,size,value,data)
+    def write(self,u,access,address,size,value,data):
+        if address==timer+0x10:
+            self.flags &= value
+        super().write(u,access,address,size,value,data)
+    def at(self,count,flags=0):
+        self.u.mem_write(timer+0x24,struct.pack('<I',count))
+        self.flags=flags
+    def alarm(self,count,flags=2):
+        self.at(count,flags)
+        self.function('TIM3_IRQHandler')
+
+for step in (1,5):
+    m=WakeTimer(raw)
+    m.u.mem_write(symbols['custom_idle_wake_ms'],bytes([step]))
+    m.u.mem_write(symbols['custom_watchdog_armed'],b'\x01')
+    for t in range(step,601,step):
+        m.alarm(2*t)
+        assert read32(m,timer+0x34)==2*(t+step)
+    assert m.feeds==499//step,m.feeds
+print('ARM watchdog: foreground stall stops compare-IRQ feeding at 500 ms in both modes PASS')
+
+m=WakeTimer(raw)
+m.at(0xfffe)
+assert m.function('get_tick')==0x7fff
+m.at(0,1)
+assert m.function('get_tick')==0x8000
+m.alarm(2,3)
+assert m.function('get_tick')==0x8001 and read32(m,timer+0x34)==4
+m.u.mem_write(symbols['timer_epoch_ms'],struct.pack('<I',0xffff8000))
+m.at(0xfffe)
+assert m.function('get_tick')==0xffffffff
+m.alarm(0,1)
+assert m.function('get_tick')==0
+print('ARM TIM3 time base: millisecond reads, pending overflow, combined IRQ and 32-bit wrap PASS')
+
+for fail_low in (False,True):
+    m=Machine(raw)
+    m.u.mem_map(0xe0001000,0x1000)
+    m.u.hook_add(UC_HOOK_MEM_READ,clock_status,begin=crm,end=crm+4)
+    m.function('SystemInit')
+    m.u.mem_write(timer+0x24,struct.pack('<I',4200))
+    m.u.mem_write(crm+0x1c,struct.pack('<I',2|(1<<18)))
+    m.u.reg_write(UC_ARM_REG_R0,1)
+    assert m.call(symbols['board_idle_clock'])==0
+    assert read32(m,timer+0x28)==59999
+    m.u.mem_write(crm+0x1c,struct.pack('<I',2))
+    if fail_low:
+        def low_never_ready(u,access,address,size,value,data):
+            if read32(m,crm+4)&0x803d0000==0x00050000:
+                u.mem_write(crm,struct.pack('<I',read32(m,crm)&~(1<<25)))
+        m.u.hook_add(UC_HOOK_MEM_READ,low_never_ready,begin=crm,end=crm)
+    m.u.reg_write(UC_ARM_REG_R0,1)
+    assert m.call(symbols['board_idle_clock'],budget=800000)==int(not fail_low)
+    assert m.u.reg_read(UC_ARM_REG_PC)==STOP and not m.u.reg_read(UC_ARM_REG_PRIMASK)
+    assert read32(m,crm+4)&0x803d000f==(0x8035000a if fail_low else 0x0005000a)
+    assert read32(m,timer+0x28)==(59999 if fail_low else 11999)
+    assert bytes(m.u.mem_read(symbols['custom_clock_low'],1))==bytes([not fail_low])
+    assert m.function('get_tick')==2100
+    if not fail_low:
+        m.u.reg_write(UC_ARM_REG_R0,0)
+        assert m.call(symbols['board_idle_clock'],budget=800000)==0
+        assert m.u.reg_read(UC_ARM_REG_PC)==STOP
+        assert read32(m,crm+4)&0x803d000f==0x8035000a
+        assert read32(m,timer+0x28)==59999 and m.function('get_tick')==2100
+        assert bytes(m.u.mem_read(symbols['custom_clock_low'],1))==b'\0'
+print('ARM idle clocks: guard active UART, real PLL 24/120 parameters, TIM3 retime and low-lock fallback PASS')
+
 
 class EncoderMachine(Machine):
     state=3
@@ -222,6 +386,20 @@ for _ in range(8):assert m.function('encoder_poll')==1
 assert m.function('encoder_poll')==0
 print('ARM encoder: CW/CCW alternating 00/11 detents, pull-up sampling, invalid transition counter PASS')
 
+for interval,step,expected in ((2,1,50),(25,5,4)):
+ schedule=WakeTimer(raw)
+ schedule.u.mem_write(symbols['custom_encoder_interval'],bytes([interval]))
+ schedule.u.mem_write(symbols['custom_idle_wake_ms'],bytes([step]))
+ samples=[]
+ schedule.u.hook_add(UC_HOOK_CODE,lambda u,address,size,data:samples.append(address),begin=symbols['encoder_tick'],end=symbols['encoder_tick'])
+ for t in range(step,101,step):schedule.alarm(2*t)
+ assert len(samples)==expected,(interval,len(samples))
+ assert schedule.function('get_tick')==100
+ schedule.u.mem_write(symbols['custom_idle_wake_ms'],b'\x01')
+ schedule.alarm(2*(100+step))
+ assert read32(schedule,timer+0x34)==2*(101+step)
+print('ARM idle input: timer compare 1/5 ms, return to 1 ms and encoder 2/25 ms PASS')
+
 # ADC calibration/EOC are advanced explicitly by this peripheral model.
 m=Machine(raw)
 def poll_battery(now):
@@ -230,6 +408,7 @@ def adc(off,value):m.u.mem_write(0x40012800+off,struct.pack('<I',value))
 def reg(off):return struct.unpack('<I',m.u.mem_read(0x40012800+off,4))[0]
 m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_init')
 assert reg(0x34)==1 and reg(0x10)&56==56
+assert struct.unpack('<I',m.u.mem_read(crm+0x18,4))[0]&0x600==0x400
 assert (struct.unpack('<I',m.u.mem_read(GPIO[0],4))[0]>>4)&15==0
 poll_battery(1);assert reg(8)&8
 adc(8,reg(8)&~8);poll_battery(2);assert reg(8)&4
@@ -317,6 +496,7 @@ for rx,tx,want in [(1,0,0x4000),(0,1,0x6000),(0,0,0)]:
     m.u.reg_write(UC_ARM_REG_R0,rx);m.u.reg_write(UC_ARM_REG_R1,tx);m.function('board_radio_led');assert m.odr[GPIO[2]]&0x6000==want
 print('ARM display: ten hardware PWM duties, screen off/wake preserves GPS/power, green/red+green outputs PASS')
 
+screen_text=next(n for n in symbols if n.startswith('_ZN5rt9506screen4textE'))
 class Foreground(Machine):
     """Real main/application/input code; synthetic tick and text LCD sink."""
     def __init__(self):
@@ -338,7 +518,7 @@ class Foreground(Machine):
             u.reg_write(UC_ARM_REG_R0,self.now)
             u.reg_write(UC_ARM_REG_CPSR,u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
             u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
-        if address in [symbols['lcd_draw_string'],symbols['lcd_draw_string_2x']]:
+        if address in [symbols['lcd_draw_string'],symbols['lcd_draw_string_2x'],symbols[screen_text]]:
             ptr=u.reg_read(UC_ARM_REG_R2)
             buf=bytearray()
             for n in range(80):
@@ -346,7 +526,7 @@ class Foreground(Machine):
                 if ch==0:break
                 buf.append(ch)
             self.texts.append(buf.decode('utf-8'))
-        if address in [symbols[n] for n in ('lcd_init','lcd_draw_string','lcd_draw_string_2x','lcd_fill_rect')]:
+        if address in [symbols[n] for n in ('lcd_init','lcd_draw_string','lcd_draw_string_2x','lcd_fill_rect',screen_text)]:
             u.reg_write(UC_ARM_REG_CPSR,u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
             u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR));return
         super().code(u,address,size,data)
@@ -364,9 +544,10 @@ m=Foreground();m.call(symbols['main'],budget=22000000)
 assert m.now>=4050 and m.feeds>=1,('foreground must reach debounced power cut',m.now,m.feeds,
                                   hex(m.u.reg_read(UC_ARM_REG_PC)))
 assert any('435.12500' in line for line in m.texts),'numeric entry not committed/rendered'
-assert 'ACTIVE' in m.texts,'slot cards not rendered'
+assert 'A' in m.texts and 'B' in m.texts and 'C' in m.texts,'slot cards not rendered'
 assert 'Radio' in m.texts and 'GPS' in m.texts,'menu did not render'
 assert not m.odr[GPIO[0]]&(1<<11)
+assert not m.odr[GPIO[0]]&(1<<5) and (read32(m,GPIO[0])>>20)&15==2
 assert struct.unpack('<I',m.u.mem_read(0xe000ed10,4))[0]&6==0
 assert m.odr[GPIO[2]]&0x6000==0,'standby must not assert RX/TX LEDs'
 print('ARM main integration: digit input -> OK commit -> A/B/C -> OK menu -> Back -> shutdown PASS (LCD/tick simulated)')
@@ -532,7 +713,7 @@ print('ARM autosave: no startup write, debounce, PTT guard, shutdown flush and r
 # the last usable old slot to be erased during migration.
 import zlib
 legacy_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8132
 legacy_size=7992 # Immutable prefix; the unused legacy helper is now linker-GC'd.
 legacy_payload=bytes(fm.u.mem_read(0x20015000,legacy_size))
 def storage_record(payload,sequence):
@@ -551,7 +732,7 @@ assert read_string(flash_call(save,fresh,0))==b'STORAGE FORMAT NEWER'
 assert len(fm.erased)==old_erases and len(fm.programmed)==old_programmed
 seed_records()
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8132
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 fm.erased.clear();fm.programmed.clear()
 assert read_string(flash_call(save,fresh,0))==b'SETTINGS SAVED'
@@ -560,7 +741,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 assert fm.get(0x08012000+24)==0x32535452 and fm.get(0x08012000+12)<3000
 assert fm.programmed[-1]==0x08012000+20
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8132
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 # Cut the migrated write before its commit, then boot a fresh MCU model.
 seed_records();fm.erased.clear();fm.programmed.clear();cut_writes=[]
@@ -575,7 +756,7 @@ assert bytes(fm.u.mem_read(0x08010000,8192))==old_slot
 interrupted_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,interrupted_slots)
 flash_call(ctor,fresh,0);flash_call(load,fresh)
-assert flash_call(legacy_dump,fresh,0x20015000,8192)==8116
+assert flash_call(legacy_dump,fresh,0x20015000,8192)==8132
 assert bytes(fm.u.mem_read(0x20015000,legacy_size))==legacy_payload
 print('ARM compact migration: unknown version write guard, legacy fallback, invalid newer record overwritten first, old copy preserved, commit last and power-cut reboot PASS')
 
@@ -603,9 +784,10 @@ assert not fm_hw.odr[GPIO[0]]&64
 probe_poll(1,30,2)
 assert fm_hw.odr[GPIO[0]]&64
 probe_poll(0,40)
-assert crl(GPIO[0])==0x44000000 and crl(GPIO[1])==0x44000000
+assert crl(GPIO[0])==0x42000000 and crl(GPIO[1])==0x44000000
+assert not fm_hw.odr[GPIO[0]]&64
 assert crl(GPIO[2])==0x00040000
-print('ARM FM GPIO model: PC4 low, PA6 reset, PB6 push-pull, PB7 input pull-up, reset on band switch and restore on exit PASS')
+print('ARM FM GPIO model: PC4 low, PA6 reset, PB6 push-pull, PB7 input pull-up, reset on band switch and tuner held reset on exit PASS')
 
 class VoiceMachine(Machine):
     def __init__(self):
@@ -727,14 +909,17 @@ print('ARM NOAA RF: VHF route, muted scan, hardware SQL over RSSI, PTT mute and 
 # Render the new menu page in both languages using real compiled UI calls.
 # Record primitive bounds before the LCD sink skips hardware operations.
 class MenuBounds(Foreground):
-    def call(self,address,budget=250000):
+    def call(self,address,budget=800000):
         # Each call is an isolated ABI entry; the LCD sink redirects PC and
         # clears ITSTATE. Unicorn may reuse translated Thumb blocks with stale
         # conditional state across those redirects. A fresh translation cache
         # prevents a skipped stack-address instruction on the next UI entry.
         # This changes the test model only, not the bytes being executed.
+        # The first Russian render also expands the packed catalog.
         self.u.ctl_flush_tb()
-        return super().call(address,budget)
+        result=super().call(address,budget)
+        assert self.u.reg_read(UC_ARM_REG_PC)==STOP,('UI call budget',hex(address))
+        return result
     def code(self,u,address,size,data):
         if address==symbols['lcd_fill_rect']:
             x,y,w,h=[u.reg_read(r) for r in (UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3)]
@@ -819,12 +1004,12 @@ menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0)
 menu_key('Menu');menu_key('Up');menu_key('Up');menu_key('Ok');menu_key('Up');menu_draw()
 assert 'Lock keypad' in menu_ui.texts
 menu_key('Ok');menu_draw()
-assert 'LOCK' in menu_ui.texts and 'HOLD # TO UNLOCK' in menu_ui.texts
+assert 'KEYPAD LOCKED' in menu_ui.texts
 menu_key('MicGain');menu_key('Up');menu_draw()
-assert 'LOCK' in menu_ui.texts and 'Mic Gain' not in menu_ui.texts
+assert 'HOLD # TO UNLOCK' in menu_ui.texts and 'Mic Gain' not in menu_ui.texts
 menu_key('KeypadLock');menu_draw();assert 'LOCK' not in menu_ui.texts
 menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('KeypadLock');menu_draw()
-assert 'ЗАМОК' in menu_ui.texts and 'УДЕРЖ. # ДЛЯ РАЗБЛОК.' in menu_ui.texts
+assert 'КЛАВИШИ ЗАБЛОКИРОВАНЫ' in menu_ui.texts
 menu_key('KeypadLock');menu_draw();assert 'ЗАМОК' not in menu_ui.texts
 print('ARM keypad lock UI: System action, persistent lock hint, blocked navigation, unlock and RU/EN LCD bounds PASS')
 menu_key('Monitor');menu_draw()
@@ -1009,14 +1194,14 @@ print('ARM GPS navigation UI: km/mi/nm lists, fresh point capture, confirm/cance
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('FlashInfo')
 menu_ui.u.mem_write(0x1ffff7e0,struct.pack('<H',1024));menu_draw()
-assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V8 / AUTO SAVE','8116'))
+assert all(label in menu_ui.texts for label in ('Data bytes','Free bytes','Raw bytes','COMPACT V10 / AUTO SAVE','8132'))
 compact_size_symbol=next(n for n in symbols if 'Application21compact_snapshot_size' in n)
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app)
 compact_size=menu_ui.function(compact_size_symbol)
 assert 0<compact_size<3000 and compact_size%4==0
 assert str(compact_size) in menu_ui.texts and str(8168-compact_size) in menu_ui.texts,menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('FlashInfo');menu_draw()
-assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V8 / АВТОЗАПИСЬ'))
+assert all(label in menu_ui.texts for label in ('Данные, Б','Свободно, Б','Без сжатия','КОМПАКТ V10 / АВТОЗАПИСЬ'))
 print('ARM storage format UI: actual compact/canonical bytes, free slot capacity, read-only RU/EN and LCD bounds PASS')
 
 # UART4 driver and the exact production export service, with RX IRQ delivery.
@@ -1067,8 +1252,8 @@ backup_receive(b'RT950CFG\n')
 for now in range(3,9000):
     backup_machine.u.mem_write(0x40004c00,struct.pack('<I',128))
     backup_call(backup_poll,backup_object,now,1)
-    if len(backup_machine.wire)==8164:break
-assert len(backup_machine.wire)==8164 and backup_reg(0x40004c0c)!=0 # wait for TC
+    if len(backup_machine.wire)==8180:break
+assert len(backup_machine.wire)==8180 and backup_reg(0x40004c0c)!=0 # wait for TC
 backup_machine.u.mem_write(0x40004c00,struct.pack('<I',192));backup_call(backup_poll,backup_object,now+1,1)
 assert not backup_reg(0x40004c0c) and backup_reg(GPIO[2]+4)==backup_crh
 assert backup_machine.odr[GPIO[2]]==backup_odr
@@ -1119,8 +1304,8 @@ menu_key('Ok');menu_draw();assert 'Export settings' in menu_ui.texts
 for phase,label in enumerate(('Export not started','Waiting for computer','Exporting settings','Backup exported','Export cancelled','Export timed out','Export error')):
     menu_ui.u.mem_write(0x20015000+backup_offsets[0],bytes([phase]))
     menu_ui.u.mem_write(0x20015000+backup_offsets[1],struct.pack('<I',32))
-    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8164))
-    menu_draw();assert label in menu_ui.texts and '32/8164' in menu_ui.texts
+    menu_ui.u.mem_write(0x20015000+backup_offsets[2],struct.pack('<I',8180))
+    menu_draw();assert label in menu_ui.texts and '32/8180' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Backup');menu_draw()
 assert all(label in menu_ui.texts for label in ('Экспорт настроек','ОШИБКА ЭКСПОРТА','PTT ОТМЕНЯЕТ ЭКСПОРТ','ТОЛЬКО ЧТЕНИЕ / БЕЗ ЗАПИСИ'))
 print('ARM backup UI: System entry, every session state, progress, manual start/cancel hints, RU/EN and LCD bounds PASS')
@@ -1198,7 +1383,7 @@ for russian in (False,True):
  menu_key('Import')
  for phase,label in ((0,'Import not started'),(1,'Waiting for computer'),(2,'Receiving settings'),(5,'Import cancelled'),(6,'Import timed out'),(7,'Import rejected')):
   menu_ui.u.mem_write(0x20015000+import_offsets[1],bytes([phase]))
-  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8164))
+  menu_ui.u.mem_write(0x20015000+import_offsets[2],struct.pack('<I',8180))
   menu_draw()
   assert backup_module is not None
   assert (('Импорт настроек' if russian else 'Import settings') in menu_ui.texts)
@@ -1240,19 +1425,19 @@ power_status_field=subprocess.check_output([args.prefix+'gdb','-batch',str(build
 power_status_offset=int(re.search(r'\$1 = (0x[0-9a-f]+)',power_status_field).group(1),16)
 for offset in (0,power_status_offset):
     menu_ui.u.mem_write(0x20015000+offset,struct.pack('<I',0x20015e00))
-menu_draw();assert 'Left: Watch slots' in menu_ui.texts
-menu_key('Left');menu_draw();assert 'WATCH SLOTS' in menu_ui.texts
+menu_draw();assert '◄►Step' in menu_ui.texts
+menu_key('WatchSlots');menu_draw();assert 'WATCH SLOTS' in menu_ui.texts
 menu_key('Back')
 observe_voice=next(n for n in symbols if 'observe_voice_slot' in n)
 for reg,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2),(menu_app,1,446018750)):
     menu_ui.u.reg_write(reg,value)
 menu_ui.function(observe_voice);menu_draw()
-assert 'LAST RX' in menu_ui.texts and 'Right: select RX B' in menu_ui.texts
-menu_key('Right');menu_draw()
-assert 'RX SLOT SELECTED' in menu_ui.texts
+assert 'ABC Slot' in menu_ui.texts
+menu_key('NextSlot');menu_draw()
+assert 'B' in menu_ui.texts
 menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('Back');menu_draw()
-assert 'ВЛЕВО: СЛОТЫ ОБХОДА' in menu_ui.texts
-print('ARM Watch shortcuts UI: home entry, recent slot and explicit selection PASS')
+assert 'ABC Слот' in menu_ui.texts
+print('ARM Watch shortcuts UI: menu entry, ABC slot selection and reference footer PASS')
 
 tx_fields=subprocess.check_output([args.prefix+'gdb','-batch',str(build/'rt950-custom-ui.elf'),
     '-ex','p/x (unsigned long)&((rt950::InputStatus*)0)->voice_tx_slot',
@@ -1263,11 +1448,11 @@ menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,1)
 menu_frequency(145600000)
 menu_ui.u.mem_write(menu_app+tx_frequency_offset,struct.pack('<I',145000000))
 menu_ui.u.mem_write(tx_slot_address,b'\xff')
-menu_draw();assert 'SPLIT' in menu_ui.texts and '145.60000' in menu_ui.texts
+menu_draw();assert any('145.00000' in text for text in menu_ui.texts) and '145.60000' in menu_ui.texts
 menu_ui.u.mem_write(tx_slot_address,b'\x00')
-menu_draw();assert 'TX' in menu_ui.texts and '145.00000' in menu_ui.texts and 'SPLIT' not in menu_ui.texts
+menu_draw();assert 'TX' in menu_ui.texts and '145.00000' in menu_ui.texts
 menu_ui.u.mem_write(tx_slot_address,b'\xff')
-menu_draw();assert '145.60000' in menu_ui.texts and 'SPLIT' in menu_ui.texts
+menu_draw();assert '145.60000' in menu_ui.texts and 'TX 145.00000 MHz' in menu_ui.texts
 print('ARM TX slot UI: split indication, keyed frequency and return to RX PASS')
 menu_key('Channels');menu_draw();assert 'LEFT: ACTIONS / ABC: ZONES' in menu_ui.texts
 menu_key('NextSlot');menu_draw();assert 'Select zone' in menu_ui.texts
@@ -1307,13 +1492,13 @@ for _ in range(5):flash_call(app_key,fresh,logical_keys['Down'])
 flash_call(app_key,fresh,logical_keys['Ok'])
 assert not poll_auto(250) and not poll_auto(2000)
 assert read_string(poll_auto(2250))==b'SETTINGS SAVED'
-assert fm.get(0x08010000+28)==8
+assert fm.get(0x08010000+28)==10
 key_slots=bytes(fm.u.mem_read(0x08010000,16384))
 fm=FlashModel();fm.u.mem_write(0x08010000,key_slots);flash_call(ctor,fresh,0);flash_call(load,fresh)
 portable_dump=next(n for n in symbols if 'save_portable_snapshot' in n)
-assert flash_call(portable_dump,fresh,0x20015000,8192)==8116
+assert flash_call(portable_dump,fresh,0x20015000,8192)==8132
 assert struct.unpack('<4I',bytes(fm.u.mem_read(0x20015000+7992,16)))==(0,5,2,0)
-print('ARM user keys autosave: binding-only edit triggers debounce, compact v8 commit and fresh MCU reload preserves all four assignments PASS')
+print('ARM user keys autosave: binding-only edit triggers debounce, compact v10 commit and fresh MCU reload preserves all four assignments PASS')
 
 menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0);menu_ui.function(ctor)
 menu_key('Weather');menu_draw()
@@ -1398,9 +1583,9 @@ menu_ui.u.reg_write(UC_ARM_REG_R0,menu_app);menu_ui.u.reg_write(UC_ARM_REG_R1,0)
 menu_ui.u.mem_write(0x20015000+mail_offsets[0],struct.pack('<I',1))
 menu_ui.u.mem_write(0x20015000+mail_offsets[1],bytes([1]))
 menu_key('KeypadLock');menu_draw()
-assert 'APRS*' in menu_ui.texts and 'LOCK' in menu_ui.texts
+assert 'm' in menu_ui.texts and 'KEYPAD LOCKED' in menu_ui.texts
 menu_ui.u.mem_write(0x20015000+mail_offsets[1],bytes([0]))
-menu_draw();assert 'APRS*' not in menu_ui.texts and 'LOCK' in menu_ui.texts
+menu_draw();assert 'm' not in menu_ui.texts and 'KEYPAD LOCKED' in menu_ui.texts
 menu_ui.u.mem_write(0x20015000+mail_offsets[0],bytes(4))
 print('ARM APRS unread UI: home indicator coexists with keypad lock and clears PASS')
 

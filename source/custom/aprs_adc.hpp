@@ -81,7 +81,7 @@ private:
     }
 
     void run(uint32_t now) {
-        // Ferrite uses TIM4 CH4 to free the keypad PWM timer.
+        // TIM4 CH4 triggers ADC1 while TIM2 drives the keypad PWM.
         // ADC1 CH2, DMA1 CH1 and 120 MHz / 12501 remain as in OEM 0.29.
         TIM4->CR1=0;TIM4->CR2=0;TIM4->SMCR=0;
         TIM4->PSC=0;TIM4->ARR=12500;TIM4->CCR4=6250;

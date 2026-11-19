@@ -89,10 +89,9 @@ void BoardProbe::listen(uint16_t frequency,bool seek,bool audio,uint32_t now,boo
 void BoardProbe::poll(bool open,uint32_t now,Band band) {
     if(open && active_ && probe_.band()!=band)poll(false,now);
     if(open && !active_) {
-        saved_[0]=uint8_t(GPIOA->CRL>>24&15u);levels_[0]=GPIOA->ODR&GPIO_PIN_6;
-        saved_[1]=uint8_t(GPIOB->CRL>>24&15u);levels_[1]=GPIOB->ODR&GPIO_PIN_6;
-        saved_[2]=uint8_t(GPIOB->CRL>>28&15u);levels_[2]=GPIOB->ODR&GPIO_PIN_7;
-        saved_[3]=uint8_t(GPIOC->CRL>>16&15u);levels_[3]=GPIOC->ODR&GPIO_PIN_4;
+        saved_[0]=uint8_t(GPIOB->CRL>>24&15u);levels_[0]=GPIOB->ODR&GPIO_PIN_6;
+        saved_[1]=uint8_t(GPIOB->CRL>>28&15u);levels_[1]=GPIOB->ODR&GPIO_PIN_7;
+        saved_[2]=uint8_t(GPIOC->CRL>>16&15u);levels_[2]=GPIOC->ODR&GPIO_PIN_4;
         // OEM 0.29 lowers PC4 before pulsing PA6 at 0x080118CC.
         gpio_clear_pin(GPIOC,GPIO_PIN_4);
         gpio_config_pin(GPIOC,GPIO_PIN_4,GPIO_MODE_OUT_2MHZ,GPIO_CNF_PP);
@@ -105,10 +104,10 @@ void BoardProbe::poll(bool open,uint32_t now,Band band) {
     }
     if(!open && active_) {
         mute();reset_pin(false);
-        restore(GPIOB,7,saved_[2],levels_[2]);
-        restore(GPIOB,6,saved_[1],levels_[1]);
-        restore(GPIOA,6,saved_[0],levels_[0]);
-        restore(GPIOC,4,saved_[3],levels_[3]);
+        restore(GPIOB,7,saved_[1],levels_[1]);
+        restore(GPIOB,6,saved_[0],levels_[0]);
+        // PA6 remains a low output between broadcast sessions.
+        restore(GPIOC,4,saved_[2],levels_[2]);
         active_=false;probe_.end();
     }
     if(open) {

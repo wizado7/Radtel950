@@ -73,6 +73,35 @@ for name,scale in (('lcd_draw_string',1),('lcd_draw_string_2x',2)):
 print('ARM LCD: UTF-8 Cyrillic at both glyph sizes, including lowercase Yo PASS')
 
 
+# Check the new text renderer on the real LCD bus, including its compact
+# fallback. A preview hook alone would not catch a malformed pixel stream.
+text_entry=next(v for n,v in syms.items() if n.startswith('_ZN5rt9506screen4textE'))
+widths=[]
+for font_size in (10,11,13):
+ font=syms[f'_ZN5rt9506screen6Sans{font_size}E']
+ trace.clear()
+ u.mem_write(0x20016000,'ЙоA'.encode()+b'\0')
+ u.mem_write(0x20017000,struct.pack('<III',0xffff,0,104))
+ for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),
+                           (8,12,0x20016000,font)):
+  u.reg_write(register,value)
+ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
+ u.emu_start(text_entry|1,0x080ff000,count=3000000)
+ assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
+ starts=[i for i,item in enumerate(trace) if item==(False,0x2c)]
+ assert len(starts)==3
+ for index,start in enumerate(starts):
+  x1,x2=struct.unpack('>HH',bytes(v for _,v in trace[start-9:start-5]))
+  y1,y2=struct.unpack('>HH',bytes(v for _,v in trace[start-4:start]))
+  assert 8<=x1<=x2<104 and 12<=y1<=y2<32
+  end=starts[index+1]-10 if index+1<len(starts) else len(trace)
+  pixels=trace[start+1:end]
+  assert len(pixels)==2*(x2-x1+1)*(y2-y1+1) and all(is_data for is_data,_ in pixels)
+  assert any(value for _,value in pixels)
+ widths.append(x2)
+assert widths[0]<widths[1]<widths[2],widths
+print('ARM LCD typography: three sizes, mixed Cyrillic/Latin and exact RGB565 window lengths PASS')
+
 # Compare actual OEM init parameters, not a second hand-copied expected table.
 import hashlib
 stock=a.stock.read_bytes()
@@ -117,7 +146,7 @@ for color in (0,0xf800,0x07e0,0x001f,0xffff,0x1234):
  oem_trace.clear();v.reg_write(UC_ARM_REG_R0,color);invoke(v,0x080266a8)
  assert oem_trace==[(True,color>>8),(True,color&255)]
 print('ARM LCD window: actual OEM inclusive/exclusive conversion, four edge rectangles and RGB565 high-byte-first oracle PASS')
-print('ARM LCD OEM 0.29: raw verified, original VCOM/gamma/COLMOD contrasted with Ferrite startup, GPIO speed and pixels checked PASS')
+print('ARM LCD OEM 0.29: raw verified, original VCOM/gamma/COLMOD compared with Custom UI startup, GPIO speed and pixels checked PASS')
 # Every byte must be on the bus at WR rising, with other port pins preserved.
 for data_mode,name in ((False,'lcd_write_command'),(True,'lcd_write_data')):
  for byte in range(256):
@@ -143,12 +172,16 @@ assert get(0x40013434)==1200
 assert not call('board_display_poll',0,50) and not trace and get(0x40013434)==0
 assert not call('board_display_poll',0,104)
 assert trace==[(False,0x28),(False,0x10)]
+assert not get(0x40021018)&(1<<13) and not get(0x4002101c)&1
+assert get(0x40011000)>>24&15==2 and get(0x40010c00)>>12&15==2
 assert not call('board_display_poll',1,223) and len(trace)==2
 assert not call('board_display_poll',1,224) and trace[-1]==(False,0x11)
 call('board_display_brightness',500)
 assert get(0x40013434)==0
 assert not call('board_display_poll',1,343) and len(trace)==3
 assert call('board_display_poll',1,344)==1 and trace[-1]==(False,0x29)
+assert get(0x40021018)&(1<<13) and get(0x4002101c)&1
+assert get(0x40013434)==get(0x40000038)==0
 call('board_display_brightness',500)
 assert get(0x40013434)==2400 and get(0x40000038)==1200
 # A wake cancelled while the panel settles returns it to sleep without revealing it.
@@ -161,4 +194,4 @@ call('board_display_brightness',1000)
 assert not call('board_display_poll',1,5000)
 assert get(0x40013400)==get(0x40000000)==get(0x40013434)==get(0x40000038)==0
 assert not backlight_high
-print('ARM LCD power: dark boot, sleep/wake command order, 120 ms guards, wrap, cancelled wake and latched-off hardware PWM PASS')
+print('ARM LCD power: dark boot, sleep/wake command order, 120 ms guards, wrap, cancelled wake, clock gates and latched-off hardware PWM PASS')

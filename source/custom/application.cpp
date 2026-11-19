@@ -557,7 +557,8 @@ constexpr MenuEntry aprs_route_menu[]={
     {"APRS TX preamble",Key::AprsPreamble}
 };
 constexpr MenuEntry ble_menu[]={{"Bluetooth",Key::Menu,Option::Ble},{"BLE export",Key::Menu,Option::Export}};
-constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery}};
+constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery},
+ {"Screen theme",Key::Theme},{"Slot proportions",Key::SlotRatio},{"Battery voltage",Key::ShowVoltage},{"Font size",Key::FontScale}};
 constexpr MenuEntry system_menu[]={{"CPU power save",Key::Mode},{"Language",Key::LanguageSelect},{"Menu timeout",Key::MenuTimeout},{"About firmware",Key::About},{"Export settings",Key::Backup},{"Auto keypad lock",Key::AutoLock},{"Reset settings",Key::ResetSettings},{"Reset all user data",Key::ResetAll},{"Import settings",Key::Import},{"User keys",Key::Menu,Option::Count,MenuGroup::UserKeys},{"Lock keypad",Key::KeypadLock}};
 constexpr MenuEntry diagnostics_menu[]={{"Keys / encoder",Key::Debug},{"LCD field test",Key::LcdTest},{"Flash info",Key::FlashInfo},{"FM tuner test",Key::FmProbe},{"RX / Watch monitor",Key::VoiceRx},{"TX power calibration",Key::PowerCalibration},{"Power / TX status",Key::PowerStatus}};
 
@@ -672,6 +673,92 @@ uint32_t Application::take_frequency_copy_start() {
     return frequency_copy_uhf_?433000000u:145000000u;
 }
 
+void Application::encoder(int direction) {
+    if(page_==Page::QuickSettings && !keypad_locked_) {
+        last_activity_=now_;quick_change(direction);return;
+    }
+    key(direction>0?Key::Up:Key::Down);
+}
+void Application::quick_change(int direction) {
+    auto &profile=editable_radio_profile();
+    switch(quick_tile_) {
+    case 0:
+        quick_mode_=uint8_t((quick_mode_+(direction>0?1u:3u))%4u);
+        if(quick_mode_>=2){notify("MODE NOT AVAILABLE");return;}
+        profile.narrow=quick_mode_==1;break;
+    case 1:case 2: {
+        auto &tone=quick_tile_==1?profile.rx_tone:profile.tx_tone;
+        const unsigned ctcss=radio_option_count(RadioSetting::RxCtcss)-1u;
+        const unsigned dcs=radio_option_count(RadioSetting::RxDcs)-1u;
+        const unsigned count=1u+ctcss+dcs;
+        unsigned value=tone.kind==ToneKind::Off?0u:tone.kind==ToneKind::Ctcss?tone.index:ctcss+tone.index;
+        value=(value+(direction>0?1u:count-1u))%count;
+        tone=value==0?Tone{}:value<=ctcss?Tone{ToneKind::Ctcss,uint8_t(value)}:
+            Tone{ToneKind::Dcs,uint8_t(value-ctcss)};
+        break;
+    }
+    case 3: {
+        constexpr int offsets[]={0,-600000,600000,5000000};
+        int current=profile.shift==Shift::Minus?-int(profile.offset_hz):
+            profile.shift==Shift::Plus?int(profile.offset_hz):0;
+        unsigned index=0;
+        for(unsigned i=0;i<4;++i)if(offsets[i]==current)index=i;
+        current=offsets[(index+(direction>0?1u:3u))%4u];
+        profile.offset_hz=current<0?unsigned(-current):unsigned(current);
+        profile.shift=current<0?Shift::Minus:current>0?Shift::Plus:Shift::None;
+        break;
+    }
+    case 4:profile.power=TxPower((unsigned(profile.power)%3u+(direction>0?1u:2u))%3u);break;
+    case 5:vfo_step_[config_.active]=uint8_t((vfo_step_[config_.active]+(direction>0?1u:vfo_step_count-1u))%vfo_step_count);break;
+    case 6:profile.squelch=uint8_t((profile.squelch+(direction>0?1u:9u))%10u);break;
+    case 7:profile.busy_lock=!profile.busy_lock;break;
+    case 8:profile.reverse=!profile.reverse;break;
+    default:return;
+    }
+    sync_frequencies();notify("");
+}
+void Application::quick_value(unsigned tile,char *out) const {
+    const auto &profile=active_radio_profile();
+    switch(tile) {
+    case 0:{constexpr const char *modes[]={"FM","NFM","AM","USB"};text(out,modes[quick_mode_]);return;}
+    case 1:case 2: {
+        const auto tone=tile==1?profile.rx_tone:profile.tx_tone;
+        if(tone.kind==ToneKind::Off){text(out,"Off");return;}
+        if(tone.kind==ToneKind::Dcs){radio_option_label(RadioSetting::RxDcs,tone.index,out);return;}
+        const unsigned hz=ctcss_frequency(tone);char *q=out;
+        if(hz>=1000)*q++=char('0'+hz/1000);
+        *q++=char('0'+hz/100%10);*q++=char('0'+hz/10%10);*q++='.';*q++=char('0'+hz%10);*q=0;return;
+    }
+    case 3:
+        if(profile.shift==Shift::None){text(out,"0.000");return;}
+        out[0]=profile.shift==Shift::Minus?'-':'+';
+        if(profile.offset_hz%1000000u==0 && profile.offset_hz>=1000000u) {
+            out[1]=char('0'+profile.offset_hz/1000000u);out[2]='.';out[3]='0';out[4]='M';out[5]=0;
+        } else {
+            unsigned k=profile.offset_hz/1000u;
+            out[1]=char('0'+k/100u%10u);out[2]=char('0'+k/10u%10u);out[3]=char('0'+k%10u);out[4]='k';out[5]=0;
+        }
+        return;
+    case 4: {
+        constexpr const char *powers[]={"Low","Mid","High","10mW","0.5W"};
+        text(out,powers[unsigned(profile.power)]);return;
+    }
+    case 5: {
+        const unsigned hz=vfo_steps[vfo_step_[config_.active]];
+        char *q=out;
+        unsigned whole=hz/1000;
+        if(whole>=100)*q++=char('0'+whole/100);
+        if(whole>=10)*q++=char('0'+whole/10%10);
+        *q++=char('0'+whole%10);
+        if(hz%1000){*q++='.';*q++=char('0'+hz/100%10);if(hz%100)*q++=char('0'+hz/10%10);}
+        *q++='k';*q=0;return;
+    }
+    case 6:out[0]='S';out[1]='Q';out[2]='L';out[3]=' ';out[4]=char('0'+profile.squelch);out[5]=0;return;
+    case 7:text(out,profile.busy_lock?"On":"Off");return;
+    case 8:text(out,profile.reverse?"On":"Off");return;
+    default:out[0]=0;
+    }
+}
 void Application::key(Key k) {
     last_activity_=now_;
     if(k==Key::KeypadLock) {
@@ -683,6 +770,42 @@ void Application::key(Key k) {
         return;
     }
     if(keypad_locked_){notify("HOLD # TO UNLOCK");return;}
+    if(k==Key::QuickSettings && page_==Page::Radio && !editing()) {
+        page_=Page::QuickSettings;quick_mode_=active_radio_profile().narrow?1u:0u;notify("");return;
+    }
+    if(page_==Page::QuickSettings) {
+        if(k==Key::Back){page_=Page::Radio;notify("");}
+        else if(k==Key::Menu){page_=Page::Settings;menu_group_=MenuGroup::Root;notify("");}
+        else if(k==Key::NextSlot){config_.active=uint8_t((config_.active+1u)%3u);quick_mode_=active_radio_profile().narrow?1u:0u;notify("");}
+        else if(k==Key::Left || k==Key::Right)
+            quick_tile_=uint8_t((quick_tile_+(k==Key::Left?8u:1u))%9u);
+        else if(k==Key::Up || k==Key::Down)
+            quick_tile_=uint8_t((quick_tile_+(k==Key::Up?6u:3u))%9u);
+        else if(k==Key::Ok)quick_change(1);
+        else if(k==Key::Save) {
+            page_=Page::Radio;key(Key::Save);
+            if(page_==Page::StoreChannel)parent_=Page::QuickSettings;
+            else page_=Page::QuickSettings;
+        }
+        return;
+    }
+    if(k==Key::Theme || k==Key::SlotRatio || k==Key::ShowVoltage || k==Key::FontScale) {
+        display_setting_=k;page_=Page::DisplayChoice;notify("");return;
+    }
+    if(page_==Page::DisplayChoice) {
+        if(k==Key::Back || k==Key::Menu || k==Key::Ok){page_=Page::Settings;notify("");return;}
+        const int direction=(k==Key::Up || k==Key::Right)?1:-1;
+        if(k==Key::Up || k==Key::Down || k==Key::Left || k==Key::Right) {
+            if(display_setting_==Key::Theme)light_theme_=!light_theme_;
+            else if(display_setting_==Key::ShowVoltage)show_voltage_=!show_voltage_;
+            else if(display_setting_==Key::FontScale)large_font_=direction>0;
+            else {
+                const int next=int(slot_ratio_)+direction;
+                if(next>=66 && next<=160)slot_ratio_=uint8_t(next);
+            }
+        }
+        return;
+    }
     if(tone_searching()) {
         if(k==Key::Mode || k==Key::Back || k==Key::Menu) {
             tone_search_.cancel();notify("");
@@ -1698,7 +1821,12 @@ void Application::key(Key k) {
             const auto &entry=menu_entry(menu_selection());
             if(entry.group!=MenuGroup::Root) {menu_group_=entry.group;notify("");}
             else if(entry.toggle!=Option::Count) {
-                invalid_=!set_option(entry.toggle,!enabled(entry.toggle));notify(invalid_?"OPTION UNAVAILABLE":"");
+                if(entry.toggle==Option::Gps) {
+                    const uint8_t mode=uint8_t((config_.gps_on+1u)%3u);
+                    set_option(Option::Gps,mode!=0);
+                    config_.gps_on=mode;invalid_=false;
+                } else invalid_=!set_option(entry.toggle,!enabled(entry.toggle));
+                notify(invalid_?"OPTION UNAVAILABLE":"");
             } else if(entry.action==Key::RadioOptions) {
                 radio_setting_=entry.radio_setting;
                 radio_draft_=radio_profile_option(active_radio_profile(),radio_setting_);
@@ -1709,12 +1837,7 @@ void Application::key(Key k) {
         return;
     }
     if(page_!=Page::Radio) return;
-    if(!digits_ && k==Key::Left){key(Key::WatchSlots);return;}
-    if(!digits_ && k==Key::Right) {
-        const int heard=recent_voice_slot();
-        if(heard>=0 && heard!=config_.active){config_.active=uint8_t(heard);notify("RX SLOT SELECTED");}
-        return;
-    }
+    if(!digits_ && (k==Key::Left || k==Key::Right)){step(k==Key::Right?1:-1);return;}
     if(k==Key::NextSlot) {cancel_entry();config_.active=uint8_t((config_.active+1)%3);}
     else if(k==Key::Ok && digits_) {
         uint32_t hz=entry_khz_;

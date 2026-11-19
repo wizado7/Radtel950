@@ -17,6 +17,11 @@ public:
     uint32_t frequency() const {return weather_channels[channel_];}
     bool scanning() const {return mode_==Mode::Scan;}
     bool alerted() const {return mode_==Mode::Alert;}
+    const char *same_event() const {return same_event_;}
+    void same_alert(const char (&event)[4]) {
+        for(unsigned i=0;i<4;++i)same_event_[i]=event[i];
+        mode_=Mode::Alert;
+    }
 
     void begin(bool alert,uint32_t now) {
         mode_=alert?Mode::Scan:Mode::Listen;
@@ -41,9 +46,10 @@ public:
 
 private:
     enum class Mode : uint8_t {Listen, Scan, Alert};
-    void retuned(uint32_t now) {tuned_at_=now;tracking_=false;}
+    void retuned(uint32_t now) {tuned_at_=now;tracking_=false;same_event_[0]=0;}
     uint32_t tuned_at_=0,carrier_since_=0;
     uint8_t channel_=0;
+    char same_event_[4]{};
     Mode mode_=Mode::Listen;
     bool tracking_=false;
 };

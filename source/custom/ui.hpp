@@ -38,6 +38,23 @@ struct InputStatus {
         }
     };
     SignalLevel slot_signal[3]{};
+    struct Digits {
+        char text[9]{};
+        uint32_t frequency=0,last=0;
+        unsigned size=0;
+        const char *heard(uint32_t hz,uint32_t now) const {
+            return frequency==hz && uint32_t(now-last)<6000u?text:"";
+        }
+        void append(char digit,uint32_t hz,uint32_t now) {
+            if(!*heard(hz,now))size=0;
+            if(size==8) {
+                for(unsigned i=1;i<8;++i)text[i-1]=text[i];
+                --size;
+            }
+            text[size++]=digit;text[size]=0;
+            last=now;frequency=hz;
+        }
+    } dtmf[3]{};
     void observe_signal(unsigned slot,const voice::VoiceStatus &rx,uint32_t hz,uint32_t now) {
         if(slot<3 && rx.ready && !rx.fault && rx.sampled && rx.sampled_at==now && rx.frequency==hz)
             slot_signal[slot]={hz,now,rx.rssi};
@@ -53,7 +70,8 @@ struct InputStatus {
     ImportPhase import_phase=ImportPhase::Off;
     uint32_t import_received=0;uint16_t import_channels=0;
 };
-void ui_boot_screen();
+void ui_boot_screen(const Application &);
 void ui_invalidate();
+bool ui_transitioning();
 void ui_draw(Application &,const InputStatus &,uint32_t);
 }

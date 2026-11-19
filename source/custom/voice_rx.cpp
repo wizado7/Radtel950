@@ -5,6 +5,7 @@
 #include "voice_tx_registers.hpp"
 extern "C" {
 #include "drivers/gpio.h"
+#include "board.h"
 #include "../mvp/core.h"
 }
 namespace rt950::voice {
@@ -26,13 +27,22 @@ struct Pins {
         gpio_config_pin(GPIOE,GPIO_PIN_11,GPIO_MODE_INPUT,GPIO_CNF_PULL);
     }
     bool sample() const {return gpio_read_pin(GPIOE,GPIO_PIN_11);}
-    void delay() const {for(volatile unsigned n=0;n<80;++n)__asm volatile("nop");}
+    void delay() const {
+        const unsigned loops=custom_clock_low?16u:80u;
+        for(volatile unsigned n=0;n<loops;++n)__asm volatile("nop");
+    }
 };
 Pins pins;
 RegisterBus<Pins> bus(pins);
 void wait_us(unsigned microseconds) {
-    for(unsigned i=0;i<microseconds*120u;++i)__asm volatile("nop");
+    const unsigned cycles=microseconds*(custom_clock_low?24u:120u);
+    for(unsigned i=0;i<cycles;++i)__asm volatile("nop");
 }
+void disable_rx_route() {
+    gpio_set_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
+    gpio_set_pin(GPIOB,GPIO_PIN_0);
+}
+
 void sleep_chip(uint8_t chip) {
     bus.write(chip,0x47,0x6042);
     bus.write(chip,0x30,0);
@@ -81,21 +91,130 @@ void BoardReceiver::standby() {
     const bool initialized=init_step_!=0;
     stop();
     if(initialized)sleep_chip(rx_chip_);
+#ifdef RT950_MAIN_TX
+    asleep_=false;sleep_eligible_=false;
+#endif
     status_={};init_step_=0;idle_requested_=true;
 }
 void BoardReceiver::stop() {
 #ifdef RT950_MAIN_TX
     FrequencyRegisters regs{rx_chip_};
     frequency_counter_.cancel(regs);
+    disable_decoder();
+    packet_gate_=false;
 #endif
     audio(false);
     if(status_.ready)bus.write(rx_chip_,0x30,0);
-    gpio_set_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
-    gpio_set_pin(GPIOB,GPIO_PIN_0);
+    disable_rx_route();
     status_.frequency=0;status_.receiving=false;status_.rssi=0;status_.status=0;
     restart_=false;status_.sampled=false;carrier_=false;sql_open_=false;tone_matches_=0;
 }
 #ifdef RT950_MAIN_TX
+void BoardReceiver::wake_receiver(uint32_t now) {
+    if(!asleep_)return;
+    bus.write(rx_chip_,0x37,RfLdoOn);
+    asleep_=false;restart_=true;due_=now+RfWakeMs;
+}
+
+bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
+    // Background APRS borrows the receiver without restarting the idle hold.
+    if(allowed && packet_window) {
+        wake_receiver(now);
+        return false;
+    }
+    if(!allowed || !status_.ready || !status_.frequency || !sql_ ||
+       status_.fault || sql_open_ || status_.receiving) {
+        sleep_eligible_=false;
+        wake_receiver(now);
+    } else if(!sleep_eligible_) {
+        sleep_at_=now+10000u;sleep_eligible_=true;
+    } else if(int32_t(now-sleep_at_)>=0) {
+        if(asleep_) {
+            wake_receiver(now);
+            sleep_at_=now+300u;
+        } else if(!restart_ && status_.sampled) {
+            disable_decoder();
+            audio(false);
+            sleep_chip(rx_chip_);
+            // The external receive selects have their own power path.
+            // The regular restart sequence restores the band after LDO settle.
+            disable_rx_route();
+            status_.sampled=false;status_.rssi=0;status_.status=0;
+            tone_matches_=0;asleep_=true;sleep_at_=now+300u;
+        }
+    }
+    return asleep_;
+}
+
+void BoardReceiver::disable_decoder() {
+    if(decoder_==Decoder::Off)return;
+    uint16_t irq=0;
+    bus.read(rx_chip_,0x3f,irq);
+    const bool dtmf=decoder_==Decoder::Dtmf;
+    if(irq!=0xffff)bus.write(rx_chip_,0x3f,uint16_t(irq&~(dtmf?0x0800u:0x3002u)));
+    if(dtmf)bus.write(rx_chip_,0x24,0);
+    else {bus.write(rx_chip_,0x59,0);bus.write(rx_chip_,0x58,0);}
+    bus.write(rx_chip_,0x70,0);
+    bus.write(rx_chip_,0x02,0);
+    decoder_=Decoder::Off;
+    same_.reset();
+}
+
+char BoardReceiver::decode(Decoder mode,uint32_t now,char (&event)[4]) {
+    if(mode==Decoder::Off || !status_.sampled || status_.fault || restart_ || asleep_) {
+        disable_decoder();
+        return 0;
+    }
+    if(decoder_!=mode) {
+        disable_decoder();
+        bus.write(rx_chip_,0x02,0);
+        uint16_t irq=0;
+        bus.read(rx_chip_,0x3f,irq);
+        if(irq==0xffff)return 0;
+        if(mode==Decoder::Dtmf) {
+            constexpr uint8_t taps[]={0x6f,0x6b,0x67,0x62,0x50,0x47,0x3a,0x2c,
+                                      0x41,0x37,0x25,0x17,0xe4,0xcb,0xb5,0x9f};
+            for(unsigned i=0;i<sizeof taps;++i)
+                bus.write(rx_chip_,0x09,uint16_t((i<<12)|taps[i]));
+            bus.write(rx_chip_,0x24,0x87ff);
+            bus.write(rx_chip_,0x70,0xc5c5);
+            bus.write(rx_chip_,0x3f,uint16_t(irq|0x0800));
+        } else {
+            constexpr RegisterValue fsk[]={
+                {0x58,0x03c5},{0x70,0x0080},{0x72,5377},{0x5a,0x5ac2},{0x5b,0x5ac2},
+                {0x5c,0xa730},{0x5d,0xff00},{0x59,0x40f8},{0x59,0x10f8},
+            };
+            for(const auto &reg:fsk)bus.write(rx_chip_,reg.address,reg.value);
+            bus.write(rx_chip_,0x3f,uint16_t((irq&~0xc000u)|0x3002));
+        }
+        decoder_=mode;decode_at_=now;
+        return 0;
+    }
+    if(int32_t(now-decode_at_)<0)return 0;
+    decode_at_=now+8u;
+    uint16_t flags=0;
+    bus.read(rx_chip_,0x0c,flags);
+    if(flags==0xffff || !(flags&1))return 0;
+    bus.write(rx_chip_,0x02,0);
+    bus.read(rx_chip_,0x02,flags);
+    if(flags==0xffff)return 0;
+    if(mode==Decoder::Dtmf) {
+        if(!(flags&0x0800) || !status_.receiving)return 0;
+        uint16_t code=0;
+        bus.read(rx_chip_,0x0b,code);
+        return code==0xffff?0:"0123456789ABCD*#"[(code>>8)&15];
+    }
+    if(flags&2)same_.sync();
+    unsigned words=(flags&0x2000)?8u:(flags&0x1000)?4u:0u;
+    while(words-- && same_.active()) {
+        uint16_t word=0;
+        bus.read(rx_chip_,0x5f,word);
+        if(same_.push(word,now,event)){disable_decoder();return 1;}
+    }
+    if((flags&0x2000) || ((flags&0x1000) && !same_.active()))disable_decoder();
+    return 0;
+}
+
 void BoardReceiver::start_frequency_copy(uint32_t hz,uint32_t now,bool narrow) {
     tune_profile(hz,{},0,now,narrow,0);
     frequency_counter_.begin(now,uhf_tx_frequency(hz));
@@ -117,17 +236,29 @@ void BoardReceiver::tune(uint32_t hz,uint32_t now) {
     if(chip!=rx_chip_) {
         if(init_step_)sleep_chip(rx_chip_);
         rx_chip_=chip;status_={};init_step_=0;
+#ifdef RT950_MAIN_TX
+        asleep_=false;
+#endif
     }
     idle_requested_=false;status_.frequency=hz;
     status_.sampled=false;
     if(!status_.ready)return;
+#ifdef RT950_MAIN_TX
+    const bool was_asleep=asleep_;
+    wake_receiver(now);
+#endif
     const uint32_t word=hz/10;
     bus.write(rx_chip_,0x38,uint16_t(word));
     bus.write(rx_chip_,0x39,uint16_t(word>>16));
 #ifdef RT950_MAIN_TX
     bus.write(rx_chip_,0x43,fm_filter_word(cb || narrow_));
 #endif
-    due_=now+RxRestartMs;restart_=true;
+    restart_=true;
+#ifdef RT950_MAIN_TX
+    if(!was_asleep)due_=now+RxRestartMs;
+#else
+    due_=now+RxRestartMs;
+#endif
 }
 void BoardReceiver::tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql) {
     tone_=tone;tone_level_=level;narrow_=narrow;sql_=sql;
@@ -147,6 +278,12 @@ void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow
 
 void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,WeatherAudio weather) {
     if(!active_ || idle_requested_ || status_.fault)return;
+#ifdef RT950_MAIN_TX
+    if(asleep_) {
+        if(!ptt && !monitor && !packet_audio && weather==WeatherAudio::Off)return;
+        wake_receiver(now);
+    }
+#endif
     if(!status_.ready) {
         if(init_step_==3 && int32_t(now-due_)<0)return;
         constexpr unsigned prefix=sizeof rx_startup/sizeof rx_startup[0];
@@ -235,7 +372,20 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         audio(!ptt && weather==WeatherAudio::Speaker && status_.receiving,true);
         return;
     }
+#ifdef RT950_MAIN_TX
+    if(packet_audio) {
+        if(status_.sampled && hardware_sql_open(status_.status)) {
+            packet_gate_=true;packet_until_=now+120u;
+        }
+        if(ptt || !status_.sampled || int32_t(now-packet_until_)>=0)packet_gate_=false;
+        audio(packet_gate_);
+        return;
+    }
+    packet_gate_=false;
+    audio(!ptt && (status_.receiving || ((monitor || (sql_==0 && tone_.kind==ToneKind::Off)) && status_.sampled)),true);
+#else
     audio(!ptt && (status_.receiving || ((monitor || packet_audio || (sql_==0 && tone_.kind==ToneKind::Off)) && status_.sampled)),!packet_audio);
+#endif
 }
 bool BoardReceiver::squelch_open(uint32_t now) {
     return !restart_ && status_.receiving && int32_t(now-next_sample_)<int32_t(RxSampleMs);
@@ -384,7 +534,7 @@ bool BoardUhfTx::start_tail() {
 }
 
 void BoardUhfTx::restore_rx() {
-    clear_board_pa_bias();
+    release_board_pa_bias();
     if(chip_started_) {
         bus.write(chip_,0x30,0);
         if(signal_used_)bus.write(chip_,0x70,0);

@@ -147,4 +147,5 @@ bool read_board_vhf_calibration(VhfPaCalibration &out);
 bool read_board_cb_calibration(CbPaCalibration &out);
 void prepare_board_pa_bias();
 void clear_board_pa_bias();
+void release_board_pa_bias();
 }

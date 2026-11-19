@@ -9,14 +9,14 @@ void rt_defaults(rt_config *c)
     *c=(rt_config){0};
     c->watch_mode=RT_WATCH_ABC; c->watch_mask=7;
     c->dwell_ms=150; c->hold_ms=1000;
-    c->gps_on=true; c->aprs_rx=true;
+    c->gps_on=RT_GPS_AUTO; c->aprs_rx=true;
     c->aprs_rx_hz=144800000u; /* Initial RX preset, editable by region. */
     c->beacon_seconds=60;c->aprs_scan_seconds=10;
     /* APRS TX frequency and TX permissions require explicit user setup. */
 }
 bool rt_config_valid(const rt_config *c)
 {
-    if(c->active>2 || c->watch_mode>2 || (c->watch_mask & ~7u) ||
+    if(c->gps_on>RT_GPS_ON || c->active>2 || c->watch_mode>2 || (c->watch_mask & ~7u) ||
        c->dwell_ms<50 || c->dwell_ms>2000 || c->hold_ms>10000 ||
        c->beacon_seconds<10 || c->beacon_seconds>86400 ||
        (c->aprs_scan_seconds && (c->aprs_scan_seconds<5 || c->aprs_scan_seconds>600))) return false;

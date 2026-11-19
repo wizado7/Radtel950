@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "application.hpp"
+#include "idle_schedule.hpp"
+#include "gps_idle.hpp"
+#include "gps_power.hpp"
+extern "C" volatile uint8_t custom_encoder_interval;
+extern "C" volatile uint8_t custom_idle_wake_ms;
 #include "settings_flash.hpp"
 #include "settings_export.hpp"
 #include "settings_import.hpp"
@@ -45,16 +50,21 @@ extern "C" int main(void) {
     voice::MicAdc vox_adc;
 #endif
     SCB->SCR &= ~6u; // shallow sleep; never inherit SLEEPDEEP/SLEEPONEXIT
-    board_init();board_battery_init(get_tick());lcd_init();encoder_init();
+    board_init();
+#ifdef RT950_BENCH_TX_HZ
+    voice::release_board_pa_bias();
+#endif
+    board_battery_init(get_tick());lcd_init();encoder_init();
     Application app;load_settings(app);
-    board_display_init(get_tick());ui_boot_screen();board_display_brightness(app.brightness_permille());delay_ms(400);
+    board_display_init(get_tick());ui_boot_screen(app);board_display_brightness(app.brightness_permille());delay_ms(400);
     SettingsAutosave autosave;autosave.begin(app,get_tick());Controls keys;PowerSwitch power;WakeGuard wake_keys;
     // Recovery route to diagnostics even if the matrix labels are wrong.
     // A held key at boot always enters diagnostics.
     if(board_ptt_mask()) app.key(Key::Debug);
-    board_gps_enable(app.config().gps_on);
+    board_gps_enable(0);
     uint32_t last_input=get_tick(),last_draw=last_input;
     uint32_t last_encoder=last_input;
+    bool ui_dirty=false;
     bool keys_awake=true;
     fm::BoardProbe fm_probe;
     voice::BoardReceiver voice_rx;voice::Watch voice_watch;
@@ -118,7 +128,7 @@ extern "C" int main(void) {
 #endif
     static SettingsExport<BackupUart> settings_export;
     static SettingsImport<BackupUart> settings_import;
-    InputStatus input;bool gps=app.config().gps_on,display_awake=true,wake_encoder=false;
+    InputStatus input;GpsIdle gps_idle;GpsPower gps_power;bool gps=false,display_awake=true,wake_encoder=false;
 #ifdef RT950_MAIN_TX
     input.power.reset_flags=custom_reset_flags;
 #endif
@@ -148,6 +158,7 @@ extern "C" int main(void) {
         board_battery_fast(raw_ptt || rf_session || packet_battery_pending);
 #endif
         app.tick(now);
+        custom_encoder_interval=encoder_interval(app.screen_awake());
         board_battery_poll(now);
         const bool switch_off=board_power_switch_off()!=0;
         if(power.poll(switch_off,now)) {
@@ -165,7 +176,7 @@ extern "C" int main(void) {
             autosave.poll(app,now,true,board_ptt_mask()!=0);
             board_power_cut();
         }
-        if(uint32_t(now-last_input)>=10u) {
+        if(uint32_t(now-last_input)>=keypad_interval(app.screen_awake())) {
             board_gps_poll(now);
             last_input=now;input.sampled=board_scan_key();const uint8_t code=keys.poll(input.sampled,now);
             app.update_monitor_hold(keys.accepted());
@@ -183,18 +194,20 @@ extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
                    && !suppress_signal_key
 #endif
-                )dispatch_key(app,code);
+                ){dispatch_key(app,code);ui_dirty=true;}
             }
 #ifdef RT950_MAIN_TX
             if(input.sampled==255 && keys.accepted()==255)suppress_signal_key=false;
 #endif
         }
-        if(uint32_t(now-last_encoder)>=1u) {
+        if(uint32_t(now-last_encoder)>=encoder_interval(app.screen_awake())) {
             last_encoder=now;const int8_t dir=encoder_poll();
-            input.encoder_ab=encoder_state();const uint32_t edges=encoder_edges();
+            const uint8_t encoder_ab=encoder_state();
+            if(!app.screen_awake() && encoder_ab!=input.encoder_ab){wake_encoder=true;app.activity(now);}
+            input.encoder_ab=encoder_ab;const uint32_t edges=encoder_edges();
             if(edges!=input.edges){if(!app.screen_awake())wake_encoder=true;app.activity(now);}
             input.edges=edges;input.invalid_edges=encoder_invalid_edges();input.encoder_lost=encoder_overruns();
-            if(dir) {if(dir>0)++input.cw;else ++input.ccw;if(!wake_encoder)app.key(dir>0?Key::Up:Key::Down);wake_encoder=false;}
+            if(dir) {if(dir>0)++input.cw;else ++input.ccw;if(!wake_encoder){app.encoder(dir);ui_dirty=true;}wake_encoder=false;}
         }
         input.ptt_mask=board_ptt_mask();
         if(!app.side_ptt_enabled())input.ptt_mask&=3u;
@@ -272,7 +285,7 @@ extern "C" int main(void) {
             page!=Page::PowerCalibration && page!=Page::PowerMeasured &&
             ptt.state()==voice::Ptt::State::Idle && !packet_tx.active();
         const bool background=aprs_background.poll(now,aprs_allowed && page==Page::Radio,
-            voice_rx.status().ready && voice_rx.has_sample() && !voice_rx.carrier() &&
+            voice_rx.status().ready && voice_rx.has_sample() && !voice_rx.carrier_at_squelch() &&
             !voice_rx.status().receiving,uint32_t(config.aprs_scan_seconds)*1000u);
         const bool aprs_page=page==Page::Aprs || page==Page::AprsMessages;
         const bool relay_page=aprs_page || (page==Page::Radio && !app.editing());
@@ -674,6 +687,11 @@ extern "C" int main(void) {
                     voice_rx.tune_profile(config.aprs_rx_hz,{},0,now,true,3);
                 } else voice_rx.set_profile({},0,now,true,3);
             }
+            using Decoder=voice::BoardReceiver::Decoder;
+            const bool can_doze=app.power_save() && !app.screen_awake() && page==Page::Radio &&
+                (voice_target || background) && !app.enabled(Option::Watch) && !monitor && !ptt_down &&
+                !rf_session && !transmitting && !app.vox_on();
+            voice_rx.idle_sleep(now,can_doze,background && aprs_listen);
             using WeatherAudio=voice::BoardReceiver::WeatherAudio;
             const auto wx_audio=!weather_open?WeatherAudio::Off:
                 app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;
@@ -688,6 +706,13 @@ extern "C" int main(void) {
 #endif
 #ifdef RT950_MAIN_TX
             const auto &rx=voice_rx.status();
+            char alert[4]{};
+            const auto decoder=ptt_down?Decoder::Off:weather_open?Decoder::Same:
+                voice_target && page==Page::Radio?Decoder::Dtmf:Decoder::Off;
+            if(const char result=voice_rx.decode(decoder,now,alert)) {
+                if(weather_open) {app.weather().same_alert(alert);app.activity(now);}
+                else input.dtmf[voice_watch.slot()].append(result,rx.frequency,now);
+            }
             if(voice_target && !ptt_down) {
                 const auto measured_slot=voice_watch.slot();
                 input.observe_signal(measured_slot,rx,config.vfo[measured_slot].rx_hz,now);
@@ -708,7 +733,7 @@ extern "C" int main(void) {
                     uint32_t now;
                     bool export_allowed,background;
                 } receive{input,ble_export,relay_allowed?&relay:nullptr,identity,routing,now,export_allowed,background};
-                packet_rx.poll(rx.ready && rx.frequency==config.aprs_rx_hz && !rx.fault,now,
+                packet_rx.poll(rx.ready && rx.frequency==config.aprs_rx_hz && !rx.fault && voice_rx.audio_active(),now,
                     [](void *context,const uint8_t *frame,size_t size) {
                         size_t payload=0;
                         auto &received=*static_cast<ReceiveContext *>(context);
@@ -738,7 +763,7 @@ extern "C" int main(void) {
         input.aprs_cancelled=aprs_background.cancelled();
         if(export_allowed && uint32_t(now-last_gps_export)>=2000u) {
             last_gps_export=now;
-            const aprs::GpsTelemetry gps_status(*nav_get(),config.gps_on,board_gps_bytes()!=0,now);
+            const aprs::GpsTelemetry gps_status(nav,config.gps_on!=0,board_gps_bytes()!=0,now);
             ble_export.enqueue_gps(gps_status,now);
         }
 #endif
@@ -768,7 +793,30 @@ extern "C" int main(void) {
             app.observe_voice_slot(input.voice.slot,input.voice.frequency);
 #endif
         if(page!=Page::Debug)board_radio_led(input.voice.receiving && !input.ptt_mask,transmitting);
-        if(gps!=app.config().gps_on) {gps=app.config().gps_on;board_gps_enable(gps);}
+        const bool gps_view=app.screen_awake() &&
+            (app.page()==Page::Gps || app.page()==Page::Waypoint || app.page()==Page::Distance);
+        bool live_position=gps_view;
+#ifdef RT950_MAIN_TX
+        if(config.beacon_on && !app.beacon_saved_point()) {
+            live_position|=app.beacon_mode()==aprs::BeaconMode::Smart || app.beacon_requested(now) ||
+                (app.beacon_mode()==aprs::BeaconMode::Timed &&
+                 now-last_beacon+30000u>=uint32_t(config.beacon_seconds)*1000u);
+        }
+#endif
+        const bool gps_inhibit=raw_ptt || transmitting || !app.config().gps_on;
+        const bool gps_uart_busy=board_gps_transmit(gps_inhibit,now);
+        const auto gps_command=gps_power.poll(now,gps_idle.update(app,now),live_position,
+                                              gps_inhibit || gps_uart_busy,*nav_get());
+        if(gps!=gps_command.power){gps=gps_command.power;board_gps_enable(gps);}
+        board_gps_sleeping_set(gps_command.sleeping);
+        if(gps_command.seconds) {
+            uint8_t frame[20];
+            const unsigned size=GpsPower::standby_frame(gps_command.seconds,frame);
+            board_gps_send(frame,size,now);
+        } else if(gps_command.wake) {
+            constexpr uint8_t wake[]={'\r','\n'};
+            board_gps_send(wake,sizeof wake,now);
+        }
         const bool draw_ready=board_display_poll(app.screen_awake(),now);
         if(draw_ready && !display_awake){ui_invalidate();last_draw=now-200u;}
         display_awake=draw_ready;
@@ -782,14 +830,48 @@ extern "C" int main(void) {
             (config.ble_on && !switch_off?1u<<Load::Ble:0u) |
             (packet_rx.running()?1u<<Load::AprsRx:0u) | (transmitting?1u<<Load::Tx:0u));
 #endif
-        if(draw_ready && uint32_t(now-last_draw)>=200u) {
+        const uint32_t draw_interval=ui_dirty || (app.page()==Page::Radio && ui_transitioning())?40u:200u;
+        if(draw_ready && uint32_t(now-last_draw)>=draw_interval) {
+            ui_dirty=false;
             last_draw=now;ui_draw(app,input,now);
             if(app.page()==Page::AprsMessages && app.aprs_personal())
                 input.aprs_messages.read_personal(app.aprs_message_index());
         }
         if(draw_ready)board_display_brightness(app.brightness_permille());
-        // Sleep only the CPU, keep SysTick/UART and GPIO polling active.
-        // SysTick wakes us every millisecond; the watchdog still checks main.
+#ifdef RT950_MAIN_TX
+        // The timer keeps millisecond time while servicing quiet RX in 5 ms turns.
+        custom_idle_wake_ms=app.power_save() && !app.screen_awake() && !draw_ready &&
+            app.page()==Page::Radio && voice_listening && !watching && !monitor &&
+            !scanning && !input.voice.receiving && !voice_rx.carrier_at_squelch() &&
+            !raw_ptt && !rf_session && !transmitting && !app.vox_on() && !config.ble_on && !gps ? 5 : 1;
+        if(custom_idle_wake_ms==5 && input.voice.frequency && app.active_radio_profile().squelch &&
+           !config.beacon_on && !relay.pending() && board_battery_idle() && board_idle_clock(true)) {
+            // Revisit the foreground regularly for battery, idle APRS and autosave.
+            const auto deadline=now+250u;
+            const auto encoder_before=encoder_edges();
+            const auto pins_before=encoder_state();
+            uint32_t idle_keys_at=last_input;
+            while(true) {
+                const uint32_t idle_now=get_tick();
+                custom_heartbeat=idle_now;
+                if(int32_t(idle_now-deadline)>=0 || board_ptt_mask() ||
+                   board_power_switch_off() || encoder_edges()!=encoder_before ||
+                   encoder_state()!=pins_before)break;
+                if(uint32_t(idle_now-idle_keys_at)>=25u) {
+                    idle_keys_at=idle_now;
+                    if(board_scan_key()!=255u)break;
+                }
+                voice_rx.idle_sleep(idle_now,true);
+                voice_rx.poll(idle_now,false);
+                if(voice_rx.carrier_at_squelch() || voice_rx.status().fault)break;
+                char ignored[4]{};
+                voice_rx.decode(voice::BoardReceiver::Decoder::Dtmf,idle_now,ignored);
+                __asm volatile("dsb\n wfi" ::: "memory");
+            }
+            board_idle_clock(false);
+            continue;
+        }
+#endif
         if(app.power_save()) __asm volatile("dsb\n wfi" ::: "memory");
     }
 }

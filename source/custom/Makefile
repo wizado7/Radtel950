@@ -4,7 +4,7 @@ CXXFLAGS := -std=c++17 -Wall -Wextra -Werror -Wshadow -fno-exceptions -fno-rtti
 ARMFLAGS := -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -Os -ffreestanding -fno-builtin -ffunction-sections -fdata-sections
 .PHONY: all test arm-check firmware clean
 CSOURCES := ../src/startup.c ../src/system.c ../src/drivers/gpio.c ../src/drivers/lcd.c ../src/app/encoder.c ../diagnostic/nmea_status.c ../mvp/core.c board.c battery.c runtime.c
-CPPSOURCES := display_power.cpp application.cpp controls.cpp main.cpp ui.cpp gps_view.cpp locale.cpp radio_settings.cpp settings_snapshot.cpp settings_flash.cpp fm_board.cpp voice_rx.cpp voice_factory_board.cpp
+CPPSOURCES := ui_text.cpp ui_home.cpp display_power.cpp application.cpp controls.cpp main.cpp ui.cpp gps_view.cpp locale.cpp radio_settings.cpp settings_snapshot.cpp settings_flash.cpp fm_board.cpp voice_rx.cpp voice_factory_board.cpp
 COBJECTS := $(addprefix $(OUT)/c/,$(notdir $(CSOURCES:.c=.o)))
 CPPOBJECTS := $(addprefix $(OUT)/cpp/,$(CPPSOURCES:.cpp=.o))
 -include $(COBJECTS:.o=.d) $(CPPOBJECTS:.o=.d)
@@ -27,6 +27,7 @@ $(OUT)/c/%.o: %.c
 	mkdir -p $(dir $@)
 	$(PREFIX)gcc $(ARMFLAGS) -std=c11 -Wall -Wextra -Werror -MMD -MP -DRT950_CUSTOM -I../include -c $< -o $@
 $(filter-out $(OUT)/cpp/settings_flash.o,$(CPPOBJECTS)): CXXFLAGS += -Oz
+$(OUT)/cpp/ui_home.o $(OUT)/cpp/ui_text.o: CXXFLAGS += -fno-if-conversion -fno-if-conversion2
 $(OUT)/cpp/%.o: %.cpp
 	mkdir -p $(dir $@)
 	$(PREFIX)g++ $(ARMFLAGS) $(CXXFLAGS) -MMD -MP -fno-threadsafe-statics -I../include -c $< -o $@

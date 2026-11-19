@@ -14,6 +14,7 @@
 
 # Локальные инструменты, материалы и результаты сборки
 /.tools/
+/*.git/
 /debug/
 /firmware/
 /reference/
@@ -34,11 +35,13 @@ build-bench/
 SHA256SUMS.txt
 *.SHA256SUMS.txt
 *.IMAGE-CHECK.txt
+!/source/custom/ui_reference/SHA256SUMS.txt
 
 # Резервные копии и локальные настройки
 *.[rR][tT][cC][fF][gG]
 *.[dD][uU][mM][pP]
 *.bak
+*.950[sS][pP][iI]
 
 # Python и локальная среда
 __pycache__/

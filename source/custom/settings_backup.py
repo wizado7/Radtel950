@@ -18,7 +18,9 @@ KEYS_SIZE = 8008
 ROUTING_SIZE = 8092
 ALTITUDE_SIZE = 8096
 BEACON_SIZE = 8108
-PORTABLE_SIZE = 8116
+UI_PREVIOUS_SIZE = 8116
+DISPLAY_SIZE = 8128
+PORTABLE_SIZE = 8132
 KEY_ACTION_COUNT = 12
 
 
@@ -26,7 +28,7 @@ def parse_header(header):
     if len(header) != HEADER or header[:8] != MAGIC:
         raise ValueError('not a Custom UI settings backup')
     protocol, size, schema, payload_crc = struct.unpack_from('<4I', header, 8)
-    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, ALTITUDE_SIZE), (5, ALTITUDE_SIZE), (6, BEACON_SIZE), (7, PORTABLE_SIZE), (8, PORTABLE_SIZE)):
+    if protocol != 1 or (schema, size) not in ((1, CANONICAL_SIZE), (2, KEYS_SIZE), (3, ROUTING_SIZE), (4, ALTITUDE_SIZE), (5, ALTITUDE_SIZE), (6, BEACON_SIZE), (7, UI_PREVIOUS_SIZE), (8, UI_PREVIOUS_SIZE), (9, DISPLAY_SIZE), (10, PORTABLE_SIZE)):
         raise ValueError('unsupported backup protocol, schema or payload length')
     if struct.unpack_from('<I', header, 40)[0] != 0:
         raise ValueError('unsupported backup flags')
@@ -67,8 +69,12 @@ def inspect_backup(data):
         raise ValueError('invalid fixed beacon altitude')
     if schema >= 6 and (words[2024] > 8 or words[2025] > 36 or words[2026] > 2):
         raise ValueError('invalid beacon format, overlay or mode')
-    if schema >= 7 and (not 1 <= words[-2] <= 9 or words[-1] > 5):
+    if schema >= 7 and (not 1 <= words[2027] <= 9 or words[2028] > 5):
         raise ValueError('invalid VOX level or delay')
+    if schema>=9 and (words[2029]>1 or words[2030]>1 or not 66<=words[2031]<=160):
+        raise ValueError('invalid display settings')
+    if schema >= 10 and words[2032] > 1:
+        raise ValueError('invalid font size')
     if words[0] not in (0, 1):
         raise ValueError('invalid language field')
     # Canonical v1: 29 base words, 3 VFOs x18, 15 zones x9, 64 memories x26.

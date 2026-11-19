@@ -8,13 +8,13 @@ uint8_t Controls::poll(uint8_t raw,uint32_t now) {
     if(accepted_!=candidate_) {
         // Defer PF1/PF2, V/M and # until release. A hold must never fire
         // its short action first, nor fire it again after release.
-        if((accepted_==0 || accepted_==1 || accepted_==2 || accepted_==21) && candidate_==255) {
+        if((accepted_==0 || accepted_==1 || accepted_==2 || accepted_==3 || accepted_==21) && candidate_==255) {
             const uint8_t released=accepted_;
             accepted_=255;return long_sent_?255:released;
         }
-        accepted_=candidate_;repeated_=now;repeating_=false;long_sent_=false;return accepted_==0 || accepted_==1 || accepted_==2 || accepted_==21?255:accepted_;
+        accepted_=candidate_;repeated_=now;repeating_=false;long_sent_=false;return accepted_==0 || accepted_==1 || accepted_==2 || accepted_==3 || accepted_==21?255:accepted_;
     }
-    if((accepted_==0 || accepted_==1 || accepted_==6 || accepted_==9 || accepted_==2 || accepted_==21) && !long_sent_ && uint32_t(now-repeated_)>=700u) {
+    if((accepted_==0 || accepted_==1 || accepted_==6 || accepted_==9 || accepted_==3 || accepted_==2 || accepted_==3 || accepted_==21 || accepted_==20) && !long_sent_ && uint32_t(now-repeated_)>=700u) {
         long_sent_=true;return uint8_t(accepted_|128u);
     }
     // Only arrows repeat; never repeat digit entry or toggles.
@@ -23,6 +23,7 @@ uint8_t Controls::poll(uint8_t raw,uint32_t now) {
     repeated_=now;repeating_=true;return accepted_;
 }
 void dispatch_key(Application &app,uint8_t code) {
+    if(code==uint8_t(20|128) && app.page()==Page::QuickSettings){app.key(Key::Save);return;}
     if(code==uint8_t(21|128)) {app.key(Key::KeypadLock);return;}
     if(app.page()==Page::VoiceRx) {
         if(code==9 || code==1)app.key(Key::Back);
@@ -30,6 +31,7 @@ void dispatch_key(Application &app,uint8_t code) {
     }
     if(app.page()==Page::Debug) {if(code==uint8_t(9|128))app.key(Key::Back);return;}
     if((code&127u)<=1u){app.user_key(code&127u,(code&128u)!=0);return;}
+    if(code==uint8_t(3|128)) {app.key(Key::QuickSettings);return;}
     if(code==uint8_t(2|128)) {app.key(Key::Gps);return;}
     if(code==uint8_t(6|128)) {app.key(Key::Menu);return;}
     if(code==uint8_t(9|128)) return;

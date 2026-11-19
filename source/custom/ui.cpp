@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui.hpp"
+#include "ui_home.hpp"
+#include "ui_text.hpp"
 #include "board.h"
 #include "firmware_version.hpp"
 #include "gps_view.hpp"
@@ -10,10 +12,31 @@ namespace rt950 {
 namespace {
 constexpr const char *watch_names[]={"ACTIVE","A/B/C","A/B","A/C","B/C"};
 static_assert(sizeof watch_names/sizeof watch_names[0]==sizeof watch_masks/sizeof watch_masks[0]);
-constexpr uint16_t bg=0x0862,card=0x10C4,ink=0xFFFF,muted=0x9D55,accent=0x06DA,selected=0x1948;
+uint16_t bg=0x0862,card=0x10C4,ink=0xFFFF,muted=0x9D55,accent=0x06DA,selected=0x1948;
 void rect(unsigned x,unsigned y,unsigned w,unsigned h,uint16_t c) {lcd_fill_rect(uint16_t(x),uint16_t(y),uint16_t(w),uint16_t(h),c);}
 Language draw_language=Language::English;
-void label(unsigned x,unsigned y,const char *s,uint16_t c=ink,uint16_t b=card) {lcd_draw_string(uint16_t(x),uint16_t(y),translate(draw_language,s),c,b);}
+const screen::Font *body_font=&screen::Sans11;
+void label(unsigned x,unsigned y,const char *s,uint16_t c=ink,uint16_t b=card,unsigned right=232) {
+ const char *value=translate(draw_language,s);
+ if(x>=right)return;
+ const auto &font=screen::fit(value,*body_font,right-x);
+ screen::text(int(x),int(y)-3,value,font,c,b,right);
+}
+void set_theme(const Application &app) {
+ draw_language=app.language();
+ body_font=app.large_font()?&screen::Sans13:&screen::Sans11;
+ const bool light=app.light_theme();
+ bg=screen::color(light?0xffffff:0x0c1015);
+ card=screen::color(light?0xf3f6f9:0x161c24);
+ ink=screen::color(light?0x0f172a:0xf8fafc);
+ muted=screen::color(light?0x475569:0xb4c2d4);
+ accent=ink;
+ selected=screen::color(light?0xe2e8f0:0x28323e);
+}
+void centered(unsigned y,const char *s,uint16_t color) {
+ const unsigned width=screen::text_width(translate(draw_language,s),*body_font);
+ label((240-width)/2,y,s,color,bg);
+}
 void copy(char *d,const char *s) {unsigned n=0;for(;n<29 && s[n];++n)d[n]=s[n];d[n]=0;}
 void num(char *d,uint32_t v) {char t[10];unsigned n=0;do{t[n++]=char('0'+v%10);v/=10;}while(v);unsigned i=0;while(n)d[i++]=t[--n];d[i]=0;}
 // Calibration entry is integer milliwatts. Always show the unit and an
@@ -48,24 +71,13 @@ void freq(char *d,uint32_t v) {
  d[3]='.';d[9]=0;uint32_t div=100000000;
  for(unsigned i=0;i<8;++i,div/=10)d[positions[i]]=char('0'+v/div%10);
 }
-void slot_tone(char *out,Tone tone,const char *prefix) {
- if(tone.kind==ToneKind::Off){*out=0;return;}
- copy(out,prefix);
- out+=3;
- if(tone.kind==ToneKind::Dcs) {
-  radio_option_label(RadioSetting::RxDcs,tone.index,out);return;
- }
- const unsigned tenths=ctcss_frequency(tone);
- num(out,tenths/10u);
- while(*out)++out;
- *out++=draw_language==Language::Russian?',':'.';
- *out++=char('0'+tenths%10u);*out=0;
-}
 bool eq(const char *a,const char *b) {while(*a && *a==*b){++a;++b;}return *a==*b;}
 const char *gps_state(const Application &a,uint32_t now) {
  const auto *n=nav_get();
  if(!a.config().gps_on)return "OFF";
- if(!board_gps_bytes() && !n->good)return "NO DATA";
+ if(board_gps_sleeping())return "STANDBY";
+ if(a.page()!=Page::Gps && !board_gps_powered() && !n->good)return "AUTO IDLE";
+ if(!n->last_byte_ms && !n->good)return "NO DATA";
  if(uint32_t(now-n->last_byte_ms)>=3000u)return "STALE";
  return nav_fix_fresh(now)?"FIX":"NO FIX";
 }
@@ -82,7 +94,7 @@ const char *save_state_label(SaveState state) {
  return "";
 }
 void panel(unsigned y,unsigned h) {rect(8,y,224,h,card);}
-void stat(unsigned y,const char *name,const char *value) {panel(y,28);label(16,y+10,name,muted);label(104,y+10,value);}
+void stat(unsigned y,const char *name,const char *value) {panel(y,28);label(16,y+10,name,muted,card,124);label(130,y+10,value);}
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_power_status(const Application &app,const InputStatus &input,bool force) {
  const auto &p=input.power;const auto &trace=p.trace;const unsigned page=app.power_status_page();
@@ -546,26 +558,32 @@ void draw_backup(const InputStatus &input,bool force) {
   }
 }
 }
-void ui_invalidate(){cache.valid=false;}
-void ui_boot_screen() {
+void ui_invalidate(){cache.valid=false;invalidate_home();}
+void ui_boot_screen(const Application &app) {
+ set_theme(app);
  rect(0,0,240,320,bg);rect(32,86,176,3,accent);
- lcd_draw_string_2x(48,114,"RADTEL",ink,bg);
- label(72,153,"by wizado",accent,bg);
+ const auto &title=screen::Mono24;
+ screen::text((240-int(screen::text_width("RADTEL",title)))/2,108,"RADTEL",title,ink,bg);
+ centered(153,"by wizado",accent);
 #ifdef RT950_BENCH_TX_HZ
 #if defined(RT950_MAIN_TX)
- label(48,202,"CUSTOM " RT950_CUSTOM_VERSION,muted,bg);
+ centered(202,"CUSTOM " RT950_CUSTOM_VERSION,muted);
 #elif defined(RT950_BENCH_MATRIX)
- label(48,202,"RF ACCEPTANCE TX",muted,bg);
+ centered(202,"RF ACCEPTANCE TX",muted);
 #else
- label(48,202,"BENCH TX ONLY",muted,bg);
+ centered(202,"BENCH TX ONLY",muted);
 #endif
 #else
- label(48,202,"CUSTOM " RT950_CUSTOM_VERSION,muted,bg);
+ centered(202,"CUSTOM " RT950_CUSTOM_VERSION,muted);
 #endif
- label(72,224,"STARTING...",muted,bg);
+ centered(224,"STARTING...",muted);
 }
 void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
- draw_language=a.language();
+ set_theme(a);
+ if(a.page()==Page::Radio || a.page()==Page::QuickSettings || a.page()==Page::DisplayChoice) {
+  draw_home(a,input,now,!cache.valid || cache.page!=a.page());
+  cache.valid=true;cache.page=a.page();return;
+ }
  const auto radio_setting=a.page()==Page::RadioOptions?a.radio_setting():RadioSetting::Count;
  const bool force=!cache.valid || cache.page!=a.page() || cache.language!=draw_language || cache.radio_setting!=radio_setting || (a.page()==Page::Settings && cache.group!=a.menu_group()) || (a.page()==Page::PowerStatus && cache.power_page!=a.power_status_page());
  cache.power_page=uint8_t(a.power_status_page());
@@ -618,110 +636,59 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   copy(line,band==fm::Band::Longwave?"Longwave AM":
       band==fm::Band::Mediumwave?"Mediumwave AM":"Shortwave AM");
  } else {copy(line,"GPS ");copy(line+4,state);}
- if(changed(0,line,force)) {rect(8,32,224,12,bg);label(10,34,line,accent,bg);}
- if(a.page()==Page::Radio) {
-  const auto &c=a.config();
-  const int heard=a.recent_voice_slot();
-  for(unsigned i=0;i<3;++i) {
-   const bool sending=input.voice_tx_slot==i;
-   char hz[12];freq(hz,sending?c.vfo[i].tx_hz:c.vfo[i].rx_hz);
-   char key[30];copy(key,hz);key[10]=0; // append mode/channel to the cache signature
-   const bool receiving=input.voice.ready && input.voice.receiving && input.voice.slot==i &&
-       input.voice.frequency==c.vfo[i].rx_hz && !input.ptt_mask;
-   const bool recent=heard==int(i);
-   const bool split=c.vfo[i].tx_hz && c.vfo[i].rx_hz!=c.vfo[i].tx_hz;
-   unsigned n=0;while(key[n])++n;key[n++]=c.vfo[i].channel_mode?'M':'V';key[n++]=split?'S':c.vfo[i].tx_hz?'T':'R';key[n++]=a.reverse_active(i)?'V':'-';key[n++]=sending?'T':receiving?'R':recent?'L':'-';num(key+n,c.vfo[i].memory_channel);
-   const bool redraw=changed(i+1,key,force) || cache.active!=c.active;
-   const unsigned y=52+i*70;const bool active=c.active==i;
-   const uint16_t fill=active?selected:card;
-   const auto &profile=a.radio_profile(i);
-   const bool reverse=a.reverse_active(i);
-   char rx_tone[16],tx_tone[16];
-   slot_tone(rx_tone,profile.heard_tone(reverse),"RX ");
-   slot_tone(tx_tone,profile.sent_tone(reverse),"TX ");
-   const unsigned strength=sending?0:input.slot_signal[i].bars(c.vfo[i].rx_hz,now);
-   const char level[]={char('0'+strength),0};
-   const bool rx_changed=changed(5+i,rx_tone,redraw);
-   const bool tx_changed=changed(8+i,tx_tone,redraw);
-   const bool level_changed=changed(11+i,level,redraw);
-   if(redraw) {
-   rect(8,y,224,64,fill);rect(8,y,4,64,active?accent:card);
-   char slot[2]={char('A'+i),0};label(18,y+9,slot,active?accent:muted,fill);
-   label(44,y+9,c.vfo[i].channel_mode?"CH":"VFO",muted,fill);
-   if(c.vfo[i].channel_mode) {char channel[12];num(channel,c.vfo[i].memory_channel+1);label(76,y+9,channel,muted,fill);label(104,y+9,a.memory(c.vfo[i].memory_channel)->name,muted,fill);}
-   label(174,y+9,sending?"TX":receiving?"RX":active?"ACTIVE":recent?"LAST RX":"STANDBY",(sending || receiving || active)?accent:muted,fill);
-   lcd_draw_string_2x(18,uint16_t(y+29),hz,ink,fill);label(178,y+43,"MHz",muted,fill);
-   if(c.vfo[i].rx_hz && !c.vfo[i].tx_hz)label(170,y+29,"NO TX",muted,fill);
-   else if(a.reverse_active(i))label(170,y+29,"REV",accent,fill);
-   else if(split && !sending)label(170,y+29,"SPLIT",muted,fill);
-   }
-   if(rx_changed){rect(18,y+50,65,9,fill);label(18,y+51,rx_tone,muted,fill);}
-   if(tx_changed){rect(88,y+50,65,9,fill);label(88,y+51,tx_tone,muted,fill);}
-   if(level_changed) {
-    for(unsigned bar=0;bar<8;++bar)
-     rect(166+7*bar,y+54,5,4,bar<strength?accent:bg);
-   }
+ if(changed(0,line,force)) {rect(8,30,224,18,bg);label(10,33,line,accent,bg,a.page()==Page::Settings?184:232);}
+ if(a.page()==Page::Settings) {
+  const unsigned sel=a.menu_selection(),count=a.menu_count();
+  constexpr unsigned rows=7;
+  const unsigned first=sel/rows*rows;
+  char position[10];
+  num(position,sel+1);
+  unsigned length=0;while(position[length])++length;
+  position[length++]='/';num(position+length,count);
+  if(changed(13,position,force)){
+   rect(187,30,45,18,bg);
+   label(196,33,position,muted,bg);
   }
-  cache.active=c.active;
-#ifdef RT950_BENCH_TX_HZ
-  if(input.bench_ptt[0]) {
-   if(eq(input.bench_ptt,"TX END LEVEL INVALID")) {
-    constexpr char hex[]="0123456789ABCDEF";
-    copy(line,"TX END LEVEL ");
-    line[13]=hex[input.factory_ctcss_raw>>4];line[14]=hex[input.factory_ctcss_raw&15];
-    line[15]='/';line[16]=hex[input.factory_ctcss_level>>4];line[17]=hex[input.factory_ctcss_level&15];
-    line[18]=0;
-   } else copy(line,input.bench_ptt);
-  }
-#else
-  if(input.ptt_mask)copy(line,"RX ONLY");
-#endif
-  else
-  if(input.monitor_active)copy(line,"MONITOR ACTIVE");
-  else if(a.feedback()[0]) copy(line,a.feedback());
-  else if(a.editing()) {copy(line,"Enter ");a.entry_text(line+6);copy(line+15," OK");}
-  else if(input.voice.fault)copy(line,"RX BUS FAULT");
-  else if(input.power_status[0])copy(line,input.power_status);
-  else if(heard>=0 && heard!=c.active) {
-   constexpr const char *select_rx[]={"Right: select RX A","Right: select RX B","Right: select RX C"};
-   copy(line,select_rx[heard]);
-  }
-  else if(c.watch_mode==RT_WATCH_SINGLE)copy(line,"Watch: selected");
-  else {
-   const uint8_t mask=c.watch_mode==RT_WATCH_ABC?7u:uint8_t(c.watch_mask|(1u<<c.active));
-   copy(line,mask==3?"Watch: A/B":mask==5?"Watch: A/C":mask==6?"Watch: B/C":"Watch: A/B/C");
-  }
-  if(changed(4,line,force)) {rect(8,266,224,20,bg);label(10,271,line,a.editing()?accent:muted,bg);}
-  if(force)label(10,287,"Left: Watch slots",muted,bg);
- } else if(a.page()==Page::Settings) {
-  const unsigned sel=a.menu_selection(),first=sel<6?0:sel-5;
-  for(unsigned row=0;row<6;++row) {
-   const unsigned idx=first+row,y=52+row*35;
+  for(unsigned row=0;row<rows;++row) {
+   const unsigned idx=first+row,y=52+row*30;
    if(idx>=a.menu_count()) {
-    if(changed(row+1,"",force))rect(8,y,224,30,bg);
+    if(changed(row+1,"",force))rect(8,y,224,28,bg);
     continue;
    }
    const auto &entry=a.menu_entry(idx);
-   const char *status="OPEN";
-   if(entry.toggle!=Option::Count) {
-    status=a.enabled(entry.toggle)?"ON":"OFF";
-   } else if(entry.action==Key::Mode)status=a.power_save()?"ON":"OFF";
-   char key[30];copy(key,entry.name);unsigned n=0;while(key[n])++n;
-   key[n++]=idx==sel?'>':' ';key[n++]=status[0];key[n++]=status[1];key[n++]=status[2];key[n]=0;
-   if(!changed(row+1,key,force))continue;
+   const char *status="";
+   if(entry.toggle!=Option::Count)status=!a.enabled(entry.toggle)?"OFF":entry.toggle==Option::Gps && a.config().gps_on==RT_GPS_AUTO?"Auto":"ON";
+   else if(entry.action==Key::Mode)status=a.power_save()?"ON":"OFF";
+   char signature[10];
+   num(signature,idx);
+   unsigned n=0;while(signature[n])++n;
+   signature[n++]=idx==sel?'>':' ';
+   copy(signature+n,status);
+   if(!changed(row+1,signature,force))continue;
    const uint16_t fill=idx==sel?selected:card;
-   rect(8,y,224,30,fill);rect(8,y,3,30,idx==sel?accent:card);
-   label(17,y+7,entry.name,ink,fill);
-   label(17,y+19,status,muted,fill);
+   rect(8,y,224,28,fill);
+   if(idx==sel)rect(8,y,3,28,accent);
+   const unsigned width=screen::text_width(translate(draw_language,status),*body_font);
+   label(17,y+8,entry.name,ink,fill,status[0]?211-width:212);
+   if(status[0])label(222-width,y+8,status,ink,fill);
+   else label(219,y+8,">",muted,fill);
   }
   const bool repeater=a.menu_group()==MenuGroup::Repeater;
   char pair[30]="RX ";const auto &v=a.config().vfo[a.config().active];
   if(repeater) {
    freq(pair+3,v.rx_hz);copy(pair+12," TX ");freq(pair+16,v.tx_hz);
   } else pair[0]=0;
-  if(repeater && changed(7,pair,force)){rect(8,230,224,18,bg);label(10,234,pair,accent,bg);}
-  copy(line,a.feedback()[0]?a.feedback():repeater?a.tx_status():"ARROWS CHOOSE / OK SELECT");
-  if(changed(8,line,force)){rect(8,266,224,20,bg);label(10,271,line,muted,bg);}
+  if(repeater && changed(9,pair,force)){rect(8,261,224,14,bg);label(10,261,pair,accent,bg);}
+  copy(line,a.feedback()[0]?a.feedback():repeater?a.tx_status():"");
+  if(!line[0] && count>rows) {
+   const bool ru=draw_language==Language::Russian;
+   copy(line,ru?"Стр. ":"Page ");
+   unsigned n=0;while(line[n])++n;
+   line[n++]=char('1'+first/rows);line[n++]='/';
+   line[n++]=char('1'+(count-1)/rows);line[n]=0;
+   copy(line+n,!first?"  ▼":first+rows>=count?"  ▲":"  ▲▼");
+  }
+  if(changed(8,line,force)){rect(8,275,224,18,bg);label(10,277,line,muted,bg);}
  } else if(a.page()==Page::AprsMessages) {
   const bool personal=a.aprs_personal();
   const unsigned count=input.aprs_messages.count(personal);
@@ -1092,6 +1059,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
       wx.scanning()?"WX ALERT SCANNING":!rx.sampled?"RX STARTING":
       voice::hardware_sql_open(rx.status)?"RX CARRIER":"RX LISTENING";
   if(changed(4,status,force))stat(152,"RX",status);
+  if(changed(5,wx.same_event(),force))stat(188,"NOAA SAME",wx.same_event());
  } else if(a.page()==Page::FmProbe) {
   draw_fm_probe(a,input,force);
  } else if(a.page()==Page::FlashInfo) {
@@ -1102,7 +1070,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const unsigned size=unsigned(a.compact_snapshot_size());num(value,size);stat(154,"Data bytes",value);
    if(size && size<=8168u && board_storage_probe()!=255)num(value,8168u-size);else copy(value,"--");
    stat(188,"Free bytes",value);num(value,unsigned(a.canonical_snapshot_size()));stat(222,"Raw bytes",value);
-   panel(260,28);label(16,270,"COMPACT V8 / AUTO SAVE",muted);
+   panel(260,28);label(16,270,"COMPACT V10 / AUTO SAVE",muted);
   }
   const unsigned slots=board_storage_probe();
   const char *first=slots==255?"UNKNOWN":slots&1u?"NOT EMPTY":"EMPTY";
@@ -1203,8 +1171,8 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    if(channel_number[0])label(155,271,channel_number,ink,bg);
   }
   const char *save_status=save_state_label(input.save_state);
-  if(changed(9,a.zone_name(a.active_zone()),force)){rect(8,282,72,10,bg);label(10,283,a.zone_name(a.active_zone()),accent,bg);}
-  if(changed(7,save_status,force)){rect(88,282,144,10,bg);label(88,283,save_status,muted,bg);}
+  if(changed(9,a.zone_name(a.active_zone()),force)){rect(8,282,72,15,bg);label(10,283,a.zone_name(a.active_zone()),accent,bg);}
+  if(changed(7,save_status,force)){rect(88,282,144,15,bg);label(88,283,save_status,muted,bg);}
   if(force && a.page()==Page::Channels) {
    rect(8,300,224,16,bg);
    label(10,304,count?"LEFT: ACTIONS / ABC: ZONES":"ABC: ZONES",muted,bg);
@@ -1373,7 +1341,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    while(altitude[k])++k;
    copy(altitude+k,a.altitude_feet()?" ft":" m");
   }
-  if(changed(6,altitude,force)){rect(112,212,112,8,card);label(112,212,"ALT",muted);label(144,212,altitude);}
+  if(changed(6,altitude,force)){rect(112,210,112,15,card);label(112,212,"ALT",muted);label(144,212,altitude);}
   char hint[30];copy(hint,"RMC:");num(hint+4,n->rmc_count>9999?9999:n->rmc_count);j=0;while(hint[j])++j;copy(hint+j," E:");j+=3;
   uint32_t errors=board_gps_errors(),drops=board_gps_dropped();num(hint+j,errors>9999?9999:errors);while(hint[j])++j;copy(hint+j," D:");j+=3;num(hint+j,drops>9999?9999:drops);
   if(changed(8,hint,force)){rect(8,282,224,10,bg);label(10,283,hint,muted,bg);}
@@ -1395,7 +1363,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
  } else if(a.page()==Page::Aprs) {
   const char *aprs_state=input.aprs_receiving?"APRS RX":a.config().aprs_rx?"APRS WAIT":"APRS OFF";
   if(force)panel(52,84);
-  if(changed(1,aprs_state,force)){rect(18,64,204,12,card);label(18,65,aprs_state,accent);}
+  if(changed(1,aprs_state,force)){rect(18,64,204,16,card);label(18,65,aprs_state,accent);}
   char value[24];freq(value,a.config().aprs_rx_hz);
   if(changed(2,value,force)){rect(18,86,204,24,card);lcd_draw_string_2x(18,86,value,ink,card);}
   num(value,input.aprs_frames);

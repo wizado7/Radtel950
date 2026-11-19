@@ -13,8 +13,8 @@ public:
     const Probe &state() const {return probe_;}
 private:
     Probe probe_{};
-    uint8_t saved_[4]{};
-    bool levels_[4]{};
+    uint8_t saved_[3]{};
+    bool levels_[3]{};
     uint32_t audio_deadline_=0;
     uint16_t seek_result_=0;
     uint8_t audio_step_=0;

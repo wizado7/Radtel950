@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <stdint.h>
+#include "same_rx.hpp"
 #include "radio_settings.hpp"
 #include "voice_sql.hpp"
 #ifdef RT950_MAIN_TX
@@ -51,6 +52,12 @@ public:
     void stop();
     void standby();
 #ifdef RT950_MAIN_TX
+    bool idle_sleep(uint32_t now,bool allowed,bool packet_window=false);
+    bool sleeping() const {return asleep_;}
+    enum class Decoder : uint8_t {Off,Dtmf,Same};
+    char decode(Decoder mode,uint32_t now,char (&event)[4]);
+#endif
+#ifdef RT950_MAIN_TX
     void start_frequency_copy(uint32_t hz,uint32_t now,bool narrow);
     FrequencyCopy poll_frequency_copy(uint32_t now);
 #endif
@@ -74,6 +81,13 @@ private:
     VoiceStatus status_{};
 #ifdef RT950_MAIN_TX
     FrequencyCounter frequency_counter_{};
+    SameRx same_{};
+    Decoder decoder_=Decoder::Off;
+    uint32_t sleep_at_=0,decode_at_=0,packet_until_=0;
+    bool packet_gate_=false;
+    bool asleep_=false,sleep_eligible_=false;
+    void disable_decoder();
+    void wake_receiver(uint32_t now);
 #endif
     uint32_t due_=0,next_sample_=0;
     unsigned init_step_=0;

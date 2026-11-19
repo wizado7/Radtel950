@@ -24,6 +24,9 @@ def main():
     p.add_argument('--board-log', type=Path)
     p.add_argument('--lcd-log', type=Path)
     p.add_argument('--acceptance-notes', type=Path, help='include manual acceptance instructions in the full kit')
+    p.add_argument('--note',type=Path,action='append',default=[])
+    p.add_argument('--ui-log', type=Path)
+    p.add_argument('--ui-previews', type=Path)
     p.add_argument('--clean-rebuild', action='store_true')
     a = p.parse_args()
     custom = Path(__file__).resolve().parent
@@ -84,8 +87,20 @@ def main():
                 if destination=='LCD-ARM.txt' and not all(marker in text for marker in ('ARM LCD bus:', 'ARM LCD power:', 'ARM LCD window:', 'ARM LCD: UTF-8')):
                     p.error('LCD bus/power/oracle suite has not completed')
                 (kit / destination).write_text(text, encoding='utf-8')
+            if a.ui_log:
+                ui_text=a.ui_log.read_text(encoding='utf-8-sig')
+                if 'ARM UI reference:' not in ui_text or 'Traceback' in ui_text or hashlib.sha256(raw.read_bytes()).hexdigest() not in ui_text:
+                    p.error('UI report must pass against the image being packaged')
+                (kit/'UI-ARM.txt').write_text(ui_text,encoding='utf-8')
+            if a.ui_previews:
+                if not a.ui_log:p.error('UI previews require --ui-log')
+                for preview in sorted(a.ui_previews.iterdir()):
+                    if preview.is_file() and preview.suffix in ('.png','.gif'):
+                        shutil.copyfile(preview,kit/('UI-'+preview.name))
             if a.acceptance_notes:
                 shutil.copyfile(a.acceptance_notes, kit / 'ACCEPTANCE-RU.md')
+            for note in a.note:shutil.copyfile(note,kit/note.name)
+            (kit/'BUILD-COMMAND.txt').write_text("ARM GNU Toolchain 13.2.Rel1, Python 3; from extracted source root:\npython source/custom/package_firmware.py --toolchain 'C:/arm-gnu/bin' --output firmware --image-only\nUse the actual absolute toolchain bin path. Font generation is not part of the build.\n",encoding='utf-8')
             for document in DOCUMENTS:
                 shutil.copyfile(project / document, kit / document)
             source_zip = kit / (name + '.SOURCE.zip')

@@ -8,9 +8,10 @@ static uint32_t since,last_good,errors;
 static uint16_t millivolts,raw12;
 static uint8_t state,raw,fast;
 void board_battery_fast(uint8_t enabled){fast=enabled;}
+bool board_battery_idle(void){return state==6 && !fast;}
 void board_battery_init(uint32_t now) {
     CRM->CFGR=(CRM->CFGR&~0xc000u)|0x8000u; /* APB2 /6 */
-    CRM->APB2EN|=0x600u;
+    CRM->APB2EN|=CRM_APB2EN_ADC2EN;
     CRM->APB2RST|=0x400u;CRM->APB2RST&=~0x400u;
     gpio_config_pin(GPIOA,GPIO_PIN_1,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     REG(4)=0;REG(8)=0xe0000u;REG(0x2c)=0;REG(0x34)=1;

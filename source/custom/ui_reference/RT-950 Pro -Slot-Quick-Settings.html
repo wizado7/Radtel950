@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+
+<html lang="ru"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>RT-950 Pro · Slot Quick Settings (LCD UI Спецификация)</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              bg: '#e9eef2',
+              card: '#ffffff',
+              border: '#cbd5e1',
+              text: '#1e293b'
+            },
+            lcdDark: {
+              bg: '#0c1015',
+              panel: '#161c24',
+              border: '#28323e',
+              text: '#f8fafc',
+              dim: '#64748b'
+            },
+            lcdLight: {
+              bg: '#ffffff',
+              panel: '#e9edf2',
+              border: '#cbd5e1',
+              text: '#0f172a',
+              dim: '#64748b'
+            }
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', '"SF Mono"', 'Consolas', 'monospace'],
+            sans: ['"Inter"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+<style data-purpose="lcd-pixel-grid">
+    /* Strict Pixel-Perfect LCD Viewport */
+    .lcd-viewport {
+      width: 240px;
+      height: 320px;
+      min-width: 240px;
+      max-width: 240px;
+      min-height: 320px;
+      max-height: 320px;
+      box-sizing: border-box;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      user-select: none;
+      border-radius: 2px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    .freq-mono {
+      font-family: "JetBrains Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Scaling wrappers with transform origin */
+    .scale-wrapper {
+      transform-origin: top center;
+      transition: transform 0.15s ease-out;
+    }
+    .zoom-1x { transform: scale(1); }
+    .zoom-15x { transform: scale(1.5); margin-bottom: 160px; }
+    .zoom-2x { transform: scale(2); margin-bottom: 320px; }
+  </style>
+<meta content="web_standard" name="shell-type"/>
+</head>
+<body class="bg-[#e9eef2] text-slate-800 min-h-screen p-4 md:p-8 font-sans antialiased">
+<!-- BEGIN: MainWorkbenchHeader -->
+<header class="max-w-6xl mx-auto mb-6" data-purpose="workbench-header">
+<div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-300 pb-4">
+<div>
+<h1 class="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
+    RT-950 Pro <span class="text-slate-400 font-normal">·</span> <span id="lblTitleMain">Slot Quick Settings</span>
+</h1>
+<p class="text-sm md:text-base text-slate-600 mt-1" id="lblTitleDesc">Параметрическая 3×3 матрица прямой коррекции слота на LCD 240 × 320 (ST7789V / ILI9341). Порядок слотов фиксирован: A → B → C.</p>
+</div>
+<!-- Language Switcher & Scale Controls -->
+<div class="flex items-center gap-3">
+<div class="flex rounded-md border border-slate-300 bg-white p-0.5 shadow-sm text-xs font-semibold">
+<button class="px-2.5 py-1 rounded bg-slate-800 text-white" id="btnLangRu" onclick="setLanguage('RU')">RU</button>
+<button class="px-2.5 py-1 rounded text-slate-600 hover:text-slate-900" id="btnLangEn" onclick="setLanguage('EN')">EN</button>
+</div>
+<div class="flex rounded-md border border-slate-300 bg-white p-0.5 shadow-sm text-xs font-semibold">
+<span class="px-2 py-1 text-slate-400">Zoom:</span>
+<button class="px-2.5 py-1 rounded bg-slate-200 text-slate-800 font-bold" id="btnZoom1" onclick="setZoom('1x')">1x</button>
+<button class="px-2.5 py-1 rounded text-slate-600 hover:bg-slate-100" id="btnZoom15" onclick="setZoom('1.5x')">1.5x</button>
+<button class="px-2.5 py-1 rounded text-slate-600 hover:bg-slate-100" id="btnZoom2" onclick="setZoom('2x')">2x</button>
+</div>
+</div>
+</div>
+<!-- Interactive Control Bar in SCREEN_11 Style -->
+<section class="mt-4 flex flex-col gap-3 bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-sm" data-purpose="simulator-controls">
+<div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-3">
+<!-- Slot Switcher Buttons -->
+<div class="flex items-center gap-2">
+<span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1" id="lblActiveSlotGroup">Active Slot:</span>
+<button class="h-8 px-3 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs uppercase tracking-wider transition-colors shadow-sm active:bg-slate-200" id="btnCycle" onclick="cycleSlot()" title="Переключить A-B-C">A/B/C</button>
+<div class="flex items-center gap-1">
+<button class="h-8 w-8 rounded border border-slate-800 bg-slate-800 text-white font-bold text-xs shadow-sm" id="btnSlotA" onclick="setActiveSlot('A')">A</button>
+<button class="h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm" id="btnSlotB" onclick="setActiveSlot('B')">B</button>
+<button class="h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm" id="btnSlotC" onclick="setActiveSlot('C')">C</button>
+</div>
+<span class="text-[11px] font-mono font-medium text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-200 ml-2 hidden sm:inline-block">[A/B/C] Цикл слотов: A → B → C (Fixed Order)</span>
+</div>
+<!-- Action Toggles -->
+<div class="flex items-center gap-4 flex-wrap">
+<button class="h-8 px-3.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-medium text-xs shadow-sm flex items-center gap-2 transition-all" id="btnTxToggle" onclick="toggleTX()">
+<span class="w-2 h-2 rounded-full bg-slate-400" id="indicatorTxDot"></span>
+<span id="lblTxBtn">Показать TX</span>
+</button>
+<label class="inline-flex items-center cursor-pointer select-none text-xs font-medium text-slate-700">
+<input class="rounded border-slate-300 text-slate-800 focus:ring-0 w-4 h-4 mr-2" id="chkVolt" onchange="toggleVolt(this.checked)" type="checkbox"/>
+<span id="lblVolt">Status Bar Voltage</span>
+</label>
+</div>
+</div>
+<!-- Row 2: Matrix parameter focus quickbar -->
+<div class="flex flex-wrap items-center justify-between gap-3 pt-0.5">
+<div class="flex items-center gap-1.5 flex-wrap">
+<span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Tile Focus:</span>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn0" onclick="selectTile(0)">Mode</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn1" onclick="selectTile(1)">RX tone</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn2" onclick="selectTile(2)">TX tone</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn3" onclick="selectTile(3)">Offset</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn4" onclick="selectTile(4)">Power</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn5" onclick="selectTile(5)">Step</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn6" onclick="selectTile(6)">Squelch</button>
+<button class="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all" id="paramBtn7" onclick="selectTile(7)">Busy lock</button>
+<button class="h-7 px-2.5 rounded border border-slate-800 bg-slate-800 text-white font-mono text-xs font-semibold shadow-sm transition-all" id="paramBtn8" onclick="selectTile(8)">Reverse</button>
+</div>
+<div class="flex items-center gap-2">
+<button class="h-7 px-3 rounded bg-slate-900 hover:bg-slate-800 text-white font-mono text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5" onclick="cycleActiveValue()">
+<svg class="w-3.5 h-3.5 fill-current" viewbox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"></path></svg>
+<span>Rotate Val</span>
+</button>
+</div>
+</div>
+</section>
+</header>
+<!-- END: MainWorkbenchHeader -->
+<!-- BEGIN: DisplaysDualShowcase -->
+<main class="max-w-6xl mx-auto" data-purpose="viewport-container">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start justify-items-center">
+<!-- ================= DARK THEME DISPLAY (240x320) ================= -->
+<div class="flex flex-col items-center">
+<div class="w-[240px] flex items-center justify-between mb-2 px-1">
+<span class="font-bold text-sm tracking-wide text-slate-800 uppercase" id="lblThemeDark">Dark Theme</span>
+<span class="text-xs text-slate-500 font-mono">240 × 320 px (0x0C1015)</span>
+</div>
+<div class="overflow-visible p-1">
+<div class="scale-wrapper zoom-1x" id="darkZoomWrapper">
+<div class="lcd-viewport bg-[#0c1015] text-[#f8fafc] border border-slate-700 shadow-2xl" id="darkLCD">
+<!-- 1. Top Status Bar (20px, Y: 0..19) -->
+<div class="h-[20px] px-2 flex items-center justify-between text-[11px] border-b border-[#222a35] bg-[#0c1015] z-10 shrink-0">
+<div class="flex items-center gap-1.5 text-slate-300">
+<span class="font-bold text-[10px] text-white tracking-tight" id="darkStatusEditMode">EDIT A</span>
+<svg class="w-3 h-3 fill-current text-slate-200" title="GPS 3D Fix" viewbox="0 0 24 24">
+<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"></path>
+</svg>
+<svg class="w-3 h-3 fill-current text-slate-200" title="Bluetooth Connected" viewbox="0 0 24 24">
+<path d="M14.88 16.29L13 18.17V14.41m0-4.82V5.83l1.88 1.88M13 12l4.59-4.59a1 1 0 000-1.41l-4.59-4.59A1 1 0 0011 2v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19l4.59-4.59V22a1 1 0 001.71.71l4.59-4.59a1 1 0 000-1.41L13 12z"></path>
+</svg>
+<div class="relative flex items-center" title="APRS Message">
+<svg class="w-3 h-3 fill-current text-slate-200" viewbox="0 0 24 24">
+<path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"></path>
+</svg>
+<span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 rounded-full"></span>
+</div>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono font-semibold text-slate-300 hidden" id="darkVoltVal">8.2V</span>
+<div class="w-5 h-2.5 border border-slate-300 rounded-xs p-[1px] flex items-center gap-[1px] relative">
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="h-full w-1 bg-slate-200"></div>
+<div class="absolute -right-1 top-0.5 w-0.5 h-1.5 bg-slate-300 rounded-r-xs"></div>
+</div>
+</div>
+</div>
+<!-- Dynamic Container for Slots A, B, C (Fixed physical order strictly preserved) -->
+<div class="flex flex-col flex-1 overflow-hidden" id="darkSlotsContainer"></div>
+<!-- Bottom Softkeys Bar (20px, Y: 300..319) -->
+<footer class="h-[20px] px-2 flex items-center justify-between text-[9px] border-t border-[#222a35] bg-[#0c1015] font-sans font-medium text-slate-300 shrink-0 mt-auto">
+<span class="soft-key" id="darkKey1">A/B/C · ◄▲▼►</span>
+<span class="soft-key font-bold text-white" id="darkKey2">OK</span>
+<span class="soft-key" id="darkKey3">BACK Done</span>
+</footer>
+</div>
+</div>
+</div>
+</div>
+<!-- ================= LIGHT THEME DISPLAY (240x320) ================= -->
+<div class="flex flex-col items-center">
+<div class="w-[240px] flex items-center justify-between mb-2 px-1">
+<span class="font-bold text-sm tracking-wide text-slate-800 uppercase" id="lblThemeLight">Light Theme</span>
+<span class="text-xs text-slate-500 font-mono">Solar Outdoor (0xFFFFFF)</span>
+</div>
+<div class="overflow-visible p-1">
+<div class="scale-wrapper zoom-1x" id="lightZoomWrapper">
+<div class="lcd-viewport bg-white text-slate-900 border border-slate-400 shadow-2xl" id="lightLCD">
+<!-- 1. Top Status Bar (20px, Y: 0..19) -->
+<div class="h-[20px] px-2 flex items-center justify-between text-[11px] border-b border-slate-300 bg-white z-10 shrink-0">
+<div class="flex items-center gap-1.5 text-slate-800">
+<span class="font-bold text-[10px] text-black tracking-tight" id="lightStatusEditMode">EDIT A</span>
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"></path>
+</svg>
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M14.88 16.29L13 18.17V14.41m0-4.82V5.83l1.88 1.88M13 12l4.59-4.59a1 1 0 000-1.41l-4.59-4.59A1 1 0 0011 2v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19l4.59-4.59V22a1 1 0 001.71.71l4.59-4.59a1 1 0 000-1.41L13 12z"></path>
+</svg>
+<div class="relative flex items-center">
+<svg class="w-3 h-3 fill-current" viewbox="0 0 24 24">
+<path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"></path>
+</svg>
+<span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-slate-900 rounded-full"></span>
+</div>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="text-[10px] font-mono font-bold text-slate-800 hidden" id="lightVoltVal">8.2V</span>
+<div class="w-5 h-2.5 border border-slate-900 rounded-xs p-[1px] flex items-center gap-[1px] relative">
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="h-full w-1 bg-slate-900"></div>
+<div class="absolute -right-1 top-0.5 w-0.5 h-1.5 bg-slate-900 rounded-r-xs"></div>
+</div>
+</div>
+</div>
+<!-- Dynamic Container for Slots A, B, C (Fixed physical order strictly preserved) -->
+<div class="flex flex-col flex-1 overflow-hidden" id="lightSlotsContainer"></div>
+<!-- Bottom Softkeys Bar (20px, Y: 300..319) -->
+<footer class="h-[20px] px-2 flex items-center justify-between text-[9px] border-t border-slate-300 bg-white font-sans font-semibold text-slate-800 shrink-0 mt-auto">
+<span class="soft-key" id="lightKey1">A/B/C · ◄▲▼►</span>
+<span class="soft-key font-bold text-black" id="lightKey2">OK</span>
+<span class="soft-key" id="lightKey3">BACK Done</span>
+</footer>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- END: DisplaysDualShowcase -->
+<!-- BEGIN: FirmwareSpecsTable (SCREEN_11 Style) -->
+<section class="max-w-6xl mx-auto mt-12 bg-white rounded-xl border border-slate-200/80 shadow-sm p-6" data-purpose="engineering-specification">
+<div class="border-b border-slate-200 pb-3 mb-4 flex flex-wrap items-center justify-between gap-2">
+<div>
+<h2 class="text-lg font-bold text-slate-900 uppercase tracking-wide flex items-center gap-2">
+<svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        ИНЖЕНЕРНАЯ СПЕЦИФИКАЦИЯ ДИСПЛЕЯ (ST7789V / ILI9341 DRIVER)
+      </h2>
+<p class="text-xs text-slate-500 mt-0.5">Карта геометрических зон быстрой матрицы 3×3 и согласование палитры RGB565 с фиксацией слотов A, B, C.</p>
+</div>
+<div class="bg-slate-100 text-slate-800 font-mono text-xs font-bold px-3 py-1 rounded border border-slate-200" id="specLiveBadge">
+      QUICK MATRIX: 20 + 200 + 80 + 20 = 320 PX (SLOT ORDER LOCKED)
+    </div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
+<!-- Box 1: Geometry -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-geometry">
+<h3 class="font-bold text-slate-800 text-sm mb-2 flex items-center justify-between">
+<span>Геометрия высот (240 × 320)</span>
+<span class="text-emerald-700 font-mono text-xs">Σ = 320 px</span>
+</h3>
+<ul class="space-y-1.5 text-slate-600">
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Строка статуса (Y: 0..19):</span>
+<span class="font-mono font-bold text-slate-900">20 px</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Фиксированный порядок слотов:</span>
+<span class="font-mono font-bold text-emerald-800">A (верх) → B (середина) → C (низ)</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Развернутый активный слот:</span>
+<span class="font-mono font-bold text-slate-900">200 px (Hero 60 + 3×3 122 + 18)</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>2 Дежурных Standby слота:</span>
+<span class="font-mono font-bold text-slate-900">80 px (2 × 40 px)</span>
+</li>
+<li class="flex justify-between">
+<span>Нижняя панель софт-клавиш:</span>
+<span class="font-mono font-bold text-slate-900">20 px</span>
+</li>
+</ul>
+<div class="mt-3 pt-2 text-[11px] text-slate-500 border-t border-slate-200">
+<strong>Фиксированный физический порядок слотов (Slot Order Lock):</strong> Слот A всегда вверху, Слот B в центре, Слот C внизу вне зависимости от активного слота. Выбранный слот плавно разворачивает свои 3×3 настройки строго на своем постоянном уровне дисплея.
+      </div>
+</div>
+<!-- Box 2: Palette Table RGB565 -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-palette">
+<h3 class="font-bold text-slate-800 text-sm mb-2">Цветовая палитра RGB565</h3>
+<table class="w-full text-left font-mono text-[11px]">
+<thead>
+<tr class="text-slate-400 border-b border-slate-200">
+<th class="pb-1">Элемент</th>
+<th class="pb-1">HEX</th>
+<th class="pb-1">RGB565</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 text-slate-700">
+<tr>
+<td class="py-1">Dark Фон</td>
+<td>#0C1015</td>
+<td class="text-slate-900 font-bold">0x0882</td>
+</tr>
+<tr>
+<td class="py-1">Dark Карточка</td>
+<td>#161C24</td>
+<td class="text-slate-900 font-bold">0x10E4</td>
+</tr>
+<tr>
+<td class="py-1">Light Фон</td>
+<td>#FFFFFF</td>
+<td class="text-slate-900 font-bold">0xFFFF</td>
+</tr>
+<tr>
+<td class="py-1">Light Карточка</td>
+<td>#E9EDF2</td>
+<td class="text-slate-900 font-bold">0xE77C</td>
+</tr>
+<tr>
+<td class="py-1">Текст Dark</td>
+<td>#F8FAFC</td>
+<td class="text-slate-900 font-bold">0xFFDF</td>
+</tr>
+<tr>
+<td class="py-1">Текст Light</td>
+<td>#0F172A</td>
+<td class="text-slate-900 font-bold">0x08A5</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Box 3: Typography & Indicators -->
+<div class="bg-slate-50 p-4 rounded border border-slate-200" data-purpose="spec-typo">
+<h3 class="font-bold text-slate-800 text-sm mb-2">Шрифты и Индикация</h3>
+<ul class="space-y-1.5 text-slate-600">
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Hero Частота (Active):</span>
+<span class="font-mono font-bold text-slate-900">24 pt Mono</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Standby Частота:</span>
+<span class="font-mono font-bold text-slate-900">12 pt Mono</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Ячейки матрицы 3×3:</span>
+<span class="font-mono font-bold text-slate-900">11 pt Mono / 9 pt Sans</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Индикатор Фокуса:</span>
+<span class="font-mono text-xs text-slate-900">Инверсный бейдж + ↺</span>
+</li>
+<li class="flex justify-between border-b border-slate-200 pb-1">
+<span>Индикатор TX:</span>
+<span class="font-mono text-xs text-rose-700 font-bold">TX / TX Low / TX Mid / TX High</span>
+</li>
+<li class="flex justify-between">
+<span>Шкала S-метра:</span>
+<span class="font-mono text-xs text-slate-700">Сплошной монолит (1-1.5 px)</span>
+</li>
+</ul>
+</div>
+</div>
+</section>
+<!-- END: FirmwareSpecsTable -->
+<!-- BEGIN: InteractiveScriptHandlers -->
+<script data-purpose="simulator-engine">
+  const state = {
+    slot: 'A',
+    selectedTileIndex: 8, // Reverse tile selected by default
+    isTx: false,
+    showVoltage: false,
+    zoom: '1x',
+    language: 'RU',
+    // Parameters per slot with strictly qualitative Power values: Low, Mid, High
+    slotParams: {
+      A: [
+        { id: 'mode', name: 'Mode', values: ['FM', 'NFM', 'AM', 'USB'], idx: 0 },
+        { id: 'rxtone', name: 'RX tone', values: ['Off', '67.0', '100.0', 'D023N'], idx: 0 },
+        { id: 'txtone', name: 'TX tone', values: ['T 100.0', 'T 88.5', 'Off', 'T 123.0'], idx: 0 },
+        { id: 'offset', name: 'Offset', values: ['-600k', '+600k', '+5.0M', '0.000'], idx: 0 },
+        { id: 'power', name: 'Power', values: ['Low', 'Mid', 'High'], idx: 0 },
+        { id: 'step', name: 'Step', values: ['5k', '6.25k', '10k', '12.5k', '2.5k'], idx: 0 },
+        { id: 'squelch', name: 'Squelch', values: ['SQL 4', 'SQL 5', 'SQL 6', 'SQL 3'], idx: 0 },
+        { id: 'busylock', name: 'Busy lock', values: ['Off', 'On'], idx: 0 },
+        { id: 'reverse', name: 'Reverse', values: ['Off', 'On'], idx: 0 }
+      ],
+      B: [
+        { id: 'mode', name: 'Mode', values: ['FM', 'NFM', 'AM', 'USB'], idx: 0 },
+        { id: 'rxtone', name: 'RX tone', values: ['88.5', 'Off', '100.0', 'D023N'], idx: 0 },
+        { id: 'txtone', name: 'TX tone', values: ['T 88.5', 'Off', 'T 100.0', 'T 123.0'], idx: 0 },
+        { id: 'offset', name: 'Offset', values: ['+600k', '-600k', '0.000', '+5.0M'], idx: 0 },
+        { id: 'power', name: 'Power', values: ['Mid', 'High', 'Low'], idx: 0 },
+        { id: 'step', name: 'Step', values: ['12.5k', '5k', '6.25k', '10k', '25k'], idx: 0 },
+        { id: 'squelch', name: 'Squelch', values: ['SQL 3', 'SQL 4', 'SQL 5', 'SQL 2'], idx: 0 },
+        { id: 'busylock', name: 'Busy lock', values: ['Off', 'On'], idx: 0 },
+        { id: 'reverse', name: 'Reverse', values: ['Off', 'On'], idx: 0 }
+      ],
+      C: [
+        { id: 'mode', name: 'Mode', values: ['FM', 'NFM', 'AM', 'USB'], idx: 0 },
+        { id: 'rxtone', name: 'RX tone', values: ['Off', '67.0', '100.0', 'D023N'], idx: 0 },
+        { id: 'txtone', name: 'TX tone', values: ['Off', 'T 100.0', 'T 88.5', 'T 123.0'], idx: 0 },
+        { id: 'offset', name: 'Offset', values: ['0.000', '-600k', '+600k', '+5.0M'], idx: 0 },
+        { id: 'power', name: 'Power', values: ['High', 'Low', 'Mid'], idx: 0 },
+        { id: 'step', name: 'Step', values: ['25k', '5k', '6.25k', '10k', '12.5k'], idx: 0 },
+        { id: 'squelch', name: 'Squelch', values: ['SQL 5', 'SQL 4', 'SQL 3', 'SQL 6'], idx: 0 },
+        { id: 'busylock', name: 'Busy lock', values: ['On', 'Off'], idx: 0 },
+        { id: 'reverse', name: 'Reverse', values: ['Off', 'On'], idx: 0 }
+      ]
+    },
+    // Fixed physical definition of slots A, B, C
+    slots: [
+      {
+        id: 'A',
+        badge: 'A',
+        name: 'PMR 02',
+        subname: 'CH 02',
+        freq: '446.01875',
+        standbyStatus: 'STBY',
+        txFreq: '446.01875'
+      },
+      {
+        id: 'B',
+        badge: 'B',
+        name: 'VHF',
+        subname: 'VFO',
+        freq: '145.50000',
+        standbyStatus: 'STBY',
+        txFreq: '146.10000'
+      },
+      {
+        id: 'C',
+        badge: 'C',
+        name: 'LPD 01',
+        subname: 'CH 17',
+        freq: '433.07500',
+        standbyStatus: 'RX ONLY',
+        txFreq: '433.07500'
+      }
+    ]
+  };
+
+  const i18n = {
+    RU: {
+      mainTitle: "Slot Quick Settings",
+      mainDesc: "Параметрическая 3×3 матрица прямой коррекции слота на LCD 240 × 320 (ST7789V / ILI9341). Порядок слотов фиксирован: A → B → C.",
+      activeSlot: "Активный слот:",
+      txSim: "Показать TX",
+      txActive: "Передача TX [ON]",
+      voltCheck: "Напряжение в статус-баре",
+      darkLabel: "Dark Theme",
+      lightLabel: "Light Theme",
+      promptAction: "Hold '9' для сохранения в канал памяти",
+      key1: "◄▲▼► Выбор",
+      key2: "Валкодер Изм.",
+      key3: "BACK Готово"
+    },
+    EN: {
+      mainTitle: "Slot Quick Settings",
+      mainDesc: "Direct frequency & parameter quick-matrix (240 × 320 LCD). Fixed slot order: A (Top) → B (Mid) → C (Btm).",
+      activeSlot: "Active Slot:",
+      txSim: "Simulate TX",
+      txActive: "Transmitting TX",
+      voltCheck: "Status Bar Voltage",
+      darkLabel: "Dark Theme",
+      lightLabel: "Light Theme",
+      promptAction: "Hold '9' to save as memory channel",
+      key1: "◄▲▼► Pick",
+      key2: "Knob Change",
+      key3: "BACK Done"
+    }
+  };
+
+  function selectTile(index) {
+    state.selectedTileIndex = index;
+    renderDisplays();
+  }
+
+  function cycleActiveValue() {
+    const tiles = state.slotParams[state.slot];
+    const tile = tiles[state.selectedTileIndex];
+    tile.idx = (tile.idx + 1) % tile.values.length;
+    renderDisplays();
+  }
+
+  function cycleSlot() {
+    const order = ['A', 'B', 'C'];
+    const nextIdx = (order.indexOf(state.slot) + 1) % order.length;
+    setActiveSlot(order[nextIdx]);
+  }
+
+  function setActiveSlot(letter) {
+    state.slot = letter;
+
+    ['A', 'B', 'C'].forEach(s => {
+      const btn = document.getElementById('btnSlot' + s);
+      if (btn) {
+        if (s === letter) {
+          btn.className = "h-8 w-8 rounded border border-slate-800 bg-slate-800 text-white font-bold text-xs shadow-sm";
+        } else {
+          btn.className = "h-8 w-8 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-sm";
+        }
+      }
+    });
+
+    // Update status bar Edit Mode
+    const dStatus = document.getElementById('darkStatusEditMode');
+    const lStatus = document.getElementById('lightStatusEditMode');
+    if (dStatus) dStatus.textContent = `EDIT ${letter}`;
+    if (lStatus) lStatus.textContent = `EDIT ${letter}`;
+
+    renderDisplays();
+  }
+
+  function renderDisplays() {
+    renderDarkDisplay();
+    renderLightDisplay();
+    updateToolbarParamButtons();
+  }
+
+  function updateToolbarParamButtons() {
+    const currentTiles = state.slotParams[state.slot];
+    currentTiles.forEach((t, i) => {
+      const pBtn = document.getElementById('paramBtn' + i);
+      if (pBtn) {
+        if (i === state.selectedTileIndex) {
+          pBtn.className = "h-7 px-2.5 rounded border border-slate-800 bg-slate-800 text-white font-mono text-xs font-semibold shadow-sm transition-all";
+        } else {
+          pBtn.className = "h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-mono text-xs font-medium shadow-sm transition-all";
+        }
+      }
+    });
+  }
+
+  function renderDarkDisplay() {
+    const container = document.getElementById('darkSlotsContainer');
+    if (!container) return;
+
+    let html = '';
+    const currentTiles = state.slotParams[state.slot];
+    const isTx = state.isTx;
+    const powerTile = currentTiles.find(t => t.id === 'power');
+    const currentPower = powerTile ? powerTile.values[powerTile.idx] : 'High';
+
+    // Strict fixed order: Slot A, then Slot B, then Slot C
+    state.slots.forEach(slot => {
+      const isActive = (slot.id === state.slot);
+
+      if (isActive) {
+        // Expanded Active Slot (Hero Area 60px + Matrix 122px + Prompt Action 18px = 200px)
+        const freqDisplay = isTx ? slot.txFreq : slot.freq;
+        const txBadgeClass = isTx
+          ? "px-1.5 py-0.2 text-[9px] font-bold rounded bg-rose-600 text-white uppercase tracking-wider animate-pulse"
+          : "px-1 py-0.2 text-[9px] font-bold rounded bg-slate-200 text-black tracking-wider";
+        const txBadgeText = isTx ? `TX ${currentPower}` : "TX";
+        const freqColorClass = isTx ? "text-rose-400" : "text-white";
+
+        html += `
+          <!-- ACTIVE SLOT ${slot.id} (EXPANDED HERO + 3x3 MATRIX) -->
+          <div class="flex flex-col shrink-0 border-b border-[#222a35]">
+            <!-- Hero Frequency Area (60px) -->
+            <div class="h-[60px] px-2.5 py-1 bg-[#161c24] flex flex-col justify-between shrink-0">
+              <div class="flex items-center justify-between text-[11px] leading-tight">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-300 bg-slate-100 text-black">[${slot.id}]</span>
+                  <span class="font-bold tracking-tight text-slate-200">${slot.name} <span class="text-[10px] font-normal text-slate-400">${slot.subname}</span></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <span class="${txBadgeClass}">${txBadgeText}</span>
+                </div>
+              </div>
+              <div class="flex items-baseline justify-between py-0.5">
+                <div class="freq-mono font-bold tracking-tight leading-none text-[24px] ${freqColorClass}">${freqDisplay}</div>
+                <span class="text-[10px] text-slate-400 font-mono">MHz</span>
+              </div>
+              <!-- S-Meter RSSI Solid Line -->
+              <div class="w-full h-1 bg-[#1a2330] rounded-full overflow-hidden shrink-0">
+                <div class="h-full bg-slate-200 transition-all duration-150" style="width: 80%;"></div>
+              </div>
+            </div>
+
+            <!-- 3x3 Parameter Boxes (122px) -->
+            <div class="px-2 pt-1.5 pb-1 flex flex-col justify-between h-[122px] shrink-0 bg-[#0c1015]">
+              <div class="grid grid-cols-3 gap-1.5 h-full">
+                ${currentTiles.map((t, idx) => {
+                  const isSel = (idx === state.selectedTileIndex);
+                  const val = t.values[t.idx];
+                  if (isSel) {
+                    return `
+                      <div class="rounded-[2px] p-1 flex flex-col justify-between cursor-pointer border border-white bg-slate-200 text-slate-950 transition-all" onclick="selectTile(${idx})">
+                        <div class="flex items-center justify-between text-[9px] font-bold text-slate-900 leading-none">
+                          <span class="tile-title font-bold text-slate-900">${t.name}</span>
+                          <span class="tile-icon font-mono">↺</span>
+                        </div>
+                        <div class="tile-value freq-mono text-[11px] font-bold text-slate-950">${val}</div>
+                      </div>
+                    `;
+                  } else {
+                    return `
+                      <div class="rounded-[2px] p-1 flex flex-col justify-between cursor-pointer border border-[#28323e] bg-[#161c24] text-white transition-all" onclick="selectTile(${idx})">
+                        <div class="flex items-center justify-between text-[9px] font-normal text-slate-400 leading-none">
+                          <span class="tile-title font-normal text-slate-400">${t.name}</span>
+                        </div>
+                        <div class="tile-value freq-mono text-[11px] font-bold text-slate-200">${val}</div>
+                      </div>
+                    `;
+                  }
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Prompt Action Line (18px) -->
+            <div class="h-[18px] px-2.5 flex items-center justify-between text-[9px] text-slate-400 font-mono border-t border-[#1e2632] bg-[#0c1015] shrink-0">
+              <span class="truncate">${i18n[state.language].promptAction}</span>
+              <svg class="w-2.5 h-2.5 fill-current text-slate-300 shrink-0" viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"></path></svg>
+            </div>
+          </div>
+        `;
+      } else {
+        // Compact Standby Slot (40px high each, perfectly fills 80px remaining space)
+        const isRxOnly = slot.standbyStatus === 'RX ONLY';
+        const statusBadge = isRxOnly
+          ? `<span class="px-1 py-0.2 text-[8px] font-bold rounded border border-slate-500 text-slate-300">${slot.standbyStatus}</span>`
+          : `<span class="px-1 py-0.2 text-[8px] font-bold rounded bg-slate-700 text-slate-300">${slot.standbyStatus}</span>`;
+
+        html += `
+          <!-- STANDBY COMPACT SLOT ${slot.id} (FIXED ROW POSITION) -->
+          <div class="h-[40px] px-2.5 flex items-center justify-between border-b border-[#1b222d] bg-[#0c1015] shrink-0 cursor-pointer hover:bg-[#161c24]/50 transition-colors" onclick="setActiveSlot('${slot.id}')" title="Кликните для выбора слота ${slot.id}">
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block px-1 py-0.2 border font-bold text-[9px] rounded-xs border-slate-400 bg-[#161c24] text-white">${slot.badge}</span>
+              <span class="font-bold tracking-tight text-white text-[11px]">${slot.name} <span class="text-[9px] font-normal text-slate-400">${slot.subname}</span></span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="freq-mono font-bold tracking-tight text-white text-[12px]">${slot.freq}</span>
+              ${statusBadge}
+            </div>
+          </div>
+        `;
+      }
+    });
+
+    container.innerHTML = html;
+  }
+
+  function renderLightDisplay() {
+    const container = document.getElementById('lightSlotsContainer');
+    if (!container) return;
+
+    let html = '';
+    const currentTiles = state.slotParams[state.slot];
+    const isTx = state.isTx;
+    const powerTile = currentTiles.find(t => t.id === 'power');
+    const currentPower = powerTile ? powerTile.values[powerTile.idx] : 'High';
+
+    // Strict fixed order: Slot A, then Slot B, then Slot C
+    state.slots.forEach(slot => {
+      const isActive = (slot.id === state.slot);
+
+      if (isActive) {
+        // Expanded Active Slot
+        const freqDisplay = isTx ? slot.txFreq : slot.freq;
+        const txBadgeClass = isTx
+          ? "px-1.5 py-0.2 text-[9px] font-bold rounded bg-rose-600 text-white uppercase tracking-wider animate-pulse"
+          : "px-1 py-0.2 text-[9px] font-bold rounded bg-slate-900 text-white tracking-wider";
+        const txBadgeText = isTx ? `TX ${currentPower}` : "TX";
+        const freqColorClass = isTx ? "text-rose-600" : "text-slate-950";
+
+        html += `
+          <!-- ACTIVE SLOT ${slot.id} (EXPANDED HERO + 3x3 MATRIX) -->
+          <div class="flex flex-col shrink-0 border-b border-slate-300">
+            <!-- Hero Frequency Area (60px) -->
+            <div class="h-[60px] px-2.5 py-1 bg-[#e9edf2] flex flex-col justify-between shrink-0">
+              <div class="flex items-center justify-between text-[11px] leading-tight">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block px-1 py-0.2 border font-bold text-[10px] rounded-xs border-slate-900 bg-slate-900 text-white">[${slot.id}]</span>
+                  <span class="font-bold tracking-tight text-slate-900">${slot.name} <span class="text-[10px] font-normal text-slate-600">${slot.subname}</span></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <span class="${txBadgeClass}">${txBadgeText}</span>
+                </div>
+              </div>
+              <div class="flex items-baseline justify-between py-0.5">
+                <div class="freq-mono font-bold tracking-tight leading-none text-[24px] ${freqColorClass}">${freqDisplay}</div>
+                <span class="text-[10px] text-slate-700 font-mono font-semibold">MHz</span>
+              </div>
+              <!-- S-Meter RSSI Solid Line -->
+              <div class="w-full h-1 bg-slate-300 rounded-full overflow-hidden shrink-0">
+                <div class="h-full bg-slate-900 transition-all duration-150" style="width: 80%;"></div>
+              </div>
+            </div>
+
+            <!-- 3x3 Parameter Boxes (122px) -->
+            <div class="px-2 pt-1.5 pb-1 flex flex-col justify-between h-[122px] shrink-0 bg-white">
+              <div class="grid grid-cols-3 gap-1.5 h-full">
+                ${currentTiles.map((t, idx) => {
+                  const isSel = (idx === state.selectedTileIndex);
+                  const val = t.values[t.idx];
+                  if (isSel) {
+                    return `
+                      <div class="rounded-[2px] p-1 flex flex-col justify-between cursor-pointer border-2 border-slate-900 bg-slate-900 text-white transition-all" onclick="selectTile(${idx})">
+                        <div class="flex items-center justify-between text-[9px] font-semibold text-slate-600 leading-none">
+                          <span class="tile-title font-bold text-slate-200">${t.name}</span>
+                          <span class="tile-icon font-mono text-white">↺</span>
+                        </div>
+                        <div class="tile-value freq-mono text-[11px] font-bold text-white">${val}</div>
+                      </div>
+                    `;
+                  } else {
+                    return `
+                      <div class="rounded-[2px] p-1 flex flex-col justify-between cursor-pointer border border-slate-300 bg-[#e9edf2] text-slate-900 transition-all" onclick="selectTile(${idx})">
+                        <div class="flex items-center justify-between text-[9px] font-semibold text-slate-600 leading-none">
+                          <span class="tile-title font-semibold text-slate-600">${t.name}</span>
+                        </div>
+                        <div class="tile-value freq-mono text-[11px] font-bold text-slate-950">${val}</div>
+                      </div>
+                    `;
+                  }
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Prompt Action Line (18px) -->
+            <div class="h-[18px] px-2.5 flex items-center justify-between text-[9px] text-slate-600 font-mono border-t border-slate-200 bg-white shrink-0">
+              <span class="truncate">${i18n[state.language].promptAction}</span>
+              <svg class="w-2.5 h-2.5 fill-current text-slate-700 shrink-0" viewBox="0 0 24 24"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"></path></svg>
+            </div>
+          </div>
+        `;
+      } else {
+        // Compact Standby Slot (40px high each)
+        const isRxOnly = slot.standbyStatus === 'RX ONLY';
+        const statusBadge = isRxOnly
+          ? `<span class="px-1 py-0.2 text-[8px] font-bold rounded border border-slate-700 text-slate-900">${slot.standbyStatus}</span>`
+          : `<span class="px-1 py-0.2 text-[8px] font-bold rounded bg-slate-300 text-slate-800">${slot.standbyStatus}</span>`;
+
+        html += `
+          <!-- STANDBY COMPACT SLOT ${slot.id} (FIXED ROW POSITION) -->
+          <div class="h-[40px] px-2.5 flex items-center justify-between border-b border-slate-200 bg-white shrink-0 cursor-pointer hover:bg-slate-50 transition-colors" onclick="setActiveSlot('${slot.id}')" title="Кликните для выбора слота ${slot.id}">
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block px-1 py-0.2 border font-bold text-[9px] rounded-xs border-slate-800 bg-white text-slate-900">${slot.badge}</span>
+              <span class="font-bold tracking-tight text-slate-950 text-[11px]">${slot.name} <span class="text-[9px] font-normal text-slate-600">${slot.subname}</span></span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="freq-mono font-bold tracking-tight text-slate-950 text-[12px]">${slot.freq}</span>
+              ${statusBadge}
+            </div>
+          </div>
+        `;
+      }
+    });
+
+    container.innerHTML = html;
+  }
+
+  function toggleTX() {
+    state.isTx = !state.isTx;
+    const btn = document.getElementById('btnTxToggle');
+    const dot = document.getElementById('indicatorTxDot');
+    const lbl = document.getElementById('lblTxBtn');
+
+    if (state.isTx) {
+      btn.classList.add('border-rose-500', 'bg-rose-50', 'text-rose-700');
+      dot.className = "w-2 h-2 rounded-full bg-rose-600 animate-pulse";
+      lbl.textContent = i18n[state.language].txActive;
+    } else {
+      btn.classList.remove('border-rose-500', 'bg-rose-50', 'text-rose-700');
+      dot.className = "w-2 h-2 rounded-full bg-slate-400";
+      lbl.textContent = i18n[state.language].txSim;
+    }
+
+    renderDisplays();
+  }
+
+  function toggleVolt(show) {
+    state.showVoltage = show;
+    const dVolt = document.getElementById('darkVoltVal');
+    const lVolt = document.getElementById('lightVoltVal');
+    if (show) {
+      if (dVolt) dVolt.classList.remove('hidden');
+      if (lVolt) lVolt.classList.remove('hidden');
+    } else {
+      if (dVolt) dVolt.classList.add('hidden');
+      if (lVolt) lVolt.classList.add('hidden');
+    }
+  }
+
+  function setZoom(factor) {
+    state.zoom = factor;
+    ['btnZoom1', 'btnZoom15', 'btnZoom2'].forEach(id => {
+      document.getElementById(id).className = "px-2.5 py-1 rounded text-slate-600 hover:bg-slate-100";
+    });
+
+    const activeBtn = factor === '1x' ? 'btnZoom1' : (factor === '1.5x' ? 'btnZoom15' : 'btnZoom2');
+    document.getElementById(activeBtn).className = "px-2.5 py-1 rounded bg-slate-200 text-slate-800 font-bold";
+
+    const scaleClass = factor === '1x' ? 'zoom-1x' : (factor === '1.5x' ? 'zoom-15x' : 'zoom-2x');
+    document.getElementById('darkZoomWrapper').className = `scale-wrapper ${scaleClass}`;
+    document.getElementById('lightZoomWrapper').className = `scale-wrapper ${scaleClass}`;
+  }
+
+  function setLanguage(lang) {
+    state.language = lang;
+    const isRu = (lang === 'RU');
+    const t = i18n[lang];
+
+    document.getElementById('btnLangRu').className = isRu ? "px-2.5 py-1 rounded bg-slate-800 text-white" : "px-2.5 py-1 rounded text-slate-600 hover:text-slate-900";
+    document.getElementById('btnLangEn').className = !isRu ? "px-2.5 py-1 rounded bg-slate-800 text-white" : "px-2.5 py-1 rounded text-slate-600 hover:text-slate-900";
+
+    document.getElementById('lblTitleMain').textContent = t.mainTitle;
+    document.getElementById('lblTitleDesc').textContent = t.mainDesc;
+    document.getElementById('lblVolt').textContent = t.voltCheck;
+    document.getElementById('lblActiveSlotGroup').textContent = t.activeSlot;
+    document.getElementById('lblTxBtn').textContent = state.isTx ? t.txActive : t.txSim;
+
+    document.getElementById('darkKey1').textContent = t.key1;
+    document.getElementById('lightKey1').textContent = t.key1;
+    document.getElementById('darkKey2').textContent = t.key2;
+    document.getElementById('lightKey2').textContent = t.key2;
+    document.getElementById('darkKey3').textContent = t.key3;
+    document.getElementById('lightKey3').textContent = t.key3;
+
+    renderDisplays();
+  }
+
+  // Keyboard navigation support
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') {
+      state.selectedTileIndex = (state.selectedTileIndex + 1) % 9;
+      renderDisplays();
+    } else if (e.key === 'ArrowLeft') {
+      state.selectedTileIndex = (state.selectedTileIndex - 1 + 9) % 9;
+      renderDisplays();
+    } else if (e.key === 'ArrowDown') {
+      state.selectedTileIndex = (state.selectedTileIndex + 3) % 9;
+      renderDisplays();
+    } else if (e.key === 'ArrowUp') {
+      state.selectedTileIndex = (state.selectedTileIndex - 3 + 9) % 9;
+      renderDisplays();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      cycleActiveValue();
+    }
+  });
+
+  window.addEventListener('DOMContentLoaded', () => {
+    setActiveSlot('A');
+  });
+</script>
+<!-- END: InteractiveScriptHandlers -->
+</body></html>

@@ -28,6 +28,8 @@
 #include "voice_bus.hpp"
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "application.hpp"
+#include "gps_idle.hpp"
+#include "gps_power.hpp"
 #include "power_diagnostics.hpp"
 #include "fm_receiver.hpp"
 #include "fm_i2c.hpp"
@@ -890,10 +892,10 @@ extern "C" int regression_tests() {
  Application watch_settings;
  {
   Application shortcuts;
-  shortcuts.key(Key::Left);
+  shortcuts.key(Key::WatchSlots);
   CHECK(shortcuts.page()==Page::WatchSlots && shortcuts.config().active==0);
   shortcuts.key(Key::Back);CHECK(shortcuts.page()==Page::Radio);
-  shortcuts.key(Key::Left);shortcuts.key(Key::Down);shortcuts.key(Key::Ok);
+  shortcuts.key(Key::WatchSlots);shortcuts.key(Key::Down);shortcuts.key(Key::Ok);
   CHECK(shortcuts.page()==Page::Radio && shortcuts.watch_slots_selection()==2);
   const auto frequency=shortcuts.config().vfo[1].rx_hz;
   shortcuts.tick(100);
@@ -903,7 +905,7 @@ extern "C" int regression_tests() {
   CHECK(shortcuts.recent_voice_slot()==1 && shortcuts.config().active==0);
   shortcuts.digit(4);shortcuts.key(Key::Right);
   CHECK(shortcuts.config().active==0 && shortcuts.editing() && !shortcuts.voice_tx_page());
-  shortcuts.key(Key::Back);shortcuts.key(Key::Right);
+  shortcuts.key(Key::Back);shortcuts.key(Key::NextSlot);
   CHECK(shortcuts.config().active==1 && shortcuts.voice_tx_page());
   shortcuts.set_frequency(145500000);CHECK(shortcuts.recent_voice_slot()==-1);
   shortcuts.observe_voice_slot(2,shortcuts.config().vfo[2].rx_hz);
@@ -1619,6 +1621,115 @@ extern "C" uint32_t voice_board_rx_tone_probe(uint32_t packed) {
  return rx.status().receiving || rx.carrier()?4:0;
 }
 
+extern "C" { bool custom_clock_low=false; }
+
+extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
+ using namespace rt950::voice;
+ BoardReceiver rx;
+ rx.enable(true);
+ for(uint32_t now=0;now<50;++now)rx.poll(now,false);
+ if(!rx.status().ready)return 1;
+ if(mode==5)rx.tune_profile(145500000,{},0,100,true,9);
+ else rx.tune(145500000,100);
+ const bool packet=mode==4;
+ rx.poll(101,false,false,packet);
+ rx.poll(131,false,false,packet);
+ if(!rx.has_sample())return 2;
+ if(packet) {
+  if(rx.audio_active())return 17;
+  rx.poll(146,false,false,true);
+  if(!rx.audio_active())return 18;
+  rx.poll(161,false,false,true);
+  rx.poll(265,false,false,true);
+  if(!rx.audio_active())return 19;
+  rx.poll(266,false,false,true);
+  if(rx.audio_active())return 20;
+  rx.poll(280,false,false,true);
+  if(!rx.audio_active())return 21;
+  rx.poll(281,true,false,true);
+  return rx.audio_active()?22:0;
+ }
+ if(mode==5) {
+  if(!rx.carrier() || rx.carrier_at_squelch() || rx.idle_sleep(131,true))return 23;
+  if(rx.idle_sleep(10131,true,true))return 24;
+  rx.stop(); // Releasing and retuning for the borrowed APRS window.
+  rx.tune(145500000,11331);
+  if(rx.idle_sleep(11331,true))return 25;
+  rx.poll(11332,false);
+  rx.poll(11362,false);
+  return rx.idle_sleep(11363,true)?0:26;
+ }
+ if(mode==0 || mode==3) {
+  const auto routed=[](){return !(GPIOE->ODR&0x3000u) && (GPIOB->ODR&1u);};
+  const auto off=[](){return (GPIOE->ODR&0x3000u)==0x3000u && (GPIOB->ODR&1u);};
+  if(!routed() || rx.idle_sleep(131,true) || rx.idle_sleep(10130,true))return 3;
+  if(!rx.idle_sleep(10131,true) || rx.has_sample() || !off())return 4;
+  rx.poll(10132,false);
+  if(rx.has_sample() || !rx.sleeping())return 5;
+  if(mode==3) {
+   if(!rx.idle_sleep(10430,true) || rx.idle_sleep(10431,true))return 13;
+   rx.poll(10432,false);
+   if(rx.has_sample() || !off())return 14;
+   rx.poll(10433,false);
+   rx.poll(10463,false);
+   if(!routed() || !rx.has_sample() || rx.idle_sleep(10730,true))return 15;
+   return rx.idle_sleep(10731,true) && off()?0:16;
+  }
+  if(rx.idle_sleep(10133,false) || rx.has_sample())return 6;
+  rx.poll(10134,true);
+  if(rx.has_sample() || !off())return 7;
+  rx.poll(10135,true);
+  rx.poll(10165,true);
+  return routed() && rx.has_sample() && !rx.sleeping()?0:8;
+ }
+ char event[4]{};
+ const auto detector=mode==1?BoardReceiver::Decoder::Dtmf:BoardReceiver::Decoder::Same;
+ if(rx.decode(detector,132,event))return 9;
+ if(mode==1) {
+  if(rx.decode(detector,140,event)!='A')return 10;
+ } else {
+  for(uint32_t now=140;now<=172;now+=8) {
+   const bool result=rx.decode(detector,now,event)!=0;
+   if(result!=(now==172))return 11;
+  }
+  if(event[0]!='S' || event[1]!='V' || event[2]!='R' || event[3])return 12;
+ }
+ rx.stop();
+ return 0;
+}
+
+extern "C" uint32_t same_rx_probe() {
+ rt950::voice::SameRx decoder;
+ char event[4]{};
+ auto burst=[&](const char *data,uint32_t now,unsigned order) {
+  decoder.sync();
+  auto wire=[order](uint8_t byte) {
+   if(!(order&2))return byte;
+   uint32_t reverse;
+   __asm("rbit %0,%1":"=r"(reverse):"r"(uint32_t(byte)));
+   return uint8_t(reverse>>24);
+  };
+  for(unsigned i=0;data[i];i+=2) {
+   const uint8_t first=wire(uint8_t(data[i]));
+   const uint8_t second=wire(uint8_t(data[i+1]?data[i+1]:' '));
+   const uint16_t word=order&1?uint16_t(second<<8|first):uint16_t(first<<8|second);
+   if(decoder.push(word,now,event))return true;
+   if(!data[i+1])break;
+  }
+  return false;
+ };
+ constexpr const char *valid="-WXR-SVR-024031-024033+0045-2761828-KLWX/NWS-";
+ for(unsigned i=0;i<4;++i) {
+  const uint32_t now=i*300001u;
+  if(!burst(valid,now,i) || event[0]!='S' || event[1]!='V' || event[2]!='R')return 1;
+  if(burst(valid,now+1,i))return 2;
+ }
+ if(burst("-WXR-SVR-02403+0065-0002528-KLWX/NWS-",2000000,0))return 3;
+ if(burst("-WXR-SVR-024031+0065-2761828-KLWX/NWS-",2000001,0))return 4;
+ if(burst("-WXR-SVR-024031+0045-0001828-KLWX/NWS-",2000001,0))return 5;
+ return 0;
+}
+
 extern "C" uint32_t voice_board_monitor_probe() {
  using namespace rt950;
  voice::BoardReceiver rx;rx.enable(true);
@@ -1688,13 +1799,15 @@ extern "C" uint32_t aprs_dac_probe(unsigned mode) {
  FrameTransmitter frame;
  if(!frame.encode(packet,sizeof packet,2))return 1;
  DacBurst burst;
+ const uint32_t idle_ahb=CRM->AHBEN&~(CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN);
+ CRM->AHBEN=idle_ahb;
  const bool pb8_high=mode==2;
  GPIOB->ODR=pb8_high?GPIO_PIN_8:0;
  DAC->CR=0x00010000u;
  DMA2_CH(3)->CCR=mode==3?1:0;
- if(mode==3)return burst.begin(frame,0) || DMA2_CH(3)->CCR!=1?2:0;
+ if(mode==3)return burst.begin(frame,0) || DMA2_CH(3)->CCR!=1 || CRM->AHBEN!=idle_ahb?2:0;
  if(!burst.begin(frame,0))return 3;
- if(TIM6->PSC!=3 || TIM6->ARR!=781 || TIM6->CR2!=0x20 || TIM6->CR1!=1 ||
+ if(!(CRM->AHBEN&CRM_AHBEN_DMA2EN) || TIM6->PSC!=3 || TIM6->ARR!=781 || TIM6->CR2!=0x20 || TIM6->CR1!=1 ||
     DMA2_CH(3)->CPAR!=0x40007408 || DMA2_CH(3)->CNDTR!=2048 ||
     DAC->CR!=0x00011007u || !(GPIOB->ODR&GPIO_PIN_8))return 4;
  const auto *samples=reinterpret_cast<const uint16_t *>(DMA2_CH(3)->CMAR);
@@ -1718,11 +1831,14 @@ extern "C" uint32_t aprs_dac_probe(unsigned mode) {
   if(state!=DacBurst::State::Complete)return 8;
  }
  if(((GPIOB->ODR&GPIO_PIN_8)!=0)!=pb8_high)return 10;
- return TIM6->CR1 || DMA2_CH(3)->CCR || DAC->CR!=0x00010000u?9:0;
+ return CRM->AHBEN!=idle_ahb || TIM6->CR1 || DMA2_CH(3)->CCR || DAC->CR!=0x00010000u?9:0;
 }
 
 extern "C" uint32_t aprs_adc_probe(unsigned mode) {
  rt950::aprs::AdcCapture capture;
+ const uint32_t idle_ahb=CRM->AHBEN&~(CRM_AHBEN_DMA1EN|CRM_AHBEN_DMA2EN);
+ CRM->AHBEN=idle_ahb;
+ CRM->APB2EN=(CRM->APB2EN&~CRM_APB2EN_ADC1EN)|CRM_APB2EN_ADC2EN;
  constexpr uint32_t original_pin=0x44444444;
  GPIOA->CRL=original_pin;
  ADC1->CR2=0;
@@ -1732,7 +1848,7 @@ extern "C" uint32_t aprs_adc_probe(unsigned mode) {
  DMA1_CH(1)->CCR=0;
  capture.poll(true,0,nullptr,nullptr);
  capture.poll(true,1,nullptr,nullptr);
- if(!(ADC1->CR2&ADC_CR2_RSTCAL))return 1;
+ if(!(ADC1->CR2&ADC_CR2_RSTCAL) || !(CRM->AHBEN&CRM_AHBEN_DMA1EN) || !(CRM->APB2EN&CRM_APB2EN_ADC1EN))return 1;
  if(mode==1)capture.poll(true,22,nullptr,nullptr);
  else {
   ADC1->CR2&=~ADC_CR2_RSTCAL;
@@ -1770,7 +1886,8 @@ extern "C" uint32_t aprs_adc_probe(unsigned mode) {
    capture.poll(false,760,nullptr,nullptr);
   }
  }
- return capture.running() || TIM4->CR1 || ADC1->CR2 || DMA1_CH(1)->CCR ||
+ return CRM->AHBEN!=idle_ahb || (CRM->APB2EN&(CRM_APB2EN_ADC1EN|CRM_APB2EN_ADC2EN))!=CRM_APB2EN_ADC2EN ||
+     capture.running() || TIM4->CR1 || ADC1->CR2 || DMA1_CH(1)->CCR ||
      TIM2->CR1!=0x81 || TIM2->CCR2!=1200 || GPIOA->CRL!=original_pin || ADC2->CR2!=0x123?4:0;
 }
 
@@ -1781,7 +1898,8 @@ extern "C" uint32_t aprs_ble_probe() {
  const size_t length=rt_kiss_encode(0,frame,sizeof frame,expected,sizeof expected);
  if(ble.enqueue(frame,sizeof frame,0))return 1;
  ble.enable(true,0);
- if(USART1->BRR!=6250 || USART1->CR1!=(USART_CR1_UE|USART_CR1_TE))return 2;
+ if(USART1->BRR!=6250 || USART1->CR1!=(USART_CR1_UE|USART_CR1_TE) ||
+    (GPIOA->CRH&0xf0)!=0xa0)return 2;
  if(!ble.enqueue(frame,sizeof frame,1) || ble.enqueue(frame,sizeof frame,2))return 3;
  USART1->DR=0xff;USART1->SR=USART_SR_TXE;
  ble.poll(true,99);
@@ -1828,7 +1946,10 @@ extern "C" uint32_t aprs_ble_probe() {
  ble.poll(true,453);
  if(USART1->DR!=Telemetry::Type)return 18;
  ble.enable(false,454);
- return USART1->CR1 || ble.enqueue(frame,sizeof frame,455)?9:0;
+ if(USART1->CR1 || (CRM->APB2EN&CRM_APB2EN_USART1EN) || (GPIOA->CRH&0xff0) ||
+    ble.enqueue(frame,sizeof frame,455))return 9;
+ ble.enable(true,456);
+ return USART1->CR1!=(USART_CR1_UE|USART_CR1_TE) || (GPIOA->CRH&0xf0)!=0xa0?19:0;
 }
 
 
@@ -2249,7 +2370,7 @@ extern "C" int vox_tests() {
  const auto size=app.save_portable_snapshot(data,sizeof data);
  CHECK(restored.restore_portable_snapshot(data,size,Application::PortableSchema));
  CHECK(!restored.vox_on() && restored.vox_level()==4 && restored.vox_delay()==3000);
- CHECK(restored.restore_portable_snapshot(data,size-8,6));
+ CHECK(restored.restore_portable_snapshot(data,8108,6));
  CHECK(!restored.vox_on() && restored.vox_level()==5 && restored.vox_delay()==2000);
  return 0;
 }
@@ -2308,12 +2429,15 @@ extern "C" int channel_tx_tests() {
  const size_t size=app.save_compact_snapshot(data,sizeof data);
  CHECK(restored.restore_snapshot(data,size) && !restored.memory(1)->tx_hz);
  storage::put(data+4,7);
- storage::put(data+16,~storage::crc_bytes(storage::crc_bytes(0xffffffffu,data,16),data+20,storage::word(data+12)));
- CHECK(restored.restore_snapshot(data,size) && restored.memory(1)->tx_hz==446018750u &&
+ const size_t encoded=storage::word(data+12)-4,old_size=(20+encoded+3u)&~3u;
+ storage::put(data+8,storage::word(data+8)-4);storage::put(data+12,encoded);
+ for(size_t i=20+encoded;i<old_size;++i)data[i]=0;
+ storage::put(data+16,~storage::crc_bytes(storage::crc_bytes(0xffffffffu,data,16),data+20,encoded));
+ CHECK(restored.restore_snapshot(data,old_size) && restored.memory(1)->tx_hz==446018750u &&
        restored.config().vfo[0].tx_hz==446018750u && !restored.memory(16)->tx_hz);
- const size_t portable=app.save_portable_snapshot(data,sizeof data);
- CHECK(restored.restore_portable_snapshot(data,portable,7) && restored.memory(1)->tx_hz==446018750u);
- CHECK(restored.restore_portable_snapshot(data,portable,8) && !restored.memory(1)->tx_hz);
+ const size_t portable=app.save_portable_snapshot(data,sizeof data);CHECK(portable==Application::PortableSize);
+ CHECK(restored.restore_portable_snapshot(data,8116,7) && restored.memory(1)->tx_hz==446018750u);
+ CHECK(restored.restore_portable_snapshot(data,8116,8) && !restored.memory(1)->tx_hz);
  return 0;
 }
 
@@ -2775,8 +2899,8 @@ extern "C" int compact_storage_tests() {
  CHECK(!source.save_compact_snapshot(roundtrip,size-1));
  CHECK(roundtrip[size-1]==0xa5 && roundtrip[size]==0xa5);
  CHECK(Application::snapshot_format_supported(packed,size) && Application::snapshot_format_supported(legacy,old_size));
- put(packed+4,9);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
- put(packed+4,8);
+ put(packed+4,11);CHECK(!Application::snapshot_format_supported(packed,size) && !restored.restore_snapshot(packed,size));
+ put(packed+4,10);
  CHECK(restored.restore_snapshot(packed,size));CHECK(restored.save_snapshot(roundtrip,sizeof roundtrip)==old_size);
  for(size_t i=0;i<old_size;++i)CHECK(legacy[i]==roundtrip[i]);
  CHECK(restored.restore_snapshot(legacy,old_size));
@@ -3050,7 +3174,7 @@ extern "C" int user_key_tests() {
  portable[7992]=unsigned(KeyAction::Count);CHECK(!loaded.restore_portable_snapshot(portable,8008,2) && loaded.key_action(0)==KeyAction::Monitor);portable[7992]=1;
  CHECK(!loaded.restore_portable_snapshot(portable,0,2) && !loaded.restore_portable_snapshot(nullptr,8008,2));
  CHECK(loaded.restore_portable_snapshot(packed,7992,1) && loaded.key_action(0)==KeyAction::None && loaded.key_action(2)==KeyAction::Fm);
- const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==8);
+ const auto size=app.save_compact_snapshot(packed,sizeof packed);CHECK(size && word(packed+4)==10);
  CHECK(loaded.restore_snapshot(packed,size) && loaded.key_action(0)==KeyAction::Monitor && loaded.key_action(3)==KeyAction::Aprs);
  bind(Key::Pf1Short,KeyAction::ScanChannels);bind(Key::Pf2Hold,KeyAction::ScanVfo);
  dispatch_key(app,0);CHECK(app.page()==Page::ChannelScan);
@@ -3061,8 +3185,8 @@ extern "C" int user_key_tests() {
  CHECK(scan_size && loaded.restore_snapshot(packed,scan_size) &&
        loaded.key_action(0)==KeyAction::ScanChannels && loaded.key_action(3)==KeyAction::ScanVfo);
  // Default altitude, routing fields and key codes each fit one packed byte.
- for(unsigned version=7;version>0;--version) {
-  const unsigned removed=version==7?0:version==6?2:version==5?3:version==4?0:version==3?1:version==2?21:4;
+ for(unsigned version=9;version>0;--version) {
+  const unsigned removed=version==9?1:version==8?3:version==7?0:version==6?2:version==5?3:version==4?0:version==3?1:version==2?21:4;
   const auto old_encoded=word(packed+12)-removed,old_size=(20+old_encoded+3u)&~3u;
   put(packed+4,version);put(packed+8,word(packed+8)-removed);put(packed+12,old_encoded);
   for(unsigned i=20+old_encoded;i<old_size;++i)packed[i]=0;
@@ -3407,7 +3531,7 @@ extern "C" int beacon_formats_tests() {
  auto capture=decode();
  CHECK(capture.count==1 && capture.kiss[18]=='!' && capture.kiss[19]=='f' &&
        capture.kiss[29]=='7' && capture.kiss[30]=='P' && capture.kiss[31]=='C');
- const char reference[]="<*e8"; // Ch. 9 example, rounded to 20427157 by Ferrite.
+ const char reference[]="<*e8"; // Ch. 9 example, rounded to 20427157.
  for(unsigned i=0;i<sizeof reference-1;++i)CHECK(capture.kiss[24+i]==uint8_t(reference[i]));
  Position point;
  CHECK(position(capture.kiss+2,capture.length-3,point) && point.latitude_e5==4945000 &&
@@ -4067,5 +4191,148 @@ extern "C" int monitor_hold_tests() {
  app.key(Key::Monitor);app.key(Key::Down);app.key(Key::Ok);
  CHECK(app.set_option(Option::SidePtt,true));
  poll(0,1700);poll(0,1730);poll(0,2430);CHECK(!app.monitor_active());
+ return 0;
+}
+
+extern "C" int display_ui_tests() {
+ Application app(false),loaded(false);char value[32];
+ Application presets(false);CHECK(presets.set_frequency(145500000) && presets.store(0));
+ presets.key(Key::QuickSettings);dispatch_key(presets,148);
+ CHECK(presets.page()==Page::StoreChannel && presets.channel_selection()==1);
+ presets.key(Key::Back);CHECK(presets.page()==Page::QuickSettings);
+ CHECK(!app.light_theme() && !app.show_voltage() && app.slot_ratio()==100);
+ CHECK(app.slot_height(0)==140 && app.slot_height(1)==70 && app.slot_height(2)==70);
+ Controls held;CHECK(held.poll(3,0)==255 && held.poll(3,30)==255);
+ CHECK(held.poll(3,729)==255 && held.poll(3,730)==131);
+ held.poll(255,731);CHECK(held.poll(255,761)==255);
+ dispatch_key(app,131);CHECK(app.page()==Page::QuickSettings && app.config().active==0);
+ app.quick_value(1,value);CHECK(value[0]=='O' && value[1]=='f' && value[2]=='f' && !value[3]);
+ app.key(Key::Right); // Reverse (8) -> Mode (0).
+ app.encoder(1);app.quick_value(0,value);CHECK(value[0]=='A' && value[1]=='M');
+ CHECK(app.radio_profile(0).narrow && app.feedback()[0]); // unsupported selection must not reconfigure RF
+ app.encoder(1);app.quick_value(0,value);CHECK(value[0]=='U' && app.radio_profile(0).narrow);
+ app.encoder(1);CHECK(!app.radio_profile(0).narrow && !app.feedback()[0]);
+ app.key(Key::Right);app.encoder(1);app.quick_value(1,value);
+ CHECK(app.radio_profile(0).rx_tone.index==1 && value[0]=='6' && value[1]=='7' && value[2]=='.');
+ app.key(Key::NextSlot);CHECK(app.config().active==1 && app.radio_profile(1).rx_tone.kind==ToneKind::Off);
+ app.key(Key::Back);CHECK(app.page()==Page::Radio && app.slot_height(1)==140);
+ app.key(Key::Theme);app.key(Key::Up);app.key(Key::Ok);CHECK(app.light_theme());
+ app.key(Key::ShowVoltage);app.key(Key::Up);app.key(Key::Ok);CHECK(app.show_voltage());
+ app.key(Key::SlotRatio);for(unsigned i=0;i<100;++i)app.key(Key::Up);
+ CHECK(app.slot_ratio()==160 && app.slot_height(0)+app.slot_height(1)+app.slot_height(2)==280);
+ for(unsigned i=0;i<100;++i){app.key(Key::Down);}
+ CHECK(app.slot_ratio()==66 && app.slot_height(1)==94);
+ app.key(Key::FontScale);app.key(Key::Right);CHECK(app.large_font());
+ app.key(Key::Left);CHECK(!app.large_font());
+ app.key(Key::Up);app.key(Key::Ok);CHECK(app.large_font());
+ uint8_t bytes[Application::SnapshotCapacity];auto size=app.save_portable_snapshot(bytes,sizeof bytes);
+ CHECK(size==8132 && loaded.restore_portable_snapshot(bytes,size,10));
+ CHECK(loaded.large_font());
+ CHECK(loaded.restore_portable_snapshot(bytes,8128,9) && !loaded.large_font());
+ CHECK(loaded.light_theme() && loaded.show_voltage() && loaded.slot_ratio()==66);
+ CHECK(loaded.restore_portable_snapshot(bytes,8116,8) && !loaded.light_theme() && loaded.slot_ratio()==100);
+ size=app.save_compact_snapshot(bytes,sizeof bytes);CHECK(loaded.restore_snapshot(bytes,size) && loaded.light_theme() && loaded.slot_ratio()==66 && loaded.large_font());
+ return 0;
+}
+
+extern "C" int gps_idle_tests() {
+ Application app(false);
+ GpsIdle gps;
+ CHECK(app.config().gps_on && !gps.update(app,1));
+ app.key(Key::Gps);
+ CHECK(gps.update(app,0xffffffefu));
+ app.key(Key::Back);
+ CHECK(gps.update(app,0xffffffefu+59999u));
+ CHECK(!gps.update(app,0xffffffefu+60000u));
+ app.key(Key::Distance);
+ CHECK(gps.update(app,61000));
+ app.key(Key::Back);
+ CHECK(app.set_option(Option::Gps,false) && !gps.update(app,61001));
+ CHECK(app.set_option(Option::Gps,true) && !gps.update(app,61002));
+ CHECK(app.set_option(Option::Ble,true) && app.set_option(Option::Export,true));
+ CHECK(gps.update(app,61003));
+ CHECK(app.set_option(Option::Gps,false) && !gps.update(app,61004));
+
+ // A live beacon requests the receiver. A stored point does not.
+ CHECK(app.set_option(Option::Export,false) && app.set_option(Option::Gps,true));
+ app.key(Key::BeaconIdentity);app.key(Key::Up);app.key(Key::Ok);
+ CHECK(app.set_aprs_frequency(144800000) && app.set_option(Option::Beacon,true));
+ CHECK(gps.update(app,61005));
+ nav_reset();
+ nmea("GPRMC,120000.00,A,5545.123456,S,03759.999999,W,1.00,90.0,071126,,,A",61006);
+ app.tick(61006);app.key(Key::Waypoint);app.key(Key::Ok);app.key(Key::Ok);
+ CHECK(app.waypoint().valid);
+ app.key(Key::Back);app.key(Key::BeaconSource);app.key(Key::Down);app.key(Key::Ok);
+ CHECK(app.beacon_saved_point() && app.set_option(Option::Beacon,true));
+ GpsIdle after_restart;
+ CHECK(!after_restart.update(app,61007));
+ nav_reset();
+ return 0;
+}
+
+
+extern "C" int gps_power_tests() {
+ GpsPower power;
+ nav_status_t nav{};
+ CHECK(!power.poll(99,true,false,true,nav).power);
+ CHECK(power.poll(100,true,false,false,nav).power);
+ nav.ever_fix=nav.position_valid=1;nav.last_fix_ms=nav.last_byte_ms=1000;
+ CHECK(!power.poll(1000,true,false,false,nav).seconds);
+ nav.last_byte_ms=nav.last_fix_ms=61000;
+ CHECK(!power.poll(61000,true,false,true,nav).seconds);
+ const auto idle=power.poll(61001,true,false,false,nav);
+ CHECK(idle.power && idle.sleeping && idle.seconds==60);
+ uint8_t frame[20];
+ const unsigned size=GpsPower::standby_frame(idle.seconds,frame);
+ constexpr char expect[]="$PCAS12,60*28\r\n";
+ CHECK(size==sizeof expect-1);
+ for(unsigned i=0;i<size;++i)CHECK(frame[i]==uint8_t(expect[i]));
+ CHECK(power.poll(61500,true,true,true,nav).sleeping);
+ CHECK(power.poll(61501,true,true,false,nav).wake);
+ CHECK(power.poll(64500,true,true,false,nav).power);
+ CHECK(!power.poll(64501,true,true,false,nav).power);
+ CHECK(!power.poll(65000,true,true,false,nav).power);
+ CHECK(power.poll(65001,true,true,false,nav).power);
+ CHECK(!power.poll(65002,false,false,false,nav).power);
+
+ GpsPower ignored;
+ nav={};
+ CHECK(ignored.poll(100,true,false,false,nav).power);
+ nav.last_byte_ms=120100;
+ CHECK(ignored.poll(120100,true,false,false,nav).seconds==60);
+ nav.last_byte_ms=122100;
+ CHECK(ignored.poll(122100,true,false,true,nav).sleeping);
+ const auto cut=ignored.poll(122101,true,false,false,nav);
+ CHECK(!cut.power && cut.sleeping);
+ CHECK(!ignored.poll(180099,true,false,false,nav).power);
+ CHECK(ignored.poll(180100,true,false,false,nav).power);
+ nav.last_byte_ms=300100;
+ const auto backoff=ignored.poll(300100,true,false,false,nav);
+ CHECK(!backoff.power && backoff.sleeping && !backoff.seconds);
+
+ GpsPower next;nav={};
+ constexpr uint32_t start=0xffff0000u;
+ CHECK(next.poll(start,true,false,false,nav).power);
+ nav.last_byte_ms=start+119999u;
+ CHECK(next.poll(start+120000u,true,false,false,nav).seconds==60);
+ CHECK(next.poll(start+179999u,true,false,false,nav).sleeping);
+ CHECK(!next.poll(start+180000u,true,false,false,nav).sleeping);
+
+ Application app,restored(false);
+ app.key(Key::Menu);app.key(Key::Down);app.key(Key::Down);app.key(Key::Ok);app.key(Key::Down);
+ CHECK(app.menu_group()==MenuGroup::Gps && app.config().gps_on==RT_GPS_AUTO);
+ app.key(Key::Ok);
+ CHECK(app.config().gps_on==RT_GPS_ON);
+ GpsIdle demand;
+ CHECK(demand.update(app,1));
+ uint8_t snapshot[Application::SnapshotCapacity];
+ auto length=app.save_compact_snapshot(snapshot,sizeof snapshot);
+ CHECK(length);
+ CHECK(restored.restore_snapshot(snapshot,length));
+ CHECK(restored.config().gps_on==RT_GPS_ON);
+ length=app.save_portable_snapshot(snapshot,sizeof snapshot);
+ CHECK(length && restored.restore_portable_snapshot(snapshot,length,Application::PortableSchema) && restored.config().gps_on==RT_GPS_ON);
+ app.key(Key::Ok);CHECK(app.config().gps_on==RT_GPS_OFF && !demand.update(app,2));
+ app.key(Key::Ok);CHECK(app.config().gps_on==RT_GPS_AUTO && !demand.update(app,3));
  return 0;
 }

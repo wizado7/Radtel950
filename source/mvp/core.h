@@ -1,6 +1,7 @@
 #ifndef RT950_MVP_CORE_H
 #define RT950_MVP_CORE_H
 #include <stdbool.h>
+enum { RT_GPS_OFF, RT_GPS_AUTO, RT_GPS_ON };
 #include <stddef.h>
 #include <stdint.h>
 #define RT_KISS_MAX 1024u
@@ -16,7 +17,8 @@ typedef struct {
     rt_vfo vfo[3];
     uint8_t active, watch_mode, watch_mask;
     uint16_t dwell_ms, hold_ms;
-    bool gps_on, aprs_rx, beacon_on, ble_on, ble_export;
+    uint8_t gps_on; /* RT_GPS_OFF, RT_GPS_AUTO, RT_GPS_ON */
+    bool aprs_rx, beacon_on, ble_on, ble_export;
     uint16_t aprs_scan_seconds; /* 0 disables background scan */
     uint32_t aprs_rx_hz, aprs_hz, beacon_seconds; /* aprs_hz is the TX frequency */
 } rt_config;
