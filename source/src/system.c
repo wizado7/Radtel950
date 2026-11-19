@@ -213,7 +213,8 @@ void board_idle_wait(uint8_t timeout_ms,uint8_t ptt)
         if((uint16_t)((uint16_t)TIM3->CNT-start)>=interval)TIM3->EGR=TimerWake;
     }
     extern uint8_t board_ptt_mask(void);
-    if(board_ptt_mask()==ptt)__asm volatile("dsb\n wfi":::"memory");
+    extern bool board_keypad_pending(void);
+    if(board_ptt_mask()==ptt && !board_keypad_pending())__asm volatile("dsb\n wfi":::"memory");
     __enable_irq();
 }
 

@@ -6,10 +6,12 @@
 #include "drivers/lcd.h"
 
 #define EXTI_REG(off) (*(volatile uint32_t *)(EXTI_BASE+(off)))
-enum { PttLines=(1u<<2)|(1u<<3)|(1u<<5) };
+enum { PttLines=(1u<<2)|(1u<<3)|(1u<<5), KeyRows=0xd0u };
+static bool keypad_sleeping;
 void EXTI2_IRQHandler(void) {EXTI_REG(0x14)=1u<<2;}
 void EXTI3_IRQHandler(void) {EXTI_REG(0x14)=1u<<3;}
-void EXTI9_5_IRQHandler(void) {EXTI_REG(0x14)=1u<<5;}
+void EXTI4_IRQHandler(void) {EXTI_REG(0x14)=1u<<4;}
+void EXTI9_5_IRQHandler(void) {EXTI_REG(0x14)=EXTI_REG(0x14)&EXTI_REG(0x00)&0xe0u;}
 
 volatile uint32_t custom_heartbeat;
 volatile uint8_t custom_watchdog_armed;
@@ -34,6 +36,8 @@ void board_init(void) {
         USART1->CR1=0;
         CRM->APB2EN&=~CRM_APB2EN_USART1EN;
     }
+    gpio_config_pin(GPIOA,GPIO_PIN_4,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
+    input(GPIOC,GPIO_PIN_7);input(GPIOC,GPIO_PIN_8);
     gpio_config_pin(GPIOA,GPIO_PIN_9,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     gpio_config_pin(GPIOA,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     output(GPIOB,GPIO_PIN_9,0); // OEM Bluetooth module enable
@@ -63,7 +67,13 @@ void board_init(void) {
     input(GPIOE,GPIO_PIN_5);input(GPIOA,GPIO_PIN_12);
     // Both edges wake the foreground for keying and immediate PA release.
     AFIO->EXTICR[0]=(AFIO->EXTICR[0]&~0xff00u)|0x4400u;
-    AFIO->EXTICR[1]=(AFIO->EXTICR[1]&~0x00f0u)|0x0040u;
+    // EXTI5 belongs to side PTT on PE5. PD5 stays in the level fallback.
+    AFIO->EXTICR[1]=(AFIO->EXTICR[1]&~0xffffu)|0x3343u;
+    EXTI_REG(0x00)&=~KeyRows;
+    EXTI_REG(0x08)&=~KeyRows;
+    EXTI_REG(0x0c)|=KeyRows;
+    EXTI_REG(0x14)=KeyRows;
+    NVIC_EnableIRQ(EXTI4_IRQn);
     EXTI_REG(0x08)|=PttLines;EXTI_REG(0x0c)|=PttLines;
     EXTI_REG(0x14)=PttLines;EXTI_REG(0x00)|=PttLines;
     NVIC_EnableIRQ(EXTI2_IRQn);NVIC_EnableIRQ(EXTI3_IRQn);NVIC_EnableIRQ(EXTI9_5_IRQn);
@@ -76,7 +86,25 @@ static void columns(uint16_t low) {
     gpio_clear_pin(GPIOC,low);
 }
 static void settle(void) {const unsigned cycles=custom_clock_low?62u:310u;for(volatile unsigned n=0;n<cycles;++n) __asm volatile("nop");}
+bool board_keypad_pending(void) {
+    return keypad_sleeping &&
+        ((GPIOD->IDR&0xf0u)!=0xf0u || !(GPIOE->IDR&GPIO_PIN_5) || !(GPIOA->IDR&GPIO_PIN_12));
+}
+void board_keypad_sleep(bool enabled) {
+    if(enabled==keypad_sleeping)return;
+    keypad_sleeping=enabled;
+    if(enabled) {
+        EXTI_REG(0x14)=KeyRows;
+        EXTI_REG(0x00)|=KeyRows;
+        columns(15);
+    } else {
+        EXTI_REG(0x00)&=~KeyRows;
+        EXTI_REG(0x14)=KeyRows;
+        columns(0);
+    }
+}
 uint8_t board_scan_key(void) {
+    board_keypad_sleep(false);
     /* Reconstructed from 0.29 scanner 0x08016160 and tables 0x08030916.
      * col 0 has ALL HIGH, the four subsequent columns drive one line LOW.
      * The upstream col*4+row and all-LOW fifth pass are NOT equivalent. */

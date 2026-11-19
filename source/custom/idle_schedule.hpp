@@ -14,6 +14,10 @@ private:
     uint32_t hold_until_=1000;
 };
 
+// Align background work to the same 16 ms grid without changing active deadlines.
+constexpr uint32_t maintenance_at(uint32_t at,bool quiet) {
+    return quiet?(at+15u)&~15u:at;
+}
 class WakeDeadline {
 public:
     WakeDeadline(uint32_t now):now_(now){}

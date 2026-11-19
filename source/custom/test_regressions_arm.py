@@ -43,7 +43,7 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['idle_policy_tests']|1,0x080ff000,count=5000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'idle policy failed at C++ line {result}'
-print('ARM idle policy: Governor hold, deadline wrap, Low Power Mode thresholds and snapshot persistence PASS')
+print('ARM idle policy: shared maintenance grid, Governor hold, deadline wrap, Low Power Mode thresholds and snapshot persistence PASS')
 print('ARM reference UI logic: ABC hold without short action, per-slot tones/modes, unavailable AM/USB, ratio bounds and font size and v10/legacy persistence PASS')
 print('ARM menu timeout: inactivity, input, wrap, draft cancellation, status/scan exclusion, OFF, snapshot migration and tail defaults PASS')
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)

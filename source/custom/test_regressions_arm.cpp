@@ -4351,6 +4351,8 @@ extern "C" int gps_power_tests() {
 }
 
 extern "C" int idle_policy_tests() {
+ CHECK(maintenance_at(17,true)==32 && maintenance_at(19,true)==32 && maintenance_at(32,true)==32);
+ CHECK(maintenance_at(19,false)==19 && maintenance_at(0xfffffff1u,true)==0);
  ClockGovernor governor;
  CHECK(!governor.low(999,0) && governor.low(1000,0));
  constexpr uint32_t wrap=0xffffffedu;

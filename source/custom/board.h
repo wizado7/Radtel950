@@ -32,7 +32,9 @@ uint8_t board_battery_raw(void);
 uint16_t board_battery_raw12(void);
 uint32_t board_battery_sample_age(uint32_t now);
 uint32_t board_battery_errors(void);
-uint8_t board_scan_key(void); // OEM-compatible raw codes 0..21, 255 = none
+uint8_t board_scan_key(void);
+void board_keypad_sleep(bool enabled);
+bool board_keypad_pending(void); // OEM-compatible raw codes 0..21, 255 = none
 uint8_t board_power_switch_off(void);
 void board_power_cut(void);
 uint8_t board_ptt_mask(void); /* bit 0 PE3, bit 1 PE2, bit 2 PE5, pressed */

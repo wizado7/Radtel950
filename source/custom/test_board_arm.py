@@ -331,9 +331,34 @@ assert read32(m,0x40010008)&0xff00==0x4400
 assert read32(m,0x4001000c)&0xf0==0x40
 for irq,line,name in ((8,2,'EXTI2_IRQHandler'),(9,3,'EXTI3_IRQHandler'),(23,5,'EXTI9_5_IRQHandler')):
     assert read32(m,BASE+4*(16+irq))==symbols[name]|1
+    m.u.mem_write(exti+0x14,struct.pack('<I',1<<line))
     m.function(name)
     assert read32(m,exti+0x14)==1<<line
 print('ARM PTT wake: PE2/3/5 both edges, grouped vector and pending-bit clear PASS')
+
+keyrows=0xd0
+assert read32(m,0x4001000c)&0xffff==0x3343
+assert read32(m,exti+8)&keyrows==0 and read32(m,exti+12)&keyrows==keyrows
+assert read32(m,BASE+4*(16+10))==symbols['EXTI4_IRQHandler']|1
+assert (read32(m,GPIO[0])>>16)&15==0
+assert (read32(m,GPIO[2])>>28)&15==8 and read32(m,GPIO[2]+4)&15==8
+assert m.odr[GPIO[2]]&0x180==0x180
+for row in range(4):
+    m.pressed=()
+    m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_keypad_sleep')
+    assert m.odr[GPIO[2]]&15==0 and not m.function('board_keypad_pending')
+    assert read32(m,exti)&(lines|keyrows)==lines|keyrows
+    m.pressed=((2,row),)
+    assert m.function('board_keypad_pending') # includes PD5 fallback
+    assert m.function('board_scan_key')==KEYS[8+row]
+    assert m.odr[GPIO[2]]&15==15 and read32(m,exti)&keyrows==0
+m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_keypad_sleep')
+m.u.mem_write(exti+0x14,struct.pack('<I',0x1f0))
+m.function('EXTI9_5_IRQHandler')
+assert read32(m,exti+0x14)==0xe0
+m.function('EXTI4_IRQHandler')
+assert read32(m,exti+0x14)==0x10
+print('ARM keypad sleep: EXTI4/6/7, PE5 coexistence, PD5 detection, all four row scans and idle GPIO bias PASS')
 
 m=Machine(raw)
 def program_wait(count, compare, interval):

@@ -163,7 +163,13 @@ extern "C" int main(void) {
 #endif
         app.tick(now);
         custom_encoder_interval=encoder_interval(app.screen_awake());
-        board_battery_poll(now);
+        const bool quiet=app.power_save() && !app.screen_awake() && !raw_ptt
+#ifdef RT950_MAIN_TX
+            && !rf_session
+#endif
+            ;
+        if(!quiet || !board_battery_idle() || clock_due(now,maintenance_at(board_battery_deadline(now),true)))
+            board_battery_poll(now);
         const bool switch_off=board_power_switch_off()!=0;
         if(power.poll(switch_off,now)) {
             settings_export.cancel();settings_import.cancel();
@@ -180,9 +186,11 @@ extern "C" int main(void) {
             autosave.poll(app,now,true,board_ptt_mask()!=0);
             board_power_cut();
         }
-        if(uint32_t(now-last_input)>=keypad_interval(app.screen_awake())) {
+        if(uint32_t(now-last_input)>=keypad_interval(app.screen_awake()) || (quiet && board_keypad_pending())) {
             board_gps_poll(now);
-            last_input=now;input.sampled=board_scan_key();const uint8_t code=keys.poll(input.sampled,now);
+            last_input=now;
+            input.sampled=quiet && input.sampled==255 && !board_keypad_pending()?255:board_scan_key();
+            const uint8_t code=keys.poll(input.sampled,now);
             app.update_monitor_hold(keys.accepted());
             if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
             keys_awake=wake_keys.poll(input.sampled,now);
@@ -790,7 +798,7 @@ extern "C" int main(void) {
         input.aprs_receiving=packet_rx.running();
         input.aprs_windows=aprs_background.windows();
         input.aprs_cancelled=aprs_background.cancelled();
-        if(export_allowed && uint32_t(now-last_gps_export)>=2000u) {
+        if(export_allowed && clock_due(now,maintenance_at(last_gps_export+2000u,quiet))) {
             last_gps_export=now;
             const aprs::GpsTelemetry gps_status(nav,config.gps_on!=0,board_gps_bytes()!=0,now);
             ble_export.enqueue_gps(gps_status,now);
@@ -890,18 +898,20 @@ extern "C" int main(void) {
             board_display_keypad(!app.low_power());
             board_display_brightness(app.low_power() && brightness>250u?250u:brightness);
         }
+        board_keypad_sleep(app.power_save() && !app.screen_awake());
         if(app.power_save()) {
             const auto done=get_tick();
             WakeDeadline wake(done);
             wake.at(last_input+keypad_interval(app.screen_awake()));
             wake.at(last_encoder+encoder_interval(app.screen_awake()));
-            wake.at(board_battery_deadline(done));
+            wake.at(maintenance_at(board_battery_deadline(done),quiet && board_battery_idle()));
             if(draw_ready)wake.at(last_draw+draw_interval);
 #ifdef RT950_MAIN_TX
             if(raw_ptt || rf_session || transmitting || scanning || (!low_power && app.vox_on()) ||
                gps_uart_busy || settings_export.active() ||
                settings_import.active() || packet_rx.running())wake.at(done+1u);
             if(voice_enabled && !tx_owns_radio)wake.at(voice_rx.next_poll(done));
+            if(export_allowed)wake.at(maintenance_at(last_gps_export+2000u,quiet));
 #endif
             board_idle_wait(wake.interval(),raw_ptt);
         } else custom_idle_wake_ms=1;
