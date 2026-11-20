@@ -39,6 +39,8 @@ void delay_ms(uint32_t);
 extern uint8_t custom_reset_flags;
 }
 using namespace rt950;
+// Keep the keypad on timed scans for the idle-current comparison.
+static constexpr bool KeypadEdgeWake=false;
 #ifdef RT950_MAIN_TX
 static uint8_t held_ptt_source,enabled_ptt_inputs;
 static uint16_t session_power_mv;
@@ -186,10 +188,10 @@ extern "C" int main(void) {
             autosave.poll(app,now,true,board_ptt_mask()!=0);
             board_power_cut();
         }
-        if(uint32_t(now-last_input)>=keypad_interval(app.screen_awake()) || (quiet && board_keypad_pending())) {
+        if(uint32_t(now-last_input)>=keypad_interval(app.screen_awake()) || (KeypadEdgeWake && quiet && board_keypad_pending())) {
             board_gps_poll(now);
             last_input=now;
-            input.sampled=quiet && input.sampled==255 && !board_keypad_pending()?255:board_scan_key();
+            input.sampled=KeypadEdgeWake && quiet && input.sampled==255 && !board_keypad_pending()?255:board_scan_key();
             const uint8_t code=keys.poll(input.sampled,now);
             app.update_monitor_hold(keys.accepted());
             if(input.sampled!=255){if(!app.screen_awake())wake_keys.begin();app.activity(now);}
@@ -876,19 +878,20 @@ extern "C" int main(void) {
         const bool redraw=ui_dirty || animating;
         const uint32_t draw_interval=redraw?40u:app.low_power() || app.page()==Page::PowerStatus || (app.page()==Page::Radio &&
             !input.voice.receiving && !transmitting)?1000u:200u;
+        const bool draw_due=draw_ready && uint32_t(now-last_draw)>=draw_interval;
 #ifdef RT950_MAIN_TX
+        // Clock scaling is independent of the processor sleep setting.
         const unsigned clock_reasons=
-            (!app.power_save() || uint32_t(now-app.last_activity())<=100u?ClockInput:0u) |
             (raw_ptt || rf_session || transmitting || scanning || monitor || (!low_power && app.vox_on()) ||
              weather_open || fm_open || tone_search || spectrum_open || frequency_copy_open ||
-             input.voice.receiving || packet_rx.running()?ClockRadio:0u) |
+             packet_rx.running()?ClockRadio:0u) |
             (settings_export.active() || settings_import.active()?ClockLink:0u) |
-            (draw_ready && redraw?ClockDraw:0u);
+            (draw_due && (animating || (ui_dirty && app.page()!=Page::Radio))?ClockDraw:0u);
         const unsigned required=low_power?(raw_ptt || rf_session || transmitting?ClockRadio:0u):clock_reasons;
         const bool want_low=clock_governor.low(now,required);
         if(!tx_owns_radio && want_low!=custom_clock_low)board_idle_clock(want_low);
 #endif
-        if(draw_ready && uint32_t(now-last_draw)>=draw_interval) {
+        if(draw_due) {
             ui_dirty=false;
             last_draw=now;ui_draw(app,input,now);
             if(app.page()==Page::AprsMessages && app.aprs_personal())
@@ -899,7 +902,7 @@ extern "C" int main(void) {
             board_display_keypad(!app.low_power());
             board_display_brightness(app.low_power() && brightness>250u?250u:brightness);
         }
-        board_keypad_sleep(app.power_save() && !app.screen_awake());
+        board_keypad_sleep(KeypadEdgeWake && app.power_save() && !app.screen_awake());
         if(app.power_save()) {
             const auto done=get_tick();
             WakeDeadline wake(done);

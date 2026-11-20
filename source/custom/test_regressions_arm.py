@@ -1067,7 +1067,7 @@ if a.stock:
    else:pa_routes.append((word_read(ep+12)&0x4080,word_read(port+12)&2))
   if address==0x4000741c and value and expected_pa_route is not None:
    assert pa_routes[-1]==expected_pa_route,(pa_routes,expected_pa_route)
-  if address==ep+20 and value&0x7080 or address==port+20 and value&3:
+  if address in (ep+16,ep+20) and value&0x7080 or address in (port+16,port+20) and value&3:
    route.append((address,value,word_read(0x4000741c)))
   if address not in (ep+16,ep+20):return
   high=address==ep+16
@@ -1117,7 +1117,7 @@ if a.stock:
   assert result==(0 if cancel else hz),result
   counter_writes=[(chip,value,bias) for chip,reg,value,bias in transfers if reg==0x32]
   assert counter_writes==[(0,0x8245,0),(0,0x8244,0)]*(1 if cancel else 2),counter_writes
-  assert not power and not any(addr==ep+20 and pins&0x4080 or addr==port+20 and pins&2
+  assert not power and not any(addr==ep+16 and pins&0x4080 or addr==port+16 and pins&2
                                for addr,pins,_ in route),route
   if cancel:
    assert transfers.index((0,0x32,0x8244,0))<len(transfers)-1
@@ -1137,7 +1137,7 @@ if a.stock:
  assert [v for v in power if v]==[34,68,102,136] and power[-1]==0
  assert not any(bias for _,_,bias in route)
  assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
- assert word_read(ep+12)&0x7080==0x7080 and word_read(port+12)&3==3
+ assert word_read(ep+12)&0x7080==0 and word_read(port+12)&3==0
  print('ARM board UHF PTT: PE15, zero-bias readback, four-step calibrated DAC and safe release PASS')
  for sql,rssi,busy in ((1,100,True),(3,100,False),(0,100,False),(0,112,True)):
   transfers.clear();power.clear();route.clear()
@@ -1392,7 +1392,7 @@ if a.stock:
     assert (chip,0x38,(hz//10)&0xffff,0) in transfers
     assert (chip,0x39,(hz//10)>>16,0) in transfers
     assert (chip,0x30,0xbff1,0) in transfers
-   assert (ep+20,0x1000,0) in route and (port+20,1,0) in route
+   assert (ep+16,0x2000,0) in route and (port+16,1,0) in route
   print('ARM board low FM RX: 18/25/27.185/29.5 MHz, TX gating and return to VHF PASS')
 
 

@@ -1015,9 +1015,10 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   graph[sweep.count()]=char('A'+selected_point);
   if(changed(2,graph,force)) {
    panel(96,120);
+   const uint16_t graph_colors[]={muted,accent};
    for(unsigned i=0;i<sweep.count();++i) {
     const unsigned x=14+i*10;
-    const uint16_t color=i==selected_point?accent:muted;
+    const uint16_t color=graph_colors[i==selected_point];
     const unsigned height=graph[i]=='!'?0:1u+4u*unsigned(graph[i]-34);
     if(height)rect(x,210-height,7,height,color);
     rect(x,211,7,2,color);

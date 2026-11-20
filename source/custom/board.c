@@ -44,10 +44,10 @@ void board_init(void) {
     output(GPIOA,GPIO_PIN_11,1);
     output(GPIOA,GPIO_PIN_6,0); // Hold the broadcast tuner in reset.
     output(GPIOC,GPIO_PIN_13,0);output(GPIOC,GPIO_PIN_14,0); // no RF activity yet
-    /* Tested idle routing from GPS v0.4; NEVER activate active-low TX paths. */
-    output(GPIOE,GPIO_PIN_7,1);output(GPIOE,GPIO_PIN_12,1);
-    output(GPIOE,GPIO_PIN_13,1);output(GPIOE,GPIO_PIN_14,1);
-    output(GPIOB,GPIO_PIN_0,1);output(GPIOB,GPIO_PIN_1,1);
+    /* OEM 0.29 0x0801D5A4 mode 0 drives all six RF selects low. */
+    output(GPIOE,GPIO_PIN_7,0);output(GPIOE,GPIO_PIN_12,0);
+    output(GPIOE,GPIO_PIN_13,0);output(GPIOE,GPIO_PIN_14,0);
+    output(GPIOB,GPIO_PIN_0,0);output(GPIOB,GPIO_PIN_1,0);
     output(GPIOB,GPIO_PIN_8,0);output(GPIOE,GPIO_PIN_4,0);
     output(GPIOE,GPIO_PIN_1,1);output(GPIOA,GPIO_PIN_8,1);
     // Stop channels inherited from the loader. The audio drivers own the
@@ -132,9 +132,9 @@ uint8_t board_ptt_mask(void) {
 }
 void board_power_cut(void) {
     board_gps_enable(0);
-    /* Safe idle, not LOW: LOW would activate routing pins. */
-    gpio_set_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_1);
-    gpio_set_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
+    gpio_clear_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
+    gpio_clear_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
+    gpio_set_pin(GPIOE,GPIO_PIN_1);
     gpio_clear_pin(GPIOB,GPIO_PIN_8);gpio_clear_pin(GPIOE,GPIO_PIN_4);
     gpio_clear_pin(GPIOC,GPIO_PIN_13|GPIO_PIN_14);
     board_display_shutdown();

@@ -35,7 +35,7 @@
  * KEY CORRECTIONS (from binary verification):
  *   - PC5/PA7 are BK4829 RF scan ctrl, NOT keypad (0x800DB00, 0x080136B0 is data)
  *   - OEM keypad scan @ 0x08012FF8 reads PE5/PA12 as side buttons directly
- *   - PTT relays are ACTIVE-LOW, not active-high (r2 @ 0x0801D268)
+ *   - RF selects are active-high (OEM 0.29 route @ 0x0801D5A4)
  *   - SPI1 peripheral UNUSED - PA7 is keypad latch, NOT SPI1_MOSI
  *   - LCD reset is PD2 NOT PC14 (V0.27 LCD_Init @ 0x08026954)
  *   - Backlight has secondary PB3 alongside PC6 (r2 @ 0x08017C40)
@@ -250,15 +250,15 @@
 #define ENC_B_PIN               GPIO_PIN_5  /* mask 0x0020, CCW=B leads A */
 
 /* ========================================================================
- *  PTT / TX Relay Control  [BINARY_VERIFIED V0.27 @ 0x0801D268]
+ *  PTT / TX Relay Control  [BINARY_VERIFIED V0.29 @ 0x0801D5A4]
  *
  *  OEM relay routing function literal pool:
  *    r5 = 0x40011800 (GPIOE), r6 = 0x40010C00 (GPIOB)
  *    r7 = 0x1000 (PE12), r8 = 0x2000 (PE13), r9 = 0x4000 (PE14)
  *
- *  Mode 0 (RX idle): ALL pins SET HIGH - relays are ACTIVE-LOW.
- *  TX modes selectively CLEAR specific pins per band/path.
- *  PE7 (0x80) = audio routing, PB0(0x01)/PB1(0x02) = accessory relay.
+ *  Mode 0 (RF isolated): all six selects LOW.
+ *  Mode 1 (RX): PB0/PE12/PE13 HIGH for VHF/UHF/low-band respectively.
+ *  Mode 2 (TX): PB1/PE7/PE14 HIGH for VHF/UHF/low-band respectively.
  *
  *  HW_PROBED names: U3/U6 are PCB IC designators for RF chain ICs.
  *    PE12 = U3R ENABLE (RX path, IC U3)
@@ -269,11 +269,11 @@
  *    PB1  = V3T ENABLE (VHF/UHF TX frontend)
  * ======================================================================== */
 #define RF_U3R_EN_PORT          GPIOE       /* BINARY_VERIFIED + HW_PROBED "U3R ENABLE" */
-#define RF_U3R_EN_PIN           GPIO_PIN_12 /* mask 0x1000 - IC U3 RX enable, ACTIVE LOW */
+#define RF_U3R_EN_PIN           GPIO_PIN_12 /* mask 0x1000 - IC U3 RX enable, ACTIVE HIGH */
 #define RF_U6R_EN_PORT          GPIOE       /* BINARY_VERIFIED + HW_PROBED "U6R ENABLE" */
-#define RF_U6R_EN_PIN           GPIO_PIN_13 /* mask 0x2000 - IC U6 RX enable, ACTIVE LOW */
+#define RF_U6R_EN_PIN           GPIO_PIN_13 /* mask 0x2000 - IC U6 RX enable, ACTIVE HIGH */
 #define RF_SW3T_EN_PORT         GPIOE       /* BINARY_VERIFIED + HW_PROBED "SW3T ENABLE" */
-#define RF_SW3T_EN_PIN          GPIO_PIN_14 /* mask 0x4000 - TX switch #3, ACTIVE LOW */
+#define RF_SW3T_EN_PIN          GPIO_PIN_14 /* mask 0x4000 - TX switch #3, ACTIVE HIGH */
 #define RF_U3T_EN_PORT          GPIOE       /* BINARY_VERIFIED + HW_PROBED "U3T EN" */
 #define RF_U3T_EN_PIN           GPIO_PIN_7  /* mask 0x0080 - IC U3 TX enable / audio routing */
 #define RF_V3R_EN_PORT          GPIOB       /* BINARY_VERIFIED + HW_PROBED "V3R ENABLE" */

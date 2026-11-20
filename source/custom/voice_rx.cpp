@@ -39,8 +39,8 @@ void wait_us(unsigned microseconds) {
     for(unsigned i=0;i<cycles;++i)__asm volatile("nop");
 }
 void disable_rx_route() {
-    gpio_set_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
-    gpio_set_pin(GPIOB,GPIO_PIN_0);
+    gpio_clear_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
+    gpio_clear_pin(GPIOB,GPIO_PIN_0);
 }
 
 void sleep_chip(uint8_t chip) {
@@ -323,17 +323,11 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
     if(!status_.frequency)return;
     if(restart_) {
         if(int32_t(now-due_)<0)return;
-        // OEM path 1 for UHF (0x0801D658), path 0 for VHF (0x0801D620).
-        if(rx_chip_==1) {
-            // OEM route 4 selects the low-band RF path.
-            gpio_clear_pin(GPIOE,GPIO_PIN_12);
-            gpio_clear_pin(GPIOB,GPIO_PIN_0);
-            gpio_set_pin(GPIOE,GPIO_PIN_13);
-        } else {
-            gpio_clear_pin(GPIOE,GPIO_PIN_13);
-            if(status_.frequency>=400000000u)gpio_clear_pin(GPIOB,GPIO_PIN_0);
-            else gpio_clear_pin(GPIOE,GPIO_PIN_12);
-        }
+        // Retuning and sleep both clear the receive selects before restart.
+        // OEM 0.29 mode 1: one active-high receive path.
+        if(rx_chip_==1)gpio_set_pin(GPIOE,GPIO_PIN_13);
+        else if(status_.frequency>=400000000u)gpio_set_pin(GPIOE,GPIO_PIN_12);
+        else gpio_set_pin(GPIOB,GPIO_PIN_0);
 #ifdef RT950_MAIN_TX
         struct RxRegisters {
             uint8_t chip;
@@ -562,8 +556,8 @@ void BoardUhfTx::restore_rx() {
         if(signal_used_)bus.write(chip_,0x70,0);
         bus.write(chip_,0x37,RfLdoSleep);
     }
-    gpio_set_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
-    gpio_set_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
+    gpio_clear_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
+    gpio_clear_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
     if(chip_started_ && (chip_==0 || cb_fm_frequency(frequency_))) {
         receiver_.enable(false);
         receiver_.enable(true);

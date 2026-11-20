@@ -45,7 +45,7 @@ class Machine:
             self.u.mem_write(symbols['_sdata'],image[start:start+length])
         self.odr={p:0xffff for p in GPIO}
         self.pressed=pressed;self.side=side;self.feeds=0;self.cut=False
-        self.route_clear=[]
+        self.tx_route_high=[]
         self.u.hook_add(UC_HOOK_MEM_READ,self.read)
         self.u.hook_add(UC_HOOK_MEM_WRITE,self.write)
         self.u.hook_add(UC_HOOK_CODE,self.code)
@@ -70,11 +70,11 @@ class Machine:
             self.feeds+=1
             if self.cut:u.emu_stop()
         for p in GPIO:
-            if address==p+16:self.odr[p]=(self.odr[p]&~(value>>16))|(value&0xffff)
-            elif address==p+20:
-                self.odr[p] &= ~value
-                if p==GPIO[4] and value & 0x7080:self.route_clear.append(value)
-                if p==GPIO[1] and value & 3:self.route_clear.append(value)
+            if address==p+16:
+                self.odr[p]=(self.odr[p]&~(value>>16))|(value&0xffff)
+                if p==GPIO[4] and value&0x4080 or p==GPIO[1] and value&2:
+                    self.tx_route_high.append((p,value))
+            elif address==p+20:self.odr[p] &= ~value
             elif address==p+12:self.odr[p]=value
             if address in (p+12,p+16,p+20):
                 u.mem_write(p+12,struct.pack('<I',self.odr[p]&0xffff))
@@ -211,9 +211,9 @@ def shutdown_delay(u,address,size,data):
 m.u.hook_add(UC_HOOK_CODE,shutdown_delay,begin=symbols['delay_ms'],end=symbols['delay_ms'])
 m.function('board_power_cut')
 assert shutdown_delays==[100] and m.u.reg_read(UC_ARM_REG_PRIMASK)==1
-assert not m.route_clear,'shutdown must never activate TX routing'
-assert m.odr[GPIO[4]]&0x7080==0x7080
-assert m.odr[GPIO[1]]&3==3
+assert not m.tx_route_high,'shutdown must never activate TX routing'
+assert m.odr[GPIO[4]]&0x7080==0
+assert m.odr[GPIO[1]]&3==0
 assert not m.odr[GPIO[0]]&(1<<11)
 assert not m.odr[GPIO[1]]&(1<<9)
 assert not m.odr[GPIO[2]]&(1<<6)
@@ -709,7 +709,7 @@ if args.bench:
     assert guard.rf_reads>16 and guard.ptt_reads>10
     assert 'TX NO CALIBRATION' in guard.texts
     assert not guard.dac,'PTT must not arm DAC when calibration SPI fails'
-    assert not any(mask&0x4080 or mask==2 for mask in guard.route_clear)
+    assert not guard.tx_route_high
     print('ARM bench main: valid UHF slot and pressed PTT cannot key after factory SPI failure PASS')
 
 
@@ -925,7 +925,7 @@ class VoiceMachine(Machine):
 
 voice=VoiceMachine()
 voice.function('board_init')
-voice.route_clear.clear()
+assert not voice.tx_route_high
 voice_object=0x20012000
 def voice_call(method,a=0,b=0,c=0):
     for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2,UC_ARM_REG_R3),(voice_object,a,b,c)):
@@ -941,7 +941,7 @@ voice_call('6enable',1)
 for now in range(50):voice_call('4poll',now,0)
 voice_call('4tune',446081250,100)
 voice_call('4poll',101,0)
-assert not voice.odr[GPIO[1]]&1
+assert voice.odr[GPIO[1]]&3==0 and voice.odr[GPIO[4]]&0x7080==0x1000
 assert not voice.odr[GPIO[1]]&0x100
 voice_call('4poll',131,0)
 assert not voice.odr[GPIO[1]]&0x100
@@ -954,8 +954,8 @@ assert voice.odr[GPIO[1]]&0x100
 voice_call('4poll',147,1)
 assert not voice.odr[GPIO[1]]&0x100 and voice.odr[GPIO[4]]&2
 voice_call('6enable',0)
-assert voice.odr[GPIO[1]]&3==3 and voice.odr[GPIO[4]]&0x7080==0x7080
-assert voice.route_clear==[0x2000,1],voice.route_clear
+assert voice.odr[GPIO[1]]&3==0 and voice.odr[GPIO[4]]&0x7080==0
+assert not voice.tx_route_high
 print('ARM voice board: startup, RX route only, carrier audio, PTT mute, shutdown PASS')
 
 voice=VoiceMachine()
@@ -1000,7 +1000,7 @@ print('ARM RX tone search RF: wrong DCS polarity and two matches rejected, third
 
 voice=VoiceMachine()
 voice.reply_words=iter((0xa800,2,1,0,511,2,1))
-voice.function('board_init');voice.route_clear.clear()
+voice.function('board_init');assert not voice.tx_route_high
 voice.u.mem_write(0x20017b00,struct.pack('<II',1,3))
 voice_call('11set_profile')
 voice.u.mem_write(0x20017b00,bytes(8))
@@ -1010,7 +1010,7 @@ voice_call('4tune',162550000,200)
 voice.u.mem_write(0x20017b00,struct.pack('<II',0,1)) # packet audio off, WX muted
 voice_call('4poll',201,0)
 voice_call('4poll',231,0)
-assert voice.route_clear==[0x2000,0x1000],voice.route_clear
+assert voice.odr[GPIO[1]]&3==1 and voice.odr[GPIO[4]]&0x7080==0
 assert not voice.odr[GPIO[1]]&0x100
 voice.u.mem_write(0x20017b00,struct.pack('<II',0,2)) # WX speaker
 voice_call('4poll',232,0)
@@ -1022,7 +1022,7 @@ assert not voice.odr[GPIO[1]]&0x100 # PTT mutes despite open SQL
 voice_call('4poll',262,0)
 assert voice.odr[GPIO[1]]&0x100
 voice_call('6enable',0)
-assert not voice.odr[GPIO[1]]&0x100 and voice.odr[GPIO[4]]&0x7000==0x7000
+assert voice.odr[GPIO[1]]&0x103==0 and voice.odr[GPIO[4]]&0x7080==0
 print('ARM NOAA RF: VHF route, muted scan, hardware SQL over RSSI, PTT mute and stop PASS')
 
 # Render the new menu page in both languages using real compiled UI calls.

@@ -1699,7 +1699,7 @@ extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
  if(mode==0 || mode==3) {
   rx.low_power(true,131);
   const auto routed=[](){return !(GPIOE->ODR&0x3000u) && (GPIOB->ODR&1u);};
-  const auto off=[](){return (GPIOE->ODR&0x3000u)==0x3000u && (GPIOB->ODR&1u);};
+  const auto off=[](){return !(GPIOE->ODR&0x3000u) && !(GPIOB->ODR&1u);};
   if(!routed() || rx.idle_sleep(131,true) || rx.idle_sleep(10130,true))return 3;
   if(!rx.idle_sleep(10131,true) || rx.has_sample() || !off())return 4;
   rx.poll(10132,false);
