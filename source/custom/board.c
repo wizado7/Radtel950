@@ -146,6 +146,7 @@ void board_init(void) {
     for(unsigned i=4;i<8;++i) input(GPIOD,(uint16_t)(1u<<i));
     input(GPIOE,GPIO_PIN_0);input(GPIOE,GPIO_PIN_2);input(GPIOE,GPIO_PIN_3);
     input(GPIOE,GPIO_PIN_5);input(GPIOA,GPIO_PIN_12);
+    input(GPIOC,GPIO_PIN_15); // Active-low speaker-microphone detect.
     // Both edges wake the foreground for keying and immediate PA release.
     AFIO->EXTICR[0]=(AFIO->EXTICR[0]&~0xff00u)|0x4400u;
     // EXTI5 belongs to side PTT on PE5. PD5 stays in the level fallback.

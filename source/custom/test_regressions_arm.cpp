@@ -1493,7 +1493,7 @@ extern "C" uint32_t frequency_copy_board_probe(uint32_t hz,uint32_t cancel) {
  return 1;
 }
 
-extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
+static uint32_t run_voice_board_tx_probe(uint32_t hz,uint32_t tone,bool narrow,bool busy_lock) {
  using namespace rt950::voice;
  BoardReceiver receiver;
  receiver.enable(true);
@@ -1509,7 +1509,7 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  const unsigned microphone_mode=(tone>>24)&3u;
  if(microphone_mode)adapter.select_microphone(static_cast<rt950::MicGain>(microphone_mode-1));
  const unsigned squelch=(tone>>26)&15u;
- adapter.select_channel_check(true,squelch?squelch-1:3);
+ adapter.select_channel_check(narrow,squelch?squelch-1:3);
  const unsigned power_mode=(tone>>20)&15u;
  if(power_mode)adapter.select_measured_bias(power_mode==3?hz+12500u:hz,power_mode==2?137:power_mode==4?0:42);
  const rt950::Tone selected{static_cast<rt950::ToneKind>((tone>>8)&0xffu),uint8_t(tone)};
@@ -1518,7 +1518,7 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  UhfTransmitter<BoardUhfTx> transmitter(adapter);
  Ptt ptt;
  const bool tail=(tone&0x20000u)!=0;
- const TxRequest request{hz,15,1,true,true,tail};
+ const TxRequest request{hz,15,1,true,busy_lock,tail};
  ptt.poll(transmitter,request,100,false);
  ptt.poll(transmitter,request,101,true);
  ptt.poll(transmitter,request,102,true);
@@ -1550,6 +1550,34 @@ extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
   if(receiver.status().frequency!=hz || !receiver.status().receiving)return 5;
  }
  return ptt.state()==Ptt::State::Idle && !adapter.healthy()?0:3;
+}
+
+extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
+ return run_voice_board_tx_probe(hz,tone,true,true);
+}
+
+extern "C" uint32_t pmr_tail_profile_probe(uint32_t mode,uint32_t ctcss,uint32_t enabled) {
+ Application app(true);
+ constexpr uint32_t frequency=446018750;
+ const bool channel=mode==1;
+ if(!(channel?app.recall(1):app.set_frequency(frequency)))return 14;
+ if(!app.set_option(Option::Tail,enabled))return 15;
+ app.key(Key::QuickSettings);
+ app.key(Key::Right); // Reverse (8) -> Mode (0).
+ if(mode==2)app.encoder(-1);
+ if(ctcss) {
+  app.key(Key::Right);app.key(Key::Right);app.encoder(1);
+ }
+ app.key(Key::Back);
+ const auto &slot=app.config().vfo[0];
+ const auto &profile=app.active_radio_profile();
+ const auto tone=profile.sent_tone(app.reverse_active(0));
+ if(slot.channel_mode!=channel || slot.tx_hz!=frequency || profile.narrow!=(mode!=2) ||
+    tone.kind!=(ctcss?rt950::ToneKind::Ctcss:rt950::ToneKind::Off) ||
+    tone.index!=ctcss || app.enabled(Option::Tail)!=bool(enabled))return 16;
+ const uint32_t tone_flags=(uint32_t(tone.kind)<<8)|tone.index|
+     (app.enabled(Option::Tail)?0x20000u:0u)|((uint32_t(profile.squelch)+1u)<<26);
+ return run_voice_board_tx_probe(slot.tx_hz,tone_flags,profile.narrow,profile.busy_lock);
 }
 
 extern "C" uint32_t voice_factory_selector_probe(unsigned level) {
@@ -1996,13 +2024,12 @@ extern "C" uint32_t aprs_ble_probe() {
 
 
 
-extern "C" uint32_t voice_tail_probe(uint32_t kind,uint32_t level,uint32_t *trace) {
+extern "C" uint32_t voice_tail_probe(uint32_t kind,uint32_t value,uint32_t *trace) {
  struct Radio {
   uint32_t *trace;unsigned count=0;
-  bool read(uint8_t reg,uint16_t &value){if(reg!=0x52)return false;value=0x6fff;return true;}
   bool write(uint8_t reg,uint16_t value){trace[count++]=(uint32_t(reg)<<16)|value;return true;}
  } radio{trace};
- if(!rt950::voice::prepare_tail_tx(radio,{static_cast<rt950::ToneKind>(kind),1},rt950::voice::factory_tone_level(uint8_t(level))))return 0;
+ if(!rt950::voice::prepare_tail_tx(radio,{static_cast<rt950::ToneKind>(kind),1},uint16_t(value),uint8_t(value>>16)))return 0;
  return radio.count;
 }
 

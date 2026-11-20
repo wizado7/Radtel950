@@ -629,7 +629,7 @@ extern "C" int main(void) {
             input.bench_ptt=release_errors[unsigned(ptt.release_error())];
             if(ptt.release_error()==voice::Ptt::ReleaseError::Signalling) {
                 constexpr const char *tail_errors[]={"TX END SIGNAL FAILED","TX END NO RF STATE",
-                    "TX END LEVEL INVALID","TX END WRITE BLOCKED"};
+                    "TX END WRITE BLOCKED"};
                 input.bench_ptt=tail_errors[unsigned(tx_board.tail_failure())];
             }
         }

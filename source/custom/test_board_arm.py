@@ -78,11 +78,17 @@ class Machine:
             elif address==p+12:self.odr[p]=value
             if address in (p+12,p+16,p+20):
                 u.mem_write(p+12,struct.pack('<I',self.odr[p]&0xffff))
-    def call(self,address,budget=250000):
+    def call(self,address,budget=250000,single_step=False):
         self.u.reg_write(UC_ARM_REG_CPSR,self.u.reg_read(UC_ARM_REG_CPSR)&~0x0600fc00)
         self.u.reg_write(UC_ARM_REG_SP,0x20017b00)
         self.u.reg_write(UC_ARM_REG_LR,STOP|1)
-        self.u.emu_start(address|1,STOP,count=budget)
+        if single_step:
+            for _ in range(budget):
+                self.u.emu_start(address|1,STOP,count=1)
+                address=self.u.reg_read(UC_ARM_REG_PC)
+                if address==STOP:break
+        else:
+            self.u.emu_start(address|1,STOP,count=budget)
         return self.u.reg_read(UC_ARM_REG_R0)
     def function(self,name):return self.call(symbols[name])
 
@@ -1167,14 +1173,10 @@ print('ARM NOAA RF: VHF route, muted scan, hardware SQL over RSSI, PTT mute and 
 # Record primitive bounds before the LCD sink skips hardware operations.
 class MenuBounds(Foreground):
     def call(self,address,budget=800000):
-        # Each call is an isolated ABI entry; the LCD sink redirects PC and
-        # clears ITSTATE. Unicorn may reuse translated Thumb blocks with stale
-        # conditional state across those redirects. A fresh translation cache
-        # prevents a skipped stack-address instruction on the next UI entry.
-        # This changes the test model only, not the bytes being executed.
-        # The first Russian render also expands the packed catalog.
-        self.u.ctl_flush_tb()
-        result=super().call(address,budget)
+        # Unicorn 2.1.4 may carry the Thumb IT predicate into a callee and
+        # skip its stack setup in a translated block. Step the UI calls so
+        # their LCD sink can still check bounds against the original image.
+        result=super().call(address,budget,single_step=True)
         assert self.u.reg_read(UC_ARM_REG_PC)==STOP,('UI call budget',hex(address))
         return result
     def code(self,u,address,size,data):

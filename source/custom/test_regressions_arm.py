@@ -818,6 +818,8 @@ if a.stock:
    startup.clear()
    call_tx(oracle,0x0801e4d0)
    assert startup==[(0x7d,call_tx(u,symbols['voice_tx_mic_probe'],0xe912,source,gain))]
+   expected=(0xe932&0xffc0)|(startup[-1][1]&0x3f)
+   assert call_tx(u,symbols['voice_tx_mic_probe'],0xe932,source,gain)==expected
  for correction in (-1200,-31,0,31,1200):
   oracle.mem_write(0x200000d4+85,bytes([0xa0])+struct.pack('<h',correction))
   startup.clear()
@@ -1044,6 +1046,7 @@ if a.stock:
  # PA and route writes. A DAC write alone is not evidence of RF power.
  ep=0x40011800
  u.mem_map(0x40011000,0x1000)
+ word_write(0x40011008,0x8000)
  word_write(ep+12,0xffff&~0x7080)
  word_write(port+12,0xffff&~3)
  transfers=[]
@@ -1055,6 +1058,7 @@ if a.stock:
  bad_readback=None
  bad_signal_readback=False
  pa_routes=[]
+ microphone_routes=[]
  expected_pa_route=None
  bits=[]
  selected_chip=None
@@ -1065,7 +1069,9 @@ if a.stock:
   if address==0x4000741c:
    power.append(value)
    if not value:pa_routes.clear()
-   else:pa_routes.append((word_read(ep+12)&0x4080,word_read(port+12)&2))
+   else:
+    pa_routes.append((word_read(ep+12)&0x4080,word_read(port+12)&2))
+    microphone_routes.append((bool(word_read(ep+12)&2),bool(word_read(port+12)&0x100)))
   if address==0x4000741c and value and expected_pa_route is not None:
    assert pa_routes[-1]==expected_pa_route,(pa_routes,expected_pa_route)
   if address in (ep+16,ep+20) and value&0x7080 or address in (port+16,port+20) and value&3:
@@ -1183,7 +1189,15 @@ if a.stock:
   assert call_tx(u,symbols['voice_board_tx_probe'],446081250,selection<<24,budget=16000000)==0
   assert (1,0x7d,(0xe912&0xffe0)|gain,0) in transfers,(selection,transfers)
   assert 136 in power and power[-1]==0
- print('ARM board microphone: Low/Middle/High select OEM register words without changing PA bias PASS')
+ for connected in (False,True):
+  transfers.clear();power.clear();route.clear();microphone_routes.clear()
+  word_write(0x40011008,0 if connected else 0x8000)
+  words=[iter(responses[0]),iter(responses[1])]
+  assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=16000000)==0
+  assert microphone_routes==[(connected,connected)]*4,microphone_routes
+  assert power[-1]==0 and word_read(ep+12)&2 and not word_read(port+12)&0x100
+ word_write(0x40011008,0x8000)
+ print('ARM board microphone: complete gain field, built-in/accessory routing before PA, and safe RX return PASS')
  for mode in (1,2,3,4):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
@@ -1193,19 +1207,35 @@ if a.stock:
   assert [v for v in power if v]==([10,21,31,42] if mode==1 else []),(mode,power)
  print('ARM measured PA code: exact DAC override; above-Low, wrong frequency and zero blocked before keying PASS')
  forbid_active_reads=True
- for tail_tone in (0,0x109,0x201):
-  transfers.clear();power.clear();route.clear()
-  words=[iter(responses[0]),iter(responses[1])]
-  result=call_tx(u,symbols['voice_board_tx_probe'],446081250,tail_tone|0x20000,budget=16000000)
-  assert result==0,(tail_tone,result)
-  if tail_tone==0x201:
-   assert (1,0x52,0x8fff,136) in transfers
-  else:
-   assert (1,0x51,0x902f,136) in transfers and (1,0x07,0x0471,136) in transfers
-   assert (1,0x52,0x0292 if tail_tone else 0x0fff,136) in transfers
-  assert power[-1]==0
+ tail_55=[(0x51,0x902f),(0x07,0x0471)]
+ endings={0:tail_55+[(0x52,0x0fff)],0x109:tail_55+[(0x52,0x0292)],0x201:[(0x52,0x8fff)]}
+ for tone, ending in endings.items():
+  for enabled in (False,True):
+   transfers.clear();power.clear();route.clear()
+   words=[iter(responses[0]),iter(responses[1])]
+   result=call_tx(u,symbols['voice_board_tx_probe'],446081250,tone|(0x20000 if enabled else 0),budget=16000000)
+   assert result==0,(tone,enabled,result)
+   active=[(reg,value) for chip,reg,value,bias in transfers if chip==1 and bias]
+   assert active==(ending if enabled else []),(tone,enabled,active)
+   cut=transfers.index((1,0x30,0,0),transfers.index((1,0x36,0x57,0)))
+   assert transfers[cut+1:cut+3]==[(1,0x51,0,0),(1,0x52,0x0292 if tone==0x109 else 0x0fff,0)]
+   assert power[-1]==0
+ # Seed REG_52 bit 12 to exercise the distinct NFM/FM masks.
+ pmr_responses=(*responses[1][:2],0x7fff,*responses[1][3:])
+ for mode in (0,1,2): # narrow VFO, saved PMR 02, wide VFO
+  for ctcss in (0,1):
+   for enabled in (0,1):
+    transfers.clear();power.clear();route.clear()
+    words=[iter(responses[0]),iter(pmr_responses)]
+    result=call_tx(u,symbols['pmr_tail_profile_probe'],mode,ctcss,enabled,budget=16000000)
+    assert result==0,(mode,ctcss,enabled,result)
+    active=[(reg,value) for chip,reg,value,bias in transfers if chip==1 and bias]
+    thresholds=0x0292 if ctcss else 0x1fff if mode==2 else 0x0fff
+    assert active==(tail_55+[(0x52,thresholds)] if enabled else []),(mode,ctcss,enabled,active)
+    assert (1,0x43,0x3028 if mode==2 else 0x4008,0) in transfers
+    assert power[-1]==0
  forbid_active_reads=False
- print('ARM UHF tail: cached register 52, no serial reads while PA active, 400 ms and safe release PASS')
+ print('ARM PMR 02 tail: saved CH and narrow/wide VFO, OFF/ON, no subtone and CTCSS 67 Hz PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
  expected_pa_route=(0,2)
@@ -1222,9 +1252,13 @@ if a.stock:
  print('ARM board VHF PTT: PE8, calibrated DAC, VHF route and release PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
+ microphone_routes.clear()
+ word_write(0x40011008,0)
  assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x10000,budget=16000000)==0
+ word_write(0x40011008,0x8000)
  assert (0,0x7d,0xe934,0) in transfers
- print('ARM board APRS TX: stock packet gain in register 7D and calibrated VHF key PASS')
+ assert microphone_routes==[(True,False)]*4,microphone_routes
+ print('ARM board APRS TX: packet gain, muted speaker and independent audio routing with the accessory attached PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,)),iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800,0xa800,0x0280,170))]
  expected_pa_route=(0x4000,0)
@@ -1532,13 +1566,15 @@ if a.stock:
    startup.clear()
    call_tx(oracle,0x0801d7b4,1)
    address=0x20012000
-   count=call_tx(u,symbols['voice_tail_probe'],kind,level,address)
-   if kind<2 and level&127==0:
-    assert count==0
-    continue
+   gain=level&127
+   count=call_tx(u,symbols['voice_tail_probe'],kind,0x6fff|(gain<<16),address)
    packed=struct.unpack('<'+'I'*count,u.mem_read(address,4*count))
-   assert [(entry>>16,entry&0xffff) for entry in packed]==startup,(kind,level,startup)
- print('OEM 0.29 tail: all 256 factory bytes use 7-bit level; zero level rejected, nonzero sequences matched PASS')
+   if kind==2 or gain:
+    writes=[(entry>>16,entry&0xffff) for entry in packed]
+    assert writes==startup,(kind,level,writes,startup)
+   else:
+    assert count==0
+ print('OEM 0.29 tail: complete 55 Hz register sequence with and without CTCSS and DCS turn-off PASS')
 
  # Isolate the OEM SysTick counter logic, stubbing its service calls.
  timer=Uc(UC_ARCH_ARM,UC_MODE_THUMB|UC_MODE_MCLASS)

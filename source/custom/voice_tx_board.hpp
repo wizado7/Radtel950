@@ -8,7 +8,7 @@ namespace rt950::voice {
 // The caller suspends Watch before begin and re-arms it after restore_rx.
 class BoardUhfTx final {
 public:
-    enum class TailFailure : uint8_t { None, State, Level, Write };
+    enum class TailFailure : uint8_t { None, State, Write };
     using Channel=UhfTransmitter<BoardUhfTx>::Channel;
     BoardUhfTx(BoardReceiver &receiver,const UhfCalibration &factory,uint8_t selector,
                bool (*hold_check)()=nullptr,const VhfPaCalibration *vhf=nullptr,
@@ -62,7 +62,7 @@ private:
     TailFailure tail_failure_=TailFailure::None;
     uint8_t selector_,sql_=3;
     bool packet_;
-    bool narrow_=true;
+    bool narrow_=true,accessory_=false;
     bool acquired_=false,tuned_=false,fault_=false,chip_started_=false,signal_used_=false;
 };
 }

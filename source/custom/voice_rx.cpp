@@ -433,6 +433,7 @@ bool BoardUhfTx::acquire() {
     if(acquired_ || selector_>=3 || !receiver_.status().ready || receiver_.status().fault)
         return false;
     prepare_board_pa_bias();
+    accessory_=!packet_ && !(GPIOC->IDR&GPIO_PIN_15);
     acquired_=true;tuned_=false;fault_=false;chip_started_=false;
     reg52_valid_=false;tail_failure_=TailFailure::None;
     return true;
@@ -463,7 +464,15 @@ BoardUhfTx::Channel BoardUhfTx::channel(uint32_t now) {
     return occupied?Channel::Busy:Channel::Clear;
 }
 
-void BoardUhfTx::mute_receiver(){receiver_.stop();}
+void BoardUhfTx::mute_receiver() {
+    receiver_.stop();
+    if(packet_)return;
+    // Confirm the jack again after the channel-check dwell. Hold the
+    // microphone route for the entire keyed transmission.
+    accessory_=accessory_ && !(GPIOC->IDR&GPIO_PIN_15);
+    pin(GPIOE,GPIO_PIN_1,accessory_);
+    pin(GPIOB,GPIO_PIN_8,accessory_);
+}
 
 void BoardUhfTx::set(TxRoutePin route,bool high) {
     static constexpr uint16_t masks[]={GPIO_PIN_7,GPIO_PIN_12,GPIO_PIN_13,GPIO_PIN_14,GPIO_PIN_0,GPIO_PIN_1};
@@ -544,7 +553,7 @@ bool BoardUhfTx::configure_voice(const UhfTxValues &values) {
     const uint8_t level=tone_.kind==ToneKind::Dcs?factory_.dcs_level:factory_.ctcss_level;
     if(!healthy() || !permits_tone(tone_))return false;
     auto profile=values;
-    if(packet_)profile.mic=uint16_t((profile.mic&~31u)|0x34u);
+    if(packet_)profile.mic=uint16_t((profile.mic&~63u)|0x34u);
     return prepare_voice_tx(*this,profile,packet_?chip_!=0:narrow_,tone_,level);
 }
 
@@ -558,12 +567,10 @@ bool BoardUhfTx::configure_signal(const TxSignal &signal) {
 bool BoardUhfTx::start_tail() {
     tail_failure_=TailFailure::State;
     if(packet_ || cb_fm_frequency(frequency_) || !healthy() || !reg52_valid_)return false;
-    tail_failure_=TailFailure::Level;
-    if(tone_.kind!=ToneKind::Dcs && (!factory_.ctcss_level || factory_.ctcss_level>127))return false;
     // No other RF client runs while acquired. Use the control word written
     // during preparation instead of a fresh serial read with the PA active.
     tail_failure_=TailFailure::Write;
-    if(!prepare_tail_tx(*this,tone_,factory_.ctcss_level,reg52_))return false;
+    if(!prepare_tail_tx(*this,tone_,reg52_,factory_.ctcss_level))return false;
     tail_failure_=TailFailure::None;
     return true;
 }
@@ -575,10 +582,14 @@ void BoardUhfTx::restore_rx() {
         receiver_.invalidate_chip(chip_);
 #endif
         bus.write(chip_,0x30,0);
+        bus.write(chip_,0x51,0);
+        if(reg52_valid_)bus.write(chip_,0x52,reg52_&0x1fffu);
         if(signal_used_)bus.write(chip_,0x70,0);
         bus.write(chip_,0x37,RfLdoSleep);
     }
     rf_select(GPIOE,0);
+    gpio_set_pin(GPIOE,GPIO_PIN_1);
+    if(accessory_)gpio_clear_pin(GPIOB,GPIO_PIN_8);
     if(chip_started_ && (chip_==0 || cb_fm_frequency(frequency_))) {
         receiver_.enable(false);
         receiver_.enable(true);

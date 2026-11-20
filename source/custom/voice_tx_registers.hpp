@@ -75,23 +75,14 @@ bool prepare_voice_tx(Radio &radio,const UhfTxValues &values,bool narrow,
     return radio.write(0x30,TxActiveWord);
 }
 
-// OEM 0.29 0x0801D7B4 with its extra signalling flag clear.
+// OEM 0.29 0x0801D7B4: replace CTCSS (or a bare carrier) with 55 Hz.
+// Finish by writing normal REG_52 thresholds or the DCS turn-off command.
 template<class Radio>
-bool prepare_tail_tx(Radio &radio,Tone tone,uint8_t ctcss_level,uint16_t value) {
-    value&=0x1fff;
-    if(tone.kind==ToneKind::Dcs)value|=0x8000;
-    else {
-        if(!ctcss_level || ctcss_level>127 ||
-           !radio.write(0x51,uint16_t(0x9000u|ctcss_level)) ||
-           !radio.write(0x07,0x0471))return false;
-    }
-    return radio.write(0x52,value);
-}
-
-template<class Radio>
-bool prepare_tail_tx(Radio &radio,Tone tone,uint8_t ctcss_level) {
-    uint16_t value=0;
-    return radio.read(0x52,value) && prepare_tail_tx(radio,tone,ctcss_level,value);
+bool prepare_tail_tx(Radio &radio,Tone tone,uint16_t value,uint8_t level) {
+    const uint16_t thresholds=value&0x1fffu;
+    if(tone.kind==ToneKind::Dcs)return radio.write(0x52,thresholds|0x8000u);
+    return level && level<=127 && radio.write(0x51,0x9000u|level) &&
+           radio.write(0x07,0x0471) && radio.write(0x52,thresholds);
 }
 
 // OEM 0x0801F114. Selectors are in factory order.

@@ -22,6 +22,7 @@ SECTIONS {
         *(.text.board_rf_quiet) *(.text.board_tx_timer) *(.text.board_tx_watch)
         *(.text.fault_hold) *(.text.read_reset_cause) *(.text.board_idle_pins*)
         *(.text.board_battery_percent_from_mv)
+        *(.text._ZN5rt9505voice10BoardUhfTx10start_tailEv)
         . = ORIGIN(HEADER) + 0x7E0;
         KEEP(*(.boot_model_sig))
         . = ALIGN(4);

@@ -15,11 +15,11 @@ constexpr uint8_t factory_power_selector(TxPower power) {
     return 0xff;
 }
 
-// OEM 0.29, 0x0801E4D0. The OR intentionally preserves bit 5 from
-// the old register and from the selected gain, as the stock code does.
+// REG_7D bits 5:0 are the complete gain field. Preset levels use
+// OEM 0.29 values, with the third level from factory calibration.
 constexpr uint16_t microphone_word(uint16_t old,uint8_t source,uint8_t calibrated) {
     const unsigned gain=source==2?(calibrated&63u):source==1?45u:36u;
-    return uint16_t((old&0xffe0u)|gain);
+    return uint16_t((old&0xffc0u)|gain);
 }
 
 // OEM 0.29, 0x0801E510. Valid calibration is per radio; callers
