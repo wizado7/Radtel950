@@ -118,6 +118,18 @@ print('ARM reset telemetry: real Reset_Handler captures combined CRM flags befor
 assert_rf_quiet(startup)
 assert startup.feeds==0 and startup.odr[GPIO[0]]&0x800
 print('ARM startup RF guard: inherited active DAC and RF lines dropped before SystemInit PASS')
+startup.cut=True
+startup.u.mem_write(0x40021024,struct.pack('<I',1<<29))
+startup.function('Reset_Handler')
+assert startup.feeds==1 and startup.u.reg_read(UC_ARM_REG_PC)!=symbols['SystemInit']
+assert_rf_quiet(startup)
+assert startup.odr[GPIO[2]]&0x6000==0x2000
+startup.cut=False
+startup.u.mem_write(0x40021024,struct.pack('<I',1<<27))
+startup.function('Reset_Handler')
+assert startup.u.reg_read(UC_ARM_REG_PC)==symbols['SystemInit']
+assert startup.u.mem_read(symbols['watchdog_boot_marker'],4)==bytes(4)
+print('ARM restart limit: second watchdog entry holds RF off and signals red; POR clears the marker PASS')
 
 for handler in ('HardFault_Handler','Default_Handler'):
     fault=Machine(raw)
@@ -235,6 +247,16 @@ class Electrical(Machine):
 for keys in cases:
     m=Electrical(raw,keys); m.function('board_init'); m.function('board_scan_key')
 print('ARM GPIO configuration: columns match OEM push-pull PASS (electrical hypothesis only)')
+m=Machine(raw)
+m.function('board_init')
+for port,low,high in ((GPIO[0],(3,6,7),(15,)),(GPIO[1],(2,),()),
+                      (GPIO[2],(4,5,9,12),()),(GPIO[4],(9,),())):
+    assert all(not (m.odr[port]>>pin&1) for pin in low)
+    assert all(m.odr[port]>>pin&1 for pin in high)
+    for pin in low+high:
+        cr=struct.unpack('<I',m.u.mem_read(port+4*(pin//8),4))[0]
+        assert (cr>>(4*(pin%8)))&15==2
+print('ARM idle GPIO: verified RF, tuner and audio boot levels PASS')
 
 m=Machine(raw);m.cut=True
 shutdown_delays=[]
@@ -347,6 +369,48 @@ for step in (1,5):
     assert m.u.reg_read(UC_ARM_REG_PC)!=STOP and m.u.reg_read(UC_ARM_REG_PRIMASK)
     assert_rf_quiet(m)
 print('ARM watchdog: foreground stall cuts PA and RF at 500 ms before withholding watchdog feed PASS')
+
+def timer_now(machine, milliseconds):
+    machine.u.mem_write(symbols['timer_epoch_ms'],struct.pack('<I',milliseconds&~0x7fff))
+    machine.at(2*(milliseconds&0x7fff),2)
+
+def watch_tx(machine, seconds, level):
+    for register,value in ((UC_ARM_REG_R0,seconds),(UC_ARM_REG_R1,level)):
+        machine.u.reg_write(register,value)
+    machine.function('board_tx_watch')
+
+m=WakeTimer(raw)
+keyed_board(m)
+watch_tx(m,15,2)
+timer_now(m,15249)
+m.function('TIM3_IRQHandler')
+assert m.u.reg_read(UC_ARM_REG_PC)==STOP and m.feeds==1
+timer_now(m,15250)
+m.call(symbols['TIM3_IRQHandler'],budget=1500)
+assert m.u.reg_read(UC_ARM_REG_PC)!=STOP and m.feeds==1
+assert_rf_quiet(m)
+
+for level,limit in ((2,120000),(1,60000),(0,30000)):
+    m=WakeTimer(raw)
+    watch_tx(m,300,level)
+    m.u.reg_write(UC_ARM_REG_R0,limit-1);assert m.function('board_tx_timer')==0
+    assert m.function('board_tx_budget_ok')==1
+    m.u.reg_write(UC_ARM_REG_R0,limit);assert m.function('board_tx_timer')==0
+    assert m.function('board_tx_budget_ok')==0
+    m.u.reg_write(UC_ARM_REG_R0,limit+100);assert m.function('board_tx_timer')==1
+    timer_now(m,limit+100);watch_tx(m,0,level)
+    m.u.reg_write(UC_ARM_REG_R0,limit+240099);m.function('board_tx_timer')
+    assert m.function('board_tx_budget_ok')==0
+    m.u.reg_write(UC_ARM_REG_R0,limit+240100);m.function('board_tx_timer')
+    assert m.function('board_tx_budget_ok')==1
+
+m=WakeTimer(raw)
+watch_tx(m,15,0)
+for now,seconds in ((14000,0),(14001,15),(21000,0),(21001,15)):
+    timer_now(m,now);watch_tx(m,seconds,0)
+m.u.reg_write(UC_ARM_REG_R0,30003);assert m.function('board_tx_timer')==0
+assert m.function('board_tx_budget_ok')==0
+print('ARM independent TX guard: deadline cut with foreground heartbeat off, weighted duty, multiple bursts and recovery PASS')
 
 m=WakeTimer(raw)
 m.at(0xfffe)
@@ -996,7 +1060,13 @@ assert not voice.odr[GPIO[1]]&0x100 and voice.odr[GPIO[4]]&2
 voice_call('6enable',0)
 assert voice.odr[GPIO[1]]&3==0 and voice.odr[GPIO[4]]&0x7080==0
 assert not voice.tx_route_high
-print('ARM voice board: startup, RX route only, carrier audio, PTT mute, shutdown PASS')
+voice.odr[GPIO[4]]|=0x80
+voice.u.mem_write(GPIO[4]+12,struct.pack('<I',voice.odr[GPIO[4]]))
+voice_call('6enable',1)
+voice_call('4tune',145500000,160)
+voice_call('4poll',190,0)
+assert voice.odr[GPIO[4]]&0x7080==0x80 and voice.odr[GPIO[1]]&3==0
+print('ARM voice board: startup, RX route only, keyed RX route freeze, carrier audio, PTT mute, shutdown PASS')
 
 voice=VoiceMachine()
 voice.reply_words=iter((0xa800,0x0203,120,0x0203,120))

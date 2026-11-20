@@ -558,7 +558,7 @@ constexpr MenuEntry aprs_route_menu[]={
 };
 constexpr MenuEntry ble_menu[]={{"Bluetooth",Key::Menu,Option::Ble},{"BLE export",Key::Menu,Option::Export}};
 constexpr MenuEntry display_menu[]={{"LCD brightness",Key::Brightness},{"Screen timeout",Key::ScreenTimer},{"Battery status",Key::Battery},
- {"Screen theme",Key::Theme},{"Slot proportions",Key::SlotRatio},{"Battery voltage",Key::ShowVoltage},{"Font size",Key::FontScale},{"Low power mode",Key::LowPower}};
+ {"Screen theme",Key::Theme},{"Slot proportions",Key::SlotRatio},{"Battery voltage",Key::ShowVoltage},{"Font size",Key::FontScale},{"Low power mode",Key::LowPower},{"Receiver sleep",Key::RxSave}};
 constexpr MenuEntry system_menu[]={{"CPU power save",Key::Mode},{"Language",Key::LanguageSelect},{"Menu timeout",Key::MenuTimeout},{"About firmware",Key::About},{"Export settings",Key::Backup},{"Auto keypad lock",Key::AutoLock},{"Reset settings",Key::ResetSettings},{"Reset all user data",Key::ResetAll},{"Import settings",Key::Import},{"User keys",Key::Menu,Option::Count,MenuGroup::UserKeys},{"Lock keypad",Key::KeypadLock}};
 constexpr MenuEntry diagnostics_menu[]={{"Keys / encoder",Key::Debug},{"LCD field test",Key::LcdTest},{"Flash info",Key::FlashInfo},{"FM tuner test",Key::FmProbe},{"RX / Watch monitor",Key::VoiceRx},{"TX power calibration",Key::PowerCalibration},{"Power / TX status",Key::PowerStatus}};
 
@@ -1842,8 +1842,9 @@ void Application::key(Key k) {
                 radio_draft_=radio_profile_option(active_radio_profile(),radio_setting_);
                 parent_=Page::Settings;page_=Page::RadioOptions;notify("");
             } else if(entry.action==Key::Mode) power_flags_^=1u;
+            else if(entry.action==Key::RxSave) power_flags_^=8u;
             else if(entry.action==Key::LowPower) {
-                power_flags_=uint8_t((power_flags_&1u)|(((low_power_mode()+1u)%3u)<<1));
+                power_flags_=uint8_t((power_flags_&9u)|(((low_power_mode()+1u)%3u)<<1));
                 if(low_power_mode()==2)low_power_=false;
             }
             else key(entry.action);

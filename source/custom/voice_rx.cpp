@@ -38,9 +38,18 @@ void wait_us(unsigned microseconds) {
     const unsigned cycles=microseconds*(custom_clock_low?24u:120u);
     for(unsigned i=0;i<cycles;++i)__asm volatile("nop");
 }
+bool rf_transmitting() {
+    return (GPIOE->ODR&(GPIO_PIN_7|GPIO_PIN_14)) || (GPIOB->ODR&GPIO_PIN_1);
+}
+
+void rf_select(GPIO_TypeDef *port, uint16_t mask) {
+    gpio_clear_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
+    gpio_clear_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
+    if(mask)gpio_set_pin(port,mask);
+}
+
 void disable_rx_route() {
-    gpio_clear_pin(GPIOE,GPIO_PIN_12|GPIO_PIN_13);
-    gpio_clear_pin(GPIOB,GPIO_PIN_0);
+    if(!rf_transmitting())rf_select(GPIOE,0);
 }
 
 void sleep_chip(uint8_t chip) {
@@ -79,7 +88,7 @@ void BoardReceiver::audio(bool enabled,bool speaker) {
     speaker_=speaker;audio_=enabled;
 }
 void BoardReceiver::enable(bool enabled) {
-    if(active_==enabled)return;
+    if(active_==enabled || rf_transmitting())return;
     if(!enabled){standby();active_=false;return;}
     // This diagnostic leaves all external transmit switch lines at idle.
     output(GPIO_PIN_8,true);output(GPIO_PIN_15,true);
@@ -88,15 +97,17 @@ void BoardReceiver::enable(bool enabled) {
     active_=true;idle_requested_=false;init_step_=0;
 }
 void BoardReceiver::standby() {
+    if(rf_transmitting())return;
     const bool initialized=init_step_!=0;
     stop();
     if(initialized)sleep_chip(rx_chip_);
 #ifdef RT950_MAIN_TX
-    asleep_=false;sleep_eligible_=false;
+    asleep_=false;sleep_eligible_=false;initialized_=0;
 #endif
     status_={};init_step_=0;idle_requested_=true;
 }
 void BoardReceiver::stop() {
+    if(rf_transmitting())return;
 #ifdef RT950_MAIN_TX
     FrequencyRegisters regs{rx_chip_};
     frequency_counter_.cancel(regs);
@@ -111,7 +122,7 @@ void BoardReceiver::stop() {
 }
 #ifdef RT950_MAIN_TX
 void BoardReceiver::wake_receiver(uint32_t now) {
-    if(!asleep_)return;
+    if(!asleep_ || rf_transmitting())return;
     bus.write(rx_chip_,0x37,RfLdoOn);
     asleep_=false;restart_=true;due_=now+RfWakeMs;
 }
@@ -131,6 +142,7 @@ uint32_t BoardReceiver::next_poll(uint32_t now) const {
 }
 
 bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
+    if(rf_transmitting())return false;
     // Background APRS borrows the receiver without restarting the idle hold.
     if(allowed && packet_window) {
         wake_receiver(now);
@@ -239,6 +251,7 @@ FrequencyCopy BoardReceiver::poll_frequency_copy(uint32_t now) {
 }
 #endif
 void BoardReceiver::tune(uint32_t hz,uint32_t now) {
+    if(rf_transmitting())return;
     stop();
 #ifdef RT950_MAIN_TX
     const bool cb=rt_low_fm_rx_frequency(hz);
@@ -251,7 +264,9 @@ void BoardReceiver::tune(uint32_t hz,uint32_t now) {
         if(init_step_)sleep_chip(rx_chip_);
         rx_chip_=chip;status_={};init_step_=0;
 #ifdef RT950_MAIN_TX
-        asleep_=false;
+        // A chip in LDO standby retains the initialized register set.
+        asleep_=status_.ready=(initialized_&(1u<<chip))!=0;
+        if(asleep_)init_step_=1;
 #endif
     }
     idle_requested_=false;status_.frequency=hz;
@@ -279,6 +294,7 @@ void BoardReceiver::tune_profile(uint32_t hz,Tone tone,uint8_t level,uint32_t no
     tune(hz,now);
 }
 void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow,uint8_t sql) {
+    if(rf_transmitting())return;
     const bool sql_changed=sql<=9 && sql_!=sql;
     if(sql_changed) {
         sql_=sql;sql_open_=false;tone_matches_=0;
@@ -291,6 +307,7 @@ void BoardReceiver::set_profile(Tone tone,uint8_t level,uint32_t now,bool narrow
 }
 
 void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,WeatherAudio weather) {
+    if(rf_transmitting())return;
     if(!active_ || idle_requested_ || status_.fault)return;
 #ifdef RT950_MAIN_TX
     if(asleep_) {
@@ -317,7 +334,12 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         }
         ++init_step_;
         status_.ready=init_step_==prefix+1+suffix;
-        if(status_.ready && status_.frequency)tune(status_.frequency,now);
+        if(status_.ready) {
+#ifdef RT950_MAIN_TX
+            initialized_|=uint8_t(1u<<rx_chip_);
+#endif
+            if(status_.frequency)tune(status_.frequency,now);
+        }
         return;
     }
     if(!status_.frequency)return;
@@ -325,9 +347,9 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
         if(int32_t(now-due_)<0)return;
         // Retuning and sleep both clear the receive selects before restart.
         // OEM 0.29 mode 1: one active-high receive path.
-        if(rx_chip_==1)gpio_set_pin(GPIOE,GPIO_PIN_13);
-        else if(status_.frequency>=400000000u)gpio_set_pin(GPIOE,GPIO_PIN_12);
-        else gpio_set_pin(GPIOB,GPIO_PIN_0);
+        if(rx_chip_==1)rf_select(GPIOE,GPIO_PIN_13);
+        else if(status_.frequency>=400000000u)rf_select(GPIOE,GPIO_PIN_12);
+        else rf_select(GPIOB,GPIO_PIN_0);
 #ifdef RT950_MAIN_TX
         struct RxRegisters {
             uint8_t chip;
@@ -444,14 +466,11 @@ BoardUhfTx::Channel BoardUhfTx::channel(uint32_t now) {
 void BoardUhfTx::mute_receiver(){receiver_.stop();}
 
 void BoardUhfTx::set(TxRoutePin route,bool high) {
-    switch(route) {
-    case TxRoutePin::Pe7:pin(GPIOE,GPIO_PIN_7,high);break;
-    case TxRoutePin::Pe12:pin(GPIOE,GPIO_PIN_12,high);break;
-    case TxRoutePin::Pe13:pin(GPIOE,GPIO_PIN_13,high);break;
-    case TxRoutePin::Pe14:pin(GPIOE,GPIO_PIN_14,high);break;
-    case TxRoutePin::Pb0:pin(GPIOB,GPIO_PIN_0,high);break;
-    case TxRoutePin::Pb1:pin(GPIOB,GPIO_PIN_1,high);break;
-    }
+    static constexpr uint16_t masks[]={GPIO_PIN_7,GPIO_PIN_12,GPIO_PIN_13,GPIO_PIN_14,GPIO_PIN_0,GPIO_PIN_1};
+    const unsigned index=unsigned(route);
+    auto *const port=index<unsigned(TxRoutePin::Pb0)?GPIOE:GPIOB;
+    if(high)rf_select(port,masks[index]);
+    else gpio_clear_pin(port,masks[index]);
 }
 
 bool BoardUhfTx::read(uint8_t address,uint16_t &value) {
@@ -552,12 +571,14 @@ bool BoardUhfTx::start_tail() {
 void BoardUhfTx::restore_rx() {
     release_board_pa_bias();
     if(chip_started_) {
+#ifdef RT950_MAIN_TX
+        receiver_.invalidate_chip(chip_);
+#endif
         bus.write(chip_,0x30,0);
         if(signal_used_)bus.write(chip_,0x70,0);
         bus.write(chip_,0x37,RfLdoSleep);
     }
-    gpio_clear_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
-    gpio_clear_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
+    rf_select(GPIOE,0);
     if(chip_started_ && (chip_==0 || cb_fm_frequency(frequency_))) {
         receiver_.enable(false);
         receiver_.enable(true);

@@ -40,7 +40,22 @@
 #ifdef RT950_CUSTOM
 #include "at32f403a.h"
 extern void board_rf_quiet(void);
+__attribute__((noreturn)) static void fault_hold(void);
 uint8_t custom_reset_flags;
+static volatile uint32_t watchdog_boot_marker __attribute__((section(".noinit.watchdog")));
+
+static __attribute__((noinline)) void read_reset_cause(void)
+{
+    enum { WatchdogReset=0x18, PowerOnReset=0x02 };
+    const uint32_t reset_status=CRM->CSR;
+    custom_reset_flags=(uint8_t)(reset_status>>26);
+    CRM->CSR=(reset_status&1u)|(1u<<24);
+    const uint32_t marker=0x52545744u;
+    if((custom_reset_flags&WatchdogReset) && !(custom_reset_flags&PowerOnReset)) {
+        if(watchdog_boot_marker==marker)fault_hold();
+        watchdog_boot_marker=marker;
+    } else watchdog_boot_marker=0;
+}
 #endif
 
 /* Symbols defined by linker.ld */
@@ -321,9 +336,7 @@ void Reset_Handler(void)
 
 #ifdef RT950_CUSTOM
     /* Capture CRM_CTRLSTS at the application entry, before clock setup. */
-    const uint32_t reset_status = CRM->CSR;
-    custom_reset_flags = (uint8_t)(reset_status >> 26);
-    CRM->CSR = (reset_status & 1u) | (1u << 24);
+    read_reset_cause();
 #endif
 
     /* Enable FPU (CP10 + CP11 full access) before any float operations */
@@ -368,6 +381,11 @@ __attribute__((noreturn)) static void fault_hold(void)
 {
     __asm volatile ("cpsid i" ::: "memory");
     board_rf_quiet();
+    CRM->APB2EN|=CRM_APB2EN_IOPCEN;
+    (void)CRM->APB2EN;
+    GPIOC->CLR=GPIO_PIN_14;
+    GPIOC->SCR=GPIO_PIN_13;
+    GPIOC->CRH=(GPIOC->CRH&~0x00f00000u)|0x00200000u;
     for (;;) {
         if (GPIOE->IDR & GPIO_PIN_0) GPIOA->CLR = GPIO_PIN_11;
         *(volatile uint32_t *)0x40003000UL = 0xAAAAu;

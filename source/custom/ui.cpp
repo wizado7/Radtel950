@@ -658,6 +658,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
    const auto &entry=a.menu_entry(idx);
    const char *status="";
    if(entry.toggle!=Option::Count)status=!a.enabled(entry.toggle)?"OFF":entry.toggle==Option::Gps && a.config().gps_on==RT_GPS_AUTO?"Auto":"ON";
+   else if(entry.action==Key::RxSave)status=a.rx_save()?"ON":"OFF";
    else if(entry.action==Key::LowPower)status=a.low_power_mode()==2?"AUTO 20%":a.low_power_mode()?"ON":"OFF";
    else if(entry.action==Key::Mode)status=a.cpu_power_save()?"ON":"OFF";
    char signature[10];

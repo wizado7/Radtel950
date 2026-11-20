@@ -47,6 +47,49 @@ void board_rf_quiet(void) {
     GPIOE->CRH=(GPIOE->CRH&~0xffff000fu)|0x22220002u;
 }
 
+#ifdef RT950_MAIN_TX
+// Units are quarter-milliseconds at the Low TX rate, with 2x/4x weights.
+enum { TxDutyCapacity=480000u, TxDutyResume=240000u };
+static uint32_t tx_duty, tx_duty_at, tx_deadline, tx_duty_cut_at;
+static volatile uint8_t tx_duty_rate;
+static volatile bool tx_duty_blocked;
+
+bool board_tx_budget_ok(void) { return !tx_duty_blocked; }
+
+bool board_tx_timer(uint32_t now) {
+    const uint32_t elapsed=now-tx_duty_at;
+    tx_duty_at=now;
+    const unsigned rate=tx_duty_rate;
+    if(rate) {
+        const uint32_t remaining=TxDutyCapacity-tx_duty;
+        tx_duty+=elapsed>=TxDutyCapacity?remaining:
+                 elapsed*rate>=remaining?remaining:elapsed*rate;
+        if(tx_duty==TxDutyCapacity && !tx_duty_blocked) {
+            tx_duty_blocked=true;
+            tx_duty_cut_at=now+100u;
+        }
+        return (int32_t)(now-tx_deadline)>=0 ||
+            (tx_duty_blocked && (int32_t)(now-tx_duty_cut_at)>=0);
+    }
+    tx_duty=elapsed>=tx_duty?0:tx_duty-elapsed;
+    if(tx_duty<=TxDutyResume)tx_duty_blocked=false;
+    return false;
+}
+
+void board_tx_watch(uint16_t seconds, uint8_t selector) {
+    if((seconds!=0)==(tx_duty_rate!=0))return;
+    uint32_t mask;
+    __asm volatile("mrs %0, primask\ncpsid i":"=r"(mask)::"memory");
+    // A timer IRQ can have run since the foreground sampled its time.
+    extern uint32_t get_tick(void);
+    const uint32_t now=get_tick();
+    board_tx_timer(now);
+    if(seconds)tx_deadline=now+(uint32_t)seconds*1000u+250u;
+    tx_duty_rate=seconds?(16u>>(selector<3?selector:0)):0;
+    __asm volatile("msr primask, %0"::"r"(mask):"memory");
+}
+#endif
+
 static void output(GPIO_TypeDef *p,uint16_t pin,uint8_t high) {
     if(high) gpio_set_pin(p,pin); else gpio_clear_pin(p,pin);
     gpio_config_pin(p,pin,GPIO_MODE_OUT_2MHZ,GPIO_CNF_PP);
@@ -55,6 +98,20 @@ static void input(GPIO_TypeDef *p,uint16_t pin) {
     gpio_set_pin(p,pin);
     gpio_config_pin(p,pin,GPIO_MODE_INPUT,GPIO_CNF_PULL);
 }
+// OEM 0.29 output modes at 0x08016A84; keep unused paths at their boot levels.
+static __attribute__((noinline)) void board_idle_pins(void) {
+    output(GPIOA,GPIO_PIN_3,0);
+    output(GPIOA,GPIO_PIN_6,0); // Broadcast tuner reset.
+    output(GPIOA,GPIO_PIN_7,0);
+    output(GPIOA,GPIO_PIN_15,1); // Normal microphone route.
+    output(GPIOB,GPIO_PIN_2,0);
+    output(GPIOC,GPIO_PIN_4,0); // Relay neutral.
+    output(GPIOC,GPIO_PIN_5,0);
+    output(GPIOC,GPIO_PIN_9,0);
+    output(GPIOC,GPIO_PIN_12,0);
+    output(GPIOE,GPIO_PIN_9,0);
+}
+
 void board_init(void) {
     if(CRM->APB2EN&CRM_APB2EN_USART1EN) {
         USART1->CR1=0;
@@ -66,7 +123,7 @@ void board_init(void) {
     gpio_config_pin(GPIOA,GPIO_PIN_10,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     output(GPIOB,GPIO_PIN_9,0); // OEM Bluetooth module enable
     output(GPIOA,GPIO_PIN_11,1);
-    output(GPIOA,GPIO_PIN_6,0); // Hold the broadcast tuner in reset.
+    board_idle_pins();
     output(GPIOC,GPIO_PIN_13,0);output(GPIOC,GPIO_PIN_14,0); // no RF activity yet
     /* OEM 0.29 0x0801D5A4 mode 0 drives all six RF selects low. */
     output(GPIOE,GPIO_PIN_7,0);output(GPIOE,GPIO_PIN_12,0);

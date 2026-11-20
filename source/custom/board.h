@@ -7,6 +7,8 @@ extern "C" {
 #endif
 #include "../diagnostic/nmea_status.h"
 void board_init(void);
+void board_tx_watch(uint16_t seconds, uint8_t selector);
+bool board_tx_budget_ok(void);
 void board_display_init(uint32_t now);
 void board_display_brightness(uint16_t permille);
 bool board_display_poll(bool requested,uint32_t now);

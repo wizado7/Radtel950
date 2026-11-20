@@ -11,7 +11,7 @@ void rt_defaults(rt_config *c)
     c->dwell_ms=150; c->hold_ms=1000;
     c->gps_on=RT_GPS_AUTO; c->aprs_rx=true;
     c->aprs_rx_hz=144800000u; /* Initial RX preset, editable by region. */
-    c->beacon_seconds=60;c->aprs_scan_seconds=10;
+    c->beacon_seconds=60;c->aprs_scan_seconds=30;
     /* APRS TX frequency and TX permissions require explicit user setup. */
 }
 bool rt_config_valid(const rt_config *c)

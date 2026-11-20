@@ -11,8 +11,12 @@ _estack = 0x20017BB0;
 SECTIONS {
     .header : {
         KEEP(*(.isr_vector))
+        *(.text.*rf_select*) *(.text.*rf_transmitting*) *(.text.board_tx_budget_ok)
         . = ORIGIN(HEADER) + 0x3E0;
         KEEP(*(.model_sig))
+        /* Place small safety routines in existing header padding. */
+        *(.text.board_rf_quiet) *(.text.board_tx_timer) *(.text.board_tx_watch)
+        *(.text.fault_hold) *(.text.read_reset_cause) *(.text.board_idle_pins*)
         . = ORIGIN(HEADER) + 0x7E0;
         KEEP(*(.boot_model_sig))
         . = ALIGN(4);
@@ -33,7 +37,10 @@ SECTIONS {
         . = ALIGN(4); _sbss = .; *(.bss*) *(COMMON)
         . = ALIGN(4); _ebss = .;
     } > SRAM
-    ASSERT(_ebss + 0x1000 <= _estack, "Insufficient stack reserve")
+    .noinit (NOLOAD) : {
+        *(.noinit.watchdog)
+    } > SRAM
+    ASSERT(ADDR(.noinit) + SIZEOF(.noinit) + 0x1000 <= _estack, "Insufficient stack reserve")
 }
 
 _storage_start = 0x08010000;

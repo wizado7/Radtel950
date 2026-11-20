@@ -72,7 +72,13 @@ void TIM3_IRQHandler(void)
     extern volatile uint32_t custom_heartbeat;
     extern volatile uint8_t custom_watchdog_armed;
     const uint32_t now=get_tick();
-    if(custom_watchdog_armed && (uint32_t)(now-custom_heartbeat)>=500u) {
+    const bool stalled=custom_watchdog_armed && (uint32_t)(now-custom_heartbeat)>=500u;
+#ifdef RT950_MAIN_TX
+    extern bool board_tx_timer(uint32_t now);
+    if(stalled || board_tx_timer(now)) {
+#else
+    if(stalled) {
+#endif
         extern void board_rf_quiet(void);
         __disable_irq();
         board_rf_quiet();

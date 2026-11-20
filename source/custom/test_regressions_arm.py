@@ -1043,8 +1043,8 @@ if a.stock:
  # PA and route writes. A DAC write alone is not evidence of RF power.
  ep=0x40011800
  u.mem_map(0x40011000,0x1000)
- word_write(ep+12,0xffff)
- word_write(port+12,0xffff)
+ word_write(ep+12,0xffff&~0x7080)
+ word_write(port+12,0xffff&~3)
  transfers=[]
  power=[]
  route=[]
@@ -1385,15 +1385,18 @@ if a.stock:
   print('ARM APRS audio route: AF active with speaker muted and normal voice audio restored PASS')
   for low_hz in (18000000,25000000,27185000,29500000):
    transfers.clear();route.clear()
-   words=[iter((0xa800,0x0280,170)),iter((0xa800,0x0280,170))]
-   result=call_tx(u,symbols['voice_board_cb_rx_probe'],low_hz,budget=6000000)
+   words=[iter((0xa800,0x0280,170,0x0280,170)),
+          iter((0xa800,0x0280,170,0x0280,170))]
+   result=call_tx(u,symbols['voice_board_cb_rx_probe'],low_hz,budget=12000000)
    assert result==0,(low_hz,result)
    for chip,hz in ((1,low_hz),(0,145500000)):
     assert (chip,0x38,(hz//10)&0xffff,0) in transfers
     assert (chip,0x39,(hz//10)>>16,0) in transfers
     assert (chip,0x30,0xbff1,0) in transfers
    assert (ep+16,0x2000,0) in route and (port+16,1,0) in route
-  print('ARM board low FM RX: 18/25/27.185/29.5 MHz, TX gating and return to VHF PASS')
+   assert transfers.count((1,0x00,0x8000,0))==1
+   assert transfers.count((1,0x37,0x9d1f,0))==2
+  print('ARM board low FM RX: 18/25/27.185/29.5 MHz, TX gating and warm BK4829 return PASS')
 
 
 

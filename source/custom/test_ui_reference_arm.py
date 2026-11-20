@@ -145,20 +145,23 @@ m.key('Ok');m.key('Back')
 m.key('Menu')
 for _ in range(5):m.key('Down')
 m.key('Ok');m.draw(100)
-assert 'Экран и питание' in m.texts and '1/8' in m.texts
+assert 'Экран и питание' in m.texts and '1/9' in m.texts
 m.canvas.save(a.output/'display-settings-ru.png')
 for _ in range(6):m.key('Down')
 m.draw(100)
-assert 'Размер шрифта' in m.texts and '7/8' in m.texts
+assert 'Размер шрифта' in m.texts and '7/9' in m.texts
 m.key('Ok');m.draw(100)
 assert 'Обычный' in m.texts
 m.key('Right');m.draw(100)
 assert 'Крупный' in m.texts
 m.canvas.save(a.output/'font-size-ru.png')
 m.key('Ok');m.key('Down');m.draw(100)
-assert 'Экономия батареи' in m.texts and '8/8' in m.texts and 'ВЫКЛ' in m.texts
+assert 'Экономия батареи' in m.texts and '8/9' in m.texts and 'ВЫКЛ' in m.texts
 m.key('Ok');m.draw(101);assert 'ВКЛ' in m.texts
 m.key('Ok');m.draw(102);assert 'АВТО 20%' in m.texts
+m.key('Ok');m.key('Down');m.draw(103)
+assert 'Сон приёмника' in m.texts and '9/9' in m.texts and 'ВЫКЛ' in m.texts
+m.key('Ok');m.draw(104);assert 'ВКЛ' in m.texts
 m.key('Ok');m.key('Back');m.key('Back')
 print('ARM Low Power menu: additional page, Russian labels and Off/On/Auto control PASS')
 for light in (True,False):

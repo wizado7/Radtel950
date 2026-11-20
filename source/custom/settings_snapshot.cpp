@@ -324,7 +324,7 @@ bool Application::import_snapshot(const uint8_t *data,size_t size,uint32_t now,u
 }
 
 bool Application::valid_snapshot() const {
-    if(power_flags_>5 || slot_ratio_<66 || slot_ratio_>160 || config_.gps_on>RT_GPS_ON)return false;
+    if((power_flags_&0xf6u)>4u || slot_ratio_<66 || slot_ratio_>160 || config_.gps_on>RT_GPS_ON)return false;
     for(auto action:key_actions_)if(unsigned(action)>=unsigned(KeyAction::Count))return false;
     for(const auto &hop:aprs_routing_.hops)if(!aprs::valid_address(hop,true))return false;
     if(aprs_routing_.beacon>aprs::BeaconPath::Custom || aprs_routing_.relay>aprs::RelayMode::Wide ||

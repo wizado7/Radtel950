@@ -149,6 +149,7 @@ extern "C" int main(void) {
     bool weather_previous=false,frequency_copy_previous=false;
     ClockGovernor clock_governor;
     uint32_t rx_activity=app.last_activity();
+    const bool watchdog_lock=(custom_reset_flags&0x18u)!=0;
 #endif
     app.activity(get_tick());
     custom_heartbeat=get_tick();custom_watchdog_armed=1;
@@ -260,7 +261,8 @@ extern "C" int main(void) {
             board_battery_percent_from_mv(board_battery_mv()):255u);
         const bool low_power=app.low_power();
         if(previously_low!=low_power)ui_dirty=true;
-        voice_rx.low_power(low_power,now);
+        const bool allow_rx_sleep=low_power || app.rx_save();
+        voice_rx.low_power(allow_rx_sleep,now);
 #endif
         const Page page=app.page();
         const bool fm_open=page==Page::FmProbe;
@@ -312,7 +314,9 @@ extern "C" int main(void) {
         const bool supply_ready=tx_supply_ready(battery_age);
         const auto supply_fault=classify_supply(power_sample_ok && (!rf_session || tx_supply_live(battery_age)),
             battery_raw,battery_limits.low,battery_limits.High);
-        const bool power_tx_ok=supply_fault==SupplyFault::None;
+        const char *tx_protection=watchdog_lock?"TX LOCKED AFTER WATCHDOG":
+            !board_tx_budget_ok()?"TX DUTY LIMIT":"";
+        const bool power_tx_ok=supply_fault==SupplyFault::None && !*tx_protection;
         // Capture the reason before a voice or APRS stop removes TX ownership.
         if(!power_tx_ok)input.power.trace.trip(supply_fault);
         app.power_battery(power_sample_ok?board_battery_mv():0);
@@ -568,6 +572,10 @@ extern "C" int main(void) {
             transmitting=packet_tx.transmitting();
         }
 #endif
+#ifdef RT950_MAIN_TX
+        board_tx_watch(transmitting?(packet_tx.transmitting()?5u:timeout):0u,
+            packet_tx.transmitting()?2u:selector);
+#endif
         const char *calibration_error="TX NO CALIBRATION";
 #ifdef RT950_MAIN_TX
         constexpr const char *factory_errors[]={"TX NO CALIBRATION","CAL SPI UNAVAILABLE",
@@ -600,7 +608,7 @@ extern "C" int main(void) {
             !slot.tx_hz?"TX FREQ UNSET":!frequency_allowed?"TX OUT OF BAND":
             !calibration_valid?calibration_error:
 #ifdef RT950_MAIN_TX
-            !power_tx_ok?supply_fault_text(supply_fault):
+            *tx_protection?tx_protection:!power_tx_ok?supply_fault_text(supply_fault):
             waiting_for_tx?(custom_clock_low?"TX PREPARING":"TX CHECKING BATTERY"):
             numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
 #endif
@@ -622,7 +630,7 @@ extern "C" int main(void) {
         diagnostics.low=battery_limits.low;diagnostics.high=battery_limits.High;
         diagnostics.factory_limits=battery_limits_factory;
         diagnostics.profile_check=profile.tx_inhibit?"TX INHIBITED":!slot.tx_hz?"TX FREQ UNSET":
-            !frequency_allowed?"TX OUT OF BAND":!calibration_valid?calibration_error:!power_tx_ok?supply_fault_text(supply_fault):
+            !frequency_allowed?"TX OUT OF BAND":!calibration_valid?calibration_error:*tx_protection?tx_protection:!power_tx_ok?supply_fault_text(supply_fault):
             !tone_allowed?"TX TONE INVALID":!power_allowed?"POWER CALIBRATION NEEDED":
             cb_tx && !profile.narrow?"TX PROFILE BLOCKED":"STATIC CHECKS PASS";
         const bool packet_transmitting=packet_tx.transmitting();
@@ -725,13 +733,14 @@ extern "C" int main(void) {
                 } else voice_rx.set_profile({},0,now,true,3);
             }
             using Decoder=voice::BoardReceiver::Decoder;
-            const bool can_doze=low_power && (page==Page::Radio || page==Page::PowerStatus) && voice_target &&
-                !monitor && !ptt_down && !rf_session && !transmitting;
+            const bool can_doze=allow_rx_sleep && config.watch_mode==RT_WATCH_SINGLE &&
+                (page==Page::Radio || page==Page::PowerStatus) && voice_target &&
+                !monitor && !ptt_down && !rf_session && !transmitting && (!app.vox_on() || low_power);
             if(rx_activity!=app.last_activity()) {
                 rx_activity=app.last_activity();
                 voice_rx.idle_activity(now);
             }
-            voice_rx.idle_sleep(now,can_doze,background && aprs_listen);
+            voice_rx.idle_sleep(now,can_doze || (allow_rx_sleep && background),background);
             using WeatherAudio=voice::BoardReceiver::WeatherAudio;
             const auto wx_audio=!weather_open?WeatherAudio::Off:
                 app.weather().scanning()?WeatherAudio::Muted:WeatherAudio::Speaker;

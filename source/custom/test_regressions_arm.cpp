@@ -1204,7 +1204,7 @@ extern "C" int regression_tests() {
  saved.digit(5);saved.digit(0);saved.digit(0);saved.key(Key::Ok);
  saved.key(Key::AprsScanInterval);
  saved.digit(4);saved.key(Key::Ok);
- CHECK(saved.page()==Page::AprsScanInterval && saved.config().aprs_scan_seconds==10);
+ CHECK(saved.page()==Page::AprsScanInterval && saved.config().aprs_scan_seconds==30);
  saved.key(Key::Erase);
  saved.digit(0);saved.key(Key::Ok);
  CHECK(saved.config().aprs_scan_seconds==0);
@@ -1227,7 +1227,7 @@ extern "C" int regression_tests() {
  CHECK(bytes && !saved.save_snapshot(snapshot,0));
  Application loaded;
  CHECK(!loaded.restore_snapshot(snapshot,bytes-1) && loaded.language()==Language::English);
- CHECK(loaded.restore_snapshot(snapshot,bytes-460) && loaded.config().aprs_scan_seconds==10 && !loaded.side_ptt_enabled());
+ CHECK(loaded.restore_snapshot(snapshot,bytes-460) && loaded.config().aprs_scan_seconds==30 && !loaded.side_ptt_enabled());
  CHECK(loaded.restore_snapshot(snapshot,bytes-432) && loaded.beacon_symbol_index()==0);
  CHECK(loaded.restore_snapshot(snapshot,bytes) && loaded.language()==Language::Russian);
  CHECK(loaded.beacon_symbol_index()==1 && loaded.enabled(Option::Tail));
@@ -1821,7 +1821,11 @@ extern "C" uint32_t voice_board_cb_rx_probe(uint32_t hz) {
  rx.tune(145500000,181);
  if(rx.status().ready || rx.status().receiving)return 3;
  for(uint32_t now=181;now<=260;++now)rx.poll(now,false);
- return rx.status().frequency==145500000 && rx.status().receiving?0:4;
+ if(rx.status().frequency!=145500000 || !rx.status().receiving)return 4;
+ rx.tune(hz,261);
+ if(!rx.status().ready || rx.status().sampled)return 6;
+ for(uint32_t now=261;now<=303;++now)rx.poll(now,false);
+ return rx.status().frequency==hz && rx.status().receiving?0:7;
 }
 
 extern "C" void aprs_afsk_probe(uint32_t levels,uint16_t *samples,unsigned symbols) {
@@ -4424,6 +4428,14 @@ extern "C" int idle_policy_tests() {
  CHECK(size && restored.restore_snapshot(data,size) && restored.low_power_mode()==2 && !restored.low_power());
  size=app.save_portable_snapshot(data,sizeof data);
  CHECK(size && restored.restore_portable_snapshot(data,size,Application::PortableSchema) && restored.low_power_mode()==2);
- app.key(Key::Ok);app.power_policy(0);CHECK(app.low_power_mode()==0 && !app.low_power());
+ app.key(Key::Down);
+ CHECK(app.menu_entry(app.menu_selection()).action==Key::RxSave && !app.rx_save());
+ app.key(Key::Ok);CHECK(app.rx_save());
+ size=app.save_portable_snapshot(data,sizeof data);
+ CHECK(size && restored.restore_portable_snapshot(data,size,Application::PortableSchema) && restored.rx_save());
+ app.key(Key::Up);app.key(Key::Ok);app.power_policy(0);
+ CHECK(app.low_power_mode()==0 && !app.low_power() && app.rx_save());
+ size=app.save_compact_snapshot(data,sizeof data);
+ CHECK(size && restored.restore_snapshot(data,size) && restored.rx_save());
  return 0;
 }

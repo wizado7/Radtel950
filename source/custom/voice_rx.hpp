@@ -59,6 +59,7 @@ public:
     }
     uint32_t next_poll(uint32_t now) const;
     bool sleeping() const {return asleep_;}
+    void invalidate_chip(uint8_t chip) { initialized_&=uint8_t(~(1u<<chip)); }
     bool tone_acquiring() const {
         return status_.sampled && tone_.kind!=ToneKind::Off && tone_ready_ && carrier_at_squelch();
     }
@@ -93,6 +94,7 @@ private:
     Decoder decoder_=Decoder::Off;
     uint32_t sleep_at_=0,recent_until_=0,decode_at_=0,packet_until_=0;
     bool packet_gate_=false;
+    uint8_t initialized_=0;
     bool asleep_=false,sleep_eligible_=false,low_power_=false;
     void disable_decoder();
     void wake_receiver(uint32_t now);
