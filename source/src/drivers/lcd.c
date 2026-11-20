@@ -25,6 +25,9 @@
 #include "rt950_pinmap.h"
 
 extern void delay_ms(uint32_t ms);
+#ifdef RT950_CUSTOM
+extern void board_battery_service_fast(void);
+#endif
 
 #ifdef RT950_CUSTOM
 /* Drive the upper byte and assert WR together. Read back GPIO after each
@@ -173,6 +176,7 @@ void lcd_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t colo
     gpio_clear_pin(LCD_CS_PORT,LCD_CS_PIN);
     for (uint32_t i=0;i<total;++i) {
         lcd_strobe(hi);lcd_strobe(lo);
+        if((i&1023u)==1023u)board_battery_service_fast();
     }
     gpio_set_pin(LCD_CS_PORT,LCD_CS_PIN);
 #else

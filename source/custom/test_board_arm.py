@@ -624,9 +624,11 @@ assert not adc2_clocked(m)
 m.u.mem_write(crm+0x18,struct.pack('<I',read32(m,crm+0x18)|0x200))
 m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_battery_fast')
 poll_battery(6);assert adc2_clocked(m) and reg(8)&1
+assert not m.function('board_battery_fast_sample')
 poll_battery(7);adc(8,reg(8)&~8);poll_battery(8);adc(8,reg(8)&~4);poll_battery(9)
 adc(0,2);poll_battery(10);adc(0,2);adc(0x4c,188<<4);poll_battery(11)
 assert m.function('board_battery_raw')==188 and adc2_clocked(m)
+assert m.function('board_battery_fast_sample')
 adc(0,2);poll_battery(30);assert reg(0)&2
 poll_battery(31);assert not reg(0)&2
 adc(0,2);poll_battery(32);adc(0,2);adc(0x4c,188<<4);poll_battery(33)
@@ -636,6 +638,32 @@ poll_battery(34);assert not adc2_clocked(m) and read32(m,crm+0x18)&0x200
 poll_battery(1032);assert not adc2_clocked(m)
 poll_battery(1033);assert adc2_clocked(m) and reg(8)&1
 print('ARM battery schedule: ADC2 gated at idle, immediate fast wake, 20ms TX cadence, ADC1 preserved and 1s standby PASS')
+
+m=WakeTimer(raw);guard_adc_clock(m)
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_init')
+m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_battery_fast')
+def display_service(now):
+    m.at(now*2)
+    m.function('board_battery_service_fast')
+display_service(1);adc(8,reg(8)&~8);display_service(2)
+adc(8,reg(8)&~4);display_service(3)
+adc(0,0);display_service(23)
+assert not adc2_clocked(m) and m.function('board_battery_errors')==1
+assert not m.function('board_battery_fast_sample')
+display_service(42);assert not adc2_clocked(m)
+display_service(43);assert adc2_clocked(m)
+display_service(44);adc(8,reg(8)&~8);display_service(45)
+adc(8,reg(8)&~4);display_service(46)
+adc(0,2);display_service(47)
+assert not m.function('board_battery_fast_sample')
+adc(0,2);adc(0x4c,0xa08);display_service(48)
+assert m.function('board_battery_mv')==7736 and m.function('board_battery_fast_sample')
+display_service(68);adc(0,2);display_service(69)
+adc(0,2);adc(0x4c,128<<4);display_service(70)
+assert m.function('board_battery_raw')==128 and m.function('board_battery_fast_sample')
+m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_fast')
+assert not m.function('board_battery_fast_sample')
+print('ARM fast battery service: fresh pair during display, timeout recovery without PTT release, and loaded voltage PASS')
 
 
 m=Machine(raw)

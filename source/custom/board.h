@@ -24,6 +24,8 @@ void board_idle_wait(uint8_t timeout_ms,uint8_t ptt);
 void board_display_retime(void);
 void board_display_keypad(bool enabled);
 void board_battery_fast(uint8_t enabled);
+bool board_battery_fast_sample(void);
+void board_battery_service_fast(void);
 void board_battery_poll(uint32_t now);
 uint16_t board_battery_mv(void);
 uint8_t board_battery_sample_fresh(uint32_t now);

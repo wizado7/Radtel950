@@ -12,11 +12,16 @@ SECTIONS {
     .header : {
         KEEP(*(.isr_vector))
         *(.text.*rf_select*) *(.text.*rf_transmitting*) *(.text.board_tx_budget_ok)
+        *(.text.*release_board_pa_bias*) *(.text.*prepare_board_pa_bias*) *(.text.*clear_board_pa_bias*)
+        *(.text.board_battery_service_fast) *(.text.board_battery_fast_sample)
+        *(.text.board_battery_init) *(.text.board_battery_fast)
+        *(.text.board_battery_idle) *(.text.board_battery_deadline)
         . = ORIGIN(HEADER) + 0x3E0;
         KEEP(*(.model_sig))
         /* Place small safety routines in existing header padding. */
         *(.text.board_rf_quiet) *(.text.board_tx_timer) *(.text.board_tx_watch)
         *(.text.fault_hold) *(.text.read_reset_cause) *(.text.board_idle_pins*)
+        *(.text.board_battery_percent_from_mv)
         . = ORIGIN(HEADER) + 0x7E0;
         KEEP(*(.boot_model_sig))
         . = ALIGN(4);

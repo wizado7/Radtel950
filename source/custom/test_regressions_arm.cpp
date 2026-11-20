@@ -2307,6 +2307,22 @@ extern "C" int power_diagnostics_tests() {
  CHECK(tx_supply_ready(0) && tx_supply_ready(20) && !tx_supply_ready(21));
  CHECK(tx_supply_live(59) && !tx_supply_live(60) && !tx_supply_live(0xffffffffu));
  CHECK(!tx_supply_ready(0xffffffffu));
+ constexpr bool outcomes[]={false,true};
+ for(bool sensor_recovers:outcomes) {
+  TxBackend backend;voice::Ptt ptt;TxBatteryWait battery;
+  voice::TxRequest request{446081250,15,0,false,false};
+  const uint32_t now=0xffffffc0u;
+  ptt.poll(backend,request,now,false);
+  for(uint32_t elapsed=1;elapsed<=151;++elapsed) {
+   const bool ready=sensor_recovers && elapsed>=8;
+   request.authorized=ready;
+   if(!battery.waiting(now+elapsed,ptt.state()==voice::Ptt::State::Idle,ready))
+    ptt.poll(backend,request,now+elapsed,true);
+  }
+  CHECK(backend.keys==unsigned(sensor_recovers));
+  CHECK(ptt.state()==(sensor_recovers?voice::Ptt::State::Transmitting:voice::Ptt::State::WaitRelease));
+  CHECK(!battery.waiting(200,false,false) && battery.waiting(201,true,false));
+ }
  constexpr SupplyFault faults[]={SupplyFault::Low,SupplyFault::High,SupplyFault::Sensor};
  for(auto fault:faults) {
   TxBackend backend;voice::Ptt ptt;

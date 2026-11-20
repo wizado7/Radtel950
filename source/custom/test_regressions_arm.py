@@ -60,6 +60,7 @@ u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['power_diagnostics_tests']|1,0x080ff000,count=2000000)
 assert u.reg_read(UC_ARM_REG_PC)==0x080ff000
 result=u.reg_read(UC_ARM_REG_R0);assert result==0,f'power diagnostics test failed at C++ line {result}'
+print('ARM PTT preflight: held PTT waits for a sample, keys once if valid, and rejects a sensor timeout across tick wrap PASS')
 print('ARM power diagnostics: true post-key samples, duplicate/stale rejection, sag, owner/frequency changes, tick wrap and read-only pages PASS')
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(symbols['mic_gain_tests']|1,0x080ff000,count=2000000)

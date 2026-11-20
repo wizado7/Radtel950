@@ -2,6 +2,7 @@
 #include "ui_text.hpp"
 extern "C" {
 #include "drivers/lcd.h"
+void board_battery_service_fast(void);
 }
 namespace rt950::screen {
 uint16_t color(unsigned c){return uint16_t(((c>>19)&31u)<<11|((c>>10)&63u)<<5|((c>>3)&31u));}
@@ -81,6 +82,7 @@ void text(int x,int y,const char *s,const Font &font,uint16_t ink,uint16_t bg,un
             }
         }
         x+=advance;
+        board_battery_service_fast();
     }
 }
 }

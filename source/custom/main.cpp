@@ -149,6 +149,7 @@ extern "C" int main(void) {
     bool weather_previous=false,frequency_copy_previous=false;
     ClockGovernor clock_governor;
     uint32_t rx_activity=app.last_activity();
+    TxBatteryWait tx_battery_wait;
     const bool watchdog_lock=(custom_reset_flags&0x18u)!=0;
 #endif
     app.activity(get_tick());
@@ -162,7 +163,7 @@ extern "C" int main(void) {
         const bool rf_session=packet_tx.active() || ptt.state()==voice::Ptt::State::Preparing ||
             ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
         if(raw_ptt && !rf_session && custom_clock_low)board_idle_clock(false);
-        board_battery_fast(raw_ptt || rf_session || packet_battery_pending);
+        board_battery_fast(raw_ptt || rf_session || packet_battery_pending || vox_holding);
 #endif
         app.tick(now);
         custom_encoder_interval=encoder_interval(app.screen_awake());
@@ -311,7 +312,7 @@ extern "C" int main(void) {
         const bool power_sample_ok=board_battery_sample_fresh(now);
         const uint8_t battery_raw=board_battery_raw();
         const auto battery_age=board_battery_sample_age(now);
-        const bool supply_ready=tx_supply_ready(battery_age);
+        const bool supply_ready=board_battery_fast_sample() && tx_supply_ready(battery_age);
         const auto supply_fault=classify_supply(power_sample_ok && (!rf_session || tx_supply_live(battery_age)),
             battery_raw,battery_limits.low,battery_limits.High);
         const char *tx_protection=watchdog_lock?"TX LOCKED AFTER WATCHDOG":
@@ -496,9 +497,16 @@ extern "C" int main(void) {
         const bool tone_allowed=!profile.reverse && tx_board.permits_tone(profile.tx_tone) &&
             profile.rx_tone.kind==ToneKind::Off;
 #endif
+#ifdef RT950_MAIN_TX
+        const bool idle_ptt=ptt.state()==voice::Ptt::State::Idle;
+        const bool checking_battery=tx_battery_wait.waiting(now,source && idle_ptt,supply_ready)
+            && !*tx_protection;
+        const auto voice_supply_fault=(idle_ptt || !rf_session) && !supply_ready?SupplyFault::Sensor:supply_fault;
+#endif
         const bool allowed=calibration_valid && voice_enabled &&
 #ifdef RT950_MAIN_TX
-            app.voice_tx_page(power_probe) && power_tx_ok &&
+            app.voice_tx_page(power_probe) && (checking_battery ||
+                (power_tx_ok && voice_supply_fault==SupplyFault::None)) &&
 #else
             page==Page::Radio &&
 #endif
@@ -530,7 +538,7 @@ extern "C" int main(void) {
 #endif
 #ifdef RT950_MAIN_TX
         const bool waiting_for_tx=pressed && allowed &&
-            ptt.state()==voice::Ptt::State::Idle && (!supply_ready || custom_clock_low);
+            idle_ptt && (checking_battery || custom_clock_low);
 #else
         constexpr bool waiting_for_tx=false;
 #endif
@@ -608,8 +616,8 @@ extern "C" int main(void) {
             !slot.tx_hz?"TX FREQ UNSET":!frequency_allowed?"TX OUT OF BAND":
             !calibration_valid?calibration_error:
 #ifdef RT950_MAIN_TX
-            *tx_protection?tx_protection:!power_tx_ok?supply_fault_text(supply_fault):
-            waiting_for_tx?(custom_clock_low?"TX PREPARING":"TX CHECKING BATTERY"):
+            *tx_protection?tx_protection:waiting_for_tx?(checking_battery?"TX CHECKING BATTERY":"TX PREPARING"):
+            voice_supply_fault!=SupplyFault::None?supply_fault_text(voice_supply_fault):
             numeric && !numeric_ready?"POWER CALIBRATION NEEDED":
 #endif
             !allowed?"TX PROFILE BLOCKED":ptt.blocked_by_carrier()?"TX CHANNEL BUSY":dynamic_failure;

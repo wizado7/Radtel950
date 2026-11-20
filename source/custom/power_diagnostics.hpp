@@ -14,6 +14,17 @@ constexpr bool tx_supply_live(uint32_t age_ms) {
     // Fast interval plus time for the discard and measured conversions.
     return age_ms<BOARD_BATTERY_FAST_MS+2u*BOARD_BATTERY_CONVERSION_TIMEOUT_MS;
 }
+class TxBatteryWait final {
+public:
+    bool waiting(uint32_t now,bool requested,bool ready) {
+        if(!requested){active_=false;return false;}
+        if(!active_){active_=true;since_=now;}
+        return !ready && uint32_t(now-since_)<150u;
+    }
+private:
+    uint32_t since_=0;
+    bool active_=false;
+};
 inline const char *supply_fault_text(SupplyFault fault) {
     switch(fault) {
     case SupplyFault::Sensor:return "TX BATTERY SENSOR";

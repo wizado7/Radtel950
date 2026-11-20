@@ -35,6 +35,9 @@ def write(u,access,addr,size,value,data):
 def delay(u,addr,size,data):
  delays.append(u.reg_read(UC_ARM_REG_R0));reset_delays.append((bool(ports[0x40011400]&4),u.reg_read(UC_ARM_REG_R0)));u.reg_write(UC_ARM_REG_PC,u.reg_read(UC_ARM_REG_LR))
 u.hook_add(UC_HOOK_MEM_WRITE,write)
+battery_service=[]
+u.hook_add(UC_HOOK_CODE,lambda *_:battery_service.append(len(trace)),
+           begin=syms['board_battery_service_fast'],end=syms['board_battery_service_fast'])
 u.hook_add(UC_HOOK_CODE,delay,begin=syms['delay_ms'],end=syms['delay_ms'])
 u.reg_write(UC_ARM_REG_SP,0x20017000);u.reg_write(UC_ARM_REG_LR,0x080ff001)
 u.emu_start(syms['lcd_init']|1,0x080ff000,count=60000000)
@@ -43,6 +46,8 @@ cmd=[v for data,v in trace if not data]
 assert cmd==[0x01,0x11,0x3a,0x36,0x21,0x13,0x2a,0x2b,0x2c,0x29],cmd[:30]
 start=trace.index((False,0x2c))+1;end=trace.index((False,0x29))
 assert trace[start:end]==[(True,0)]*(240*320*2),'full black GRAM clear missing'
+assert battery_service==list(range(start+2048,end+1,2048)),battery_service
+print('ARM LCD battery service: 75 opportunities during full-screen pixel streaming PASS')
 assert delays==[1,10,120,150,120]
 assert trace[:8]==[(False,1),(False,0x11),(False,0x3a),(True,0x55),(False,0x36),(True,0xc0),(False,0x21),(False,0x13)]
 assert reset_delays[:3]==[(True,1),(False,10),(True,120)]

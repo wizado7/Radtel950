@@ -7,7 +7,7 @@
 static uint32_t since,last_good,errors;
 static uint16_t millivolts,raw12;
 static uint8_t state,raw;
-static bool fast;
+static bool fast,fast_sample;
 enum { Control=0xe0000u,AdcEnable=1u };
 static bool clocked(void) {return (CRM->APB2EN&CRM_APB2EN_ADC2EN)!=0;}
 static void suspend_adc(void) {
@@ -21,11 +21,19 @@ static void wake_adc(uint32_t now) {
     REG(8)=Control|AdcEnable;
     since=now;state=1;
 }
-void board_battery_fast(uint8_t enabled){fast=enabled!=0;}
+void board_battery_fast(uint8_t enabled) {
+    if(!enabled)fast_sample=false;
+    fast=enabled!=0;
+}
+bool board_battery_fast_sample(void){return fast_sample;}
+void board_battery_service_fast(void) {
+    extern uint32_t get_tick(void);
+    if(fast)board_battery_poll(get_tick());
+}
 bool board_battery_idle(void){return state==6 && !fast && !clocked();}
 uint32_t board_battery_deadline(uint32_t now) {
     if(state==6 && fast==clocked())return since+(fast?BOARD_BATTERY_FAST_MS:1000u);
-    if(state==7)return since+1000u;
+    if(state==7)return since+(fast?BOARD_BATTERY_FAST_MS:1000u);
     return now+1u;
 }
 void board_battery_init(uint32_t now) {
@@ -53,8 +61,11 @@ void board_battery_poll(uint32_t now) {
             else {
                 raw12=value;
                 raw=(uint8_t)((value>>4)&255u);
-                if(value && value<4095u){millivolts=(uint16_t)((uint32_t)value*482u/160u);last_good=now;}
-                else {millivolts=0;++errors;}
+                if(value && value<4095u) {
+                    millivolts=(uint16_t)((uint32_t)value*482u/160u);last_good=now;
+                    fast_sample=fast;
+                }
+                else {millivolts=0;fast_sample=false;++errors;}
                 since=now;state=6;
                 if(!fast)suspend_adc();
             }
@@ -65,11 +76,11 @@ void board_battery_poll(uint32_t now) {
             else if((uint32_t)(now-since)>=BOARD_BATTERY_FAST_MS)start(now,4);
         } else if(fast || (uint32_t)(now-since)>=1000u)wake_adc(now);
         break;
-    case 7:if((uint32_t)(now-since)>=1000u)board_battery_init(now);break;
+    case 7:if((uint32_t)(now-since)>=(fast?BOARD_BATTERY_FAST_MS:1000u))board_battery_init(now);break;
     default:break;
     }
     if(state>=2 && state<=5 && (uint32_t)(now-since)>=BOARD_BATTERY_CONVERSION_TIMEOUT_MS) {
-        ++errors;millivolts=0;suspend_adc();since=now;state=7;
+        ++errors;millivolts=0;fast_sample=false;suspend_adc();since=now;state=7;
     }
 }
 uint16_t board_battery_mv(void){return millivolts;}
