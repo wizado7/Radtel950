@@ -95,10 +95,37 @@ const char *save_state_label(SaveState state) {
 }
 void panel(unsigned y,unsigned h) {rect(8,y,224,h,card);}
 void stat(unsigned y,const char *name,const char *value) {panel(y,28);label(16,y+10,name,muted,card,124);label(130,y+10,value);}
+__attribute__((noinline)) void draw_tx_history(const TxSupplyTrace &trace,bool counts,bool force) {
+ static constexpr const char *reasons[]={"0 Normal","1 Permission","2 Profile changed","3 Timeout","4 Radio","5 Signalling"};
+ char value[12];
+ if(counts) {
+  for(unsigned i=0;i<6;++i) {
+   num(value,trace.end_count(i));
+   if(changed(i+1,value,force))stat(78+32*i,reasons[i],value);
+  }
+  return;
+ }
+ if(!force)return;
+ label(10,78,"ms / mV: start / end / min",muted,bg);
+ for(unsigned i=0;i<8;++i) {
+  const auto *entry=trace.session(i);
+  if(!entry)break;
+  const unsigned y=98+22*i;
+  const unsigned fields[]={entry->ms,entry->first,entry->last,entry->loaded};
+  for(unsigned field=0;field<4;++field) {
+   if(fields[field])num(value,fields[field]);else copy(value,"--");
+   label(field?22+43*field:10,y,value,ink,bg);
+  }
+  num(value,entry->reason);label(207,y,value,muted,bg);
+ }
+ label(10,278,"Reason codes 0–5 on next page",muted,bg);
+}
+
 __attribute__((noinline,optimize("no-if-conversion","no-if-conversion2")))
 void draw_power_status(const Application &app,const InputStatus &input,bool force) {
  const auto &p=input.power;const auto &trace=p.trace;const unsigned page=app.power_status_page();
- static constexpr const char *titles[]={"1/4 Battery readings","2/4 Last TX supply","3/4 Available sensors","4/4 Activity time"};
+ static constexpr const char *titles[]={"1/6 Battery readings","2/6 Last TX supply","3/6 Available sensors",
+    "4/6 Activity time","5/6 TX history","6/6 TX end counts"};
  if(force)label(10,52,titles[page],accent,bg);
  char value[20];
  if(page==0) {
@@ -159,6 +186,8 @@ void draw_power_status(const Application &app,const InputStatus &input,bool forc
    panel(238,48);label(16,244,"Profile check",muted);
    label(16,266,check,ink);
   }
+ } else if(page>=4) {
+  draw_tx_history(trace,page==5,force);
  } else {
   static constexpr const char *labels[]={"Single RX s","Watch RX s","GPS on s","BLE on s","APRS RX s","TX time s"};
   for(unsigned i=0;i<WorkloadTime::Count;++i) {

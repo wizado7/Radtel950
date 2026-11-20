@@ -51,6 +51,7 @@ public:
 
     void stop();
     void standby();
+    void mute_for_tx(uint8_t tx_chip);
 #ifdef RT950_MAIN_TX
     bool idle_sleep(uint32_t now,bool allowed,bool packet_window=false);
     void idle_activity(uint32_t now);

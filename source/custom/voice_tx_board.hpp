@@ -30,6 +30,10 @@ public:
     TailFailure tail_failure() const {return tail_failure_;}
     bool healthy() const {return acquired_ && !fault_ && (!hold_check_ || hold_check_());}
     void restore_rx();
+    bool verify_crystal(uint8_t &failed);
+    void release_guard(bool enabled) {guard_=enabled;}
+    bool releasing() const {return releasing_;}
+    void poll_release(uint32_t now,bool force);
     bool tx_values(uint16_t mic,UhfTxValues &out) const;
     void select_power(uint8_t selector) {if(!acquired_)selector_=selector;}
     void select_measured_bias(uint32_t hz,uint8_t code) {if(!acquired_){bias_hz_=hz;bias_code_=code;}}
@@ -57,7 +61,10 @@ private:
     uint8_t bias_code_=0;
     Tone tone_{};
     MicGain mic_gain_=MicGain::High;
-    uint16_t reg52_=0;
+    uint16_t reg52_=0,xtal_=0;
+    uint16_t packet_filter_=0,packet_agc_=0,packet_mic_=0;
+    bool guard_=false,releasing_=false,packet_regs_=false;
+    void finish_release();
     bool reg52_valid_=false;
     TailFailure tail_failure_=TailFailure::None;
     uint8_t selector_,sql_=3;

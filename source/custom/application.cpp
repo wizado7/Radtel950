@@ -1055,7 +1055,7 @@ void Application::key(Key k) {
     if(page_==Page::PowerStatus) {
         if(k==Key::Ok && power_status_page_==2)mcu_sample_request_=true;
         if(k==Key::Up || k==Key::Down)
-            power_status_page_=uint8_t((power_status_page_+(k==Key::Down?1u:3u))%4u);
+            power_status_page_=uint8_t((power_status_page_+(k==Key::Down?1u:5u))%6u);
         if(k==Key::Back || k==Key::Menu){page_=Page::Settings;notify("");}
         return;
     }

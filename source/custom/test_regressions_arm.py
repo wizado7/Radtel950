@@ -1103,7 +1103,11 @@ if a.stock:
   if not sample_bit:
    register=int(''.join(map(str,bits[:8])),2)&0x7f
    regs=tx_registers[selected_chip]
-   if register in (0x30,0x36,0x38,0x39) and regs.get(0x30) in (0xc1fe,0xc3fa):
+   if register==0x3b:
+    sample_value=0x2580 ^ int(bad_readback==0x3b and regs.get(0x30) in (0xc1fe,0xc3fa))
+   elif register==0x2b:sample_value=0x0403
+   elif register==0x19:sample_value=0x1041
+   elif register in (0x30,0x36,0x38,0x39) and regs.get(0x30) in (0xc1fe,0xc3fa):
     assert not power or power[-1]==0
     sample_value=regs[register] ^ int(register==bad_readback or
                                       (bad_signal_readback and register==0x30 and regs[0x30]==0xc3fa))
@@ -1175,14 +1179,20 @@ if a.stock:
   assert (1,0x70,0,0) in transfers[transfers.index((1,0x30,0xc3fa,0))+1:]
  bad_signal_readback=False
  print('ARM board TX tones: DTMF and 1750 Hz, zero-bias transitions, readback refusal, PTT release and microphone restore PASS')
- for bad_readback in (0x30,0x38,0x39,0x36):
+ for bad_readback in (0x30,0x38,0x39,0x36,0x3b):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
   assert call_tx(u,symbols['voice_board_tx_probe'],446081250,0,budget=16000000)==2
   assert power and not any(power) and not any(bias for _,_,bias in route)
   assert (1,0x30,0,0) in transfers[transfers.index((1,0x36,0x57,0))+1:]
  bad_readback=None
- print('ARM board TX: each mismatched readback blocks PA and unkeys chip PASS')
+ print('ARM board TX: each mismatched readback including REG_3B blocks PA and unkeys chip PASS')
+ for guard in (1,2):
+  transfers.clear();power.clear();route.clear()
+  words=[iter(responses[0]),iter(responses[1])]
+  assert call_tx(u,symbols['voice_release_guard_probe'],guard,budget=16000000)==0
+  assert power[-1]==0
+ print('ARM TX release guard: PA zero, route retained through 99 ms, release at 100 ms or forced PASS')
  for selection,gain in enumerate((36,45,55),1):
   transfers.clear();power.clear();route.clear()
   words=[iter(responses[0]),iter(responses[1])]
@@ -1246,19 +1256,21 @@ if a.stock:
  assert 98 in power and power[-1]==0
  inactive=[(reg,val,bias) for chip,reg,val,bias in transfers if chip==1]
  sleep=[(0x47,0x6042,0),(0x30,0,0),(0x37,0x1d00,0)]
- assert inactive in (sleep,sleep*2),inactive
+ assert inactive in (sleep*2,sleep*3),inactive
  assert not any(bias for _,_,bias in route)
  assert (0,0x30,0,0) in transfers[transfers.index((0,0x36,0x57,0))+1:]
  print('ARM board VHF PTT: PE8, calibrated DAC, VHF route and release PASS')
  transfers.clear();power.clear();route.clear()
- words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
+ words=[iter((0xa800,0x0280,55,0xa800,0xe912,0xe912,0x6fff,0x33,0xa800)),iter(())]
  microphone_routes.clear()
  word_write(0x40011008,0)
  assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x10000,budget=16000000)==0
  word_write(0x40011008,0x8000)
- assert (0,0x7d,0xe934,0) in transfers
+ for register,aprs,original in ((0x2b,0x0404,0x0403),(0x19,0x9041,0x1041),(0x7d,0xe974,0xe912)):
+  set_index=transfers.index((0,register,aprs,0))
+  assert (0,register,original,0) in transfers[set_index+1:]
  assert microphone_routes==[(True,False)]*4,microphone_routes
- print('ARM board APRS TX: packet gain, muted speaker and independent audio routing with the accessory attached PASS')
+ print('ARM board APRS TX: data filter, AGC/ALC and register restore with speaker muted PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter((0xa800,)),iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800,0xa800,0x0280,170))]
  expected_pa_route=(0x4000,0)
@@ -1279,10 +1291,10 @@ if a.stock:
    assert (chip,0x7d,(0xe912&0xffe0)|gain,0) in transfers
    assert bias in power and power[-1]==0
  transfers.clear();power.clear();route.clear()
- words=[iter((0xa800,0x0280,55,0xa800,0xe912,0x6fff,0x33,0xa800)),iter(())]
+ words=[iter((0xa800,0x0280,55,0xa800,0xe912,0xe912,0x6fff,0x33,0xa800)),iter(())]
  expected_pa_route=(0,2)
  assert call_tx(u,symbols['voice_board_tx_probe'],145500000,0x1010000,budget=16000000)==0
- assert (0,0x7d,0xe934,0) in transfers
+ assert (0,0x7d,0xe974,0) in transfers
  print('ARM microphone isolation: VHF/CB gain, acquired-owner lock and fixed APRS gain PASS')
  transfers.clear();power.clear();route.clear()
  words=[iter(responses[0]),iter(responses[1])]

@@ -910,7 +910,12 @@ class FlashModel(Machine):
 fm=FlashModel()
 def flash_call(name,*values):
     for register,value in zip((UC_ARM_REG_R0,UC_ARM_REG_R1,UC_ARM_REG_R2),values):fm.u.reg_write(register,value)
-    return fm.call(symbols[name],budget=4000000)
+    # Unicorn can skip Thumb conditional instructions across a translated
+    # autosave call. Step those ABI entries against the same image.
+    result=fm.call(symbols[name],budget=4000000,single_step='SettingsAutosave' in name)
+    if 'SettingsAutosave' in name:
+        assert fm.u.reg_read(UC_ARM_REG_PC)==STOP,('flash call budget',name)
+    return result
 operation=next(name for name,address in symbols.items()
                if 'flash_operation' in name and 0x20000000<=address<0x20018000)
 class BusyFlashModel(FlashModel):
@@ -1272,17 +1277,21 @@ menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu
 assert 'LPD / PMR profiles (RU)' in menu_ui.texts and 'PMR: 0.5 W target' in menu_ui.texts
 print('ARM RU LPD/PMR picker UI: both bands, channel frequencies and bilingual LCD bounds PASS')
 menu_key('PowerStatus');menu_draw()
-assert '1/4 Battery readings' in menu_ui.texts and 'TX DISABLED ON THIS PAGE' in menu_ui.texts
-menu_key('Down');menu_draw();assert '2/4 Last TX supply' in menu_ui.texts and 'NO TX HISTORY' in menu_ui.texts
+assert '1/6 Battery readings' in menu_ui.texts and 'TX DISABLED ON THIS PAGE' in menu_ui.texts
+menu_key('Down');menu_draw();assert '2/6 Last TX supply' in menu_ui.texts and 'NO TX HISTORY' in menu_ui.texts
 menu_key('Down');menu_draw()
-assert all(s in menu_ui.texts for s in ('3/4 Available sensors','NO DATA','NOT VERIFIED','OK: MEASURE MCU'))
-menu_key('Down');menu_draw();assert '4/4 Activity time' in menu_ui.texts and 'GPS on s' in menu_ui.texts and 'Reset flags' in menu_ui.texts
+assert all(s in menu_ui.texts for s in ('3/6 Available sensors','NO DATA','NOT VERIFIED','OK: MEASURE MCU'))
+menu_key('Down');menu_draw();assert '4/6 Activity time' in menu_ui.texts and 'GPS on s' in menu_ui.texts and 'Reset flags' in menu_ui.texts
+menu_key('Down');menu_draw();assert '5/6 TX history' in menu_ui.texts
+menu_key('Down');menu_draw();assert '6/6 TX end counts' in menu_ui.texts and '5 Signalling' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('PowerStatus');menu_draw()
-assert '1/4 Измерения питания' in menu_ui.texts
-menu_key('Down');menu_draw();assert '2/4 Питание при TX' in menu_ui.texts
-menu_key('Down');menu_draw();assert all(s in menu_ui.texts for s in ('3/4 Доступные датчики','НЕ ПОДТВ.','OK: ЗАМЕР MCU'))
-menu_key('Down');menu_draw();assert '4/4 Время работы' in menu_ui.texts and 'Приём APRS, с' in menu_ui.texts
-print('ARM power diagnostics UI: four read-only pages, activity time, RU/EN and LCD bounds PASS')
+assert '1/6 Измерения питания' in menu_ui.texts
+menu_key('Down');menu_draw();assert '2/6 Питание при TX' in menu_ui.texts
+menu_key('Down');menu_draw();assert all(s in menu_ui.texts for s in ('3/6 Доступные датчики','НЕ ПОДТВ.','OK: ЗАМЕР MCU'))
+menu_key('Down');menu_draw();assert '4/6 Время работы' in menu_ui.texts and 'Приём APRS, с' in menu_ui.texts
+menu_key('Down');menu_draw();assert '5/6 Журнал TX' in menu_ui.texts
+menu_key('Down');menu_draw();assert '6/6 Причины конца TX' in menu_ui.texts and '5 Сигнал хвоста' in menu_ui.texts
+print('ARM power diagnostics UI: six read-only pages, activity time, TX history and end counts, RU/EN and LCD bounds PASS')
 menu_key('MicGain');menu_draw()
 assert all(label in menu_ui.texts for label in ('Чувствительность микрофона','Низкая','Средняя','Высокая (завод.)'))
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('MicGain');menu_draw()

@@ -7,6 +7,7 @@ extern "C" {
 #include "drivers/gpio.h"
 #include "board.h"
 #include "../mvp/core.h"
+uint32_t get_tick(void);
 }
 namespace rt950::voice {
 namespace {
@@ -119,6 +120,16 @@ void BoardReceiver::stop() {
     disable_rx_route();
     status_.frequency=0;status_.receiving=false;status_.rssi=0;status_.status=0;
     restart_=false;status_.sampled=false;carrier_=false;sql_open_=false;tone_matches_=0;
+}
+void BoardReceiver::mute_for_tx(uint8_t tx_chip) {
+    stop();
+    sleep_chip(tx_chip^1u);
+#ifdef RT950_MAIN_TX
+    if(rx_chip_!=tx_chip)asleep_=true;
+#endif
+    gpio_set_pin(GPIOE,GPIO_PIN_1);
+    gpio_clear_pin(GPIOE,GPIO_PIN_4);
+    gpio_clear_pin(GPIOB,GPIO_PIN_8);
 }
 #ifdef RT950_MAIN_TX
 void BoardReceiver::wake_receiver(uint32_t now) {
@@ -465,7 +476,7 @@ BoardUhfTx::Channel BoardUhfTx::channel(uint32_t now) {
 }
 
 void BoardUhfTx::mute_receiver() {
-    receiver_.stop();
+    receiver_.mute_for_tx(chip_);
     if(packet_)return;
     // Confirm the jack again after the channel-check dwell. Hold the
     // microphone route for the entire keyed transmission.
@@ -512,7 +523,7 @@ void BoardUhfTx::delay_us(unsigned microseconds) {
 
 void BoardUhfTx::bias(uint8_t value) {
     if(!value)clear_board_pa_bias();
-    else if(healthy())DAC->DHR8R2=value;
+    else if(healthy())board_pa_bias_write(value);
 }
 
 bool BoardUhfTx::tx_values(uint16_t mic,UhfTxValues &out) const {
@@ -552,9 +563,22 @@ bool BoardUhfTx::permits_tone(Tone tone) const {
 bool BoardUhfTx::configure_voice(const UhfTxValues &values) {
     const uint8_t level=tone_.kind==ToneKind::Dcs?factory_.dcs_level:factory_.ctcss_level;
     if(!healthy() || !permits_tone(tone_))return false;
+    if(!read(0x3b,xtal_))return false;
     auto profile=values;
-    if(packet_)profile.mic=uint16_t((profile.mic&~63u)|0x34u);
-    return prepare_voice_tx(*this,profile,packet_?chip_!=0:narrow_,tone_,level);
+    if(packet_) {
+        if(!read(0x2b,packet_filter_) || !read(0x19,packet_agc_) || !read(0x7d,packet_mic_))return false;
+        packet_regs_=true;
+        profile.mic=uint16_t((profile.mic&~0x7fu)|0x74u);
+    }
+    if(!prepare_voice_tx(*this,profile,packet_?chip_!=0:narrow_,tone_,level))return false;
+    return !packet_ || (write(0x2b,(packet_filter_&~7u)|4u) && write(0x19,packet_agc_|0x8000u));
+}
+
+bool BoardUhfTx::verify_crystal(uint8_t &failed) {
+    uint16_t value;
+    if(read(0x3b,value) && value==xtal_)return true;
+    failed=0x3b;
+    return false;
 }
 
 bool BoardUhfTx::finish_voice(){return healthy() && finish_voice_tx(*this,selector_);}
@@ -577,6 +601,22 @@ bool BoardUhfTx::start_tail() {
 
 void BoardUhfTx::restore_rx() {
     release_board_pa_bias();
+    if(guard_ && !fault_ && rf_transmitting()) {
+        gpio_set_pin(GPIOE,GPIO_PIN_1);
+        gpio_clear_pin(GPIOE,GPIO_PIN_4);
+        gpio_clear_pin(GPIOB,GPIO_PIN_8);
+        settled_at_=get_tick()+100u;
+        releasing_=true;
+        return;
+    }
+    finish_release();
+}
+
+void BoardUhfTx::poll_release(uint32_t now,bool force) {
+    if(releasing_ && (force || clock_due(now,settled_at_)))finish_release();
+}
+
+void BoardUhfTx::finish_release() {
     if(chip_started_) {
 #ifdef RT950_MAIN_TX
         receiver_.invalidate_chip(chip_);
@@ -585,6 +625,12 @@ void BoardUhfTx::restore_rx() {
         bus.write(chip_,0x51,0);
         if(reg52_valid_)bus.write(chip_,0x52,reg52_&0x1fffu);
         if(signal_used_)bus.write(chip_,0x70,0);
+        if(packet_regs_) {
+            bus.write(chip_,0x2b,packet_filter_);
+            bus.write(chip_,0x19,packet_agc_);
+            bus.write(chip_,0x7d,packet_mic_);
+            packet_regs_=false;
+        }
         bus.write(chip_,0x37,RfLdoSleep);
     }
     rf_select(GPIOE,0);
@@ -594,6 +640,6 @@ void BoardUhfTx::restore_rx() {
         receiver_.enable(false);
         receiver_.enable(true);
     } else receiver_.stop();
-    signal_used_=false;acquired_=false;tuned_=false;chip_started_=false;reg52_valid_=false;
+    releasing_=false;signal_used_=false;acquired_=false;tuned_=false;chip_started_=false;reg52_valid_=false;
 }
 }

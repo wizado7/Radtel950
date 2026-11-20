@@ -50,10 +50,6 @@ public:
         // Prepare the route with zero PA bias. Delegate board-specific
         // modulation, clock and RF mode transitions to the board adapter.
         prepare_uhf_route(board_);
-        if(!board_.configure_voice(values_) || !board_.finish_voice())
-            return fail(Fault::Setup);
-        if(!verify_voice_tx(board_,values_,board_.power_selector(),TxActiveWord,&failed_register_))
-            return fail(Fault::Readback);
         if(cb_fm_frequency(frequency_)) {
             board_.set(TxRoutePin::Pe7,false);
             board_.set(TxRoutePin::Pb1,false);
@@ -63,6 +59,11 @@ public:
             board_.set(TxRoutePin::Pb1,true);
             board_.set(TxRoutePin::Pe14,false);
         } else select_uhf_tx_route(board_);
+        if(!board_.configure_voice(values_) || !board_.finish_voice())
+            return fail(Fault::Setup);
+        if(!verify_voice_tx(board_,values_,board_.power_selector(),TxActiveWord,&failed_register_) ||
+           !board_.verify_crystal(failed_register_))
+            return fail(Fault::Readback);
         return raise_bias() || fail(Fault::Hold);
     }
     bool set_signal(const TxSignal &signal) {
@@ -70,6 +71,7 @@ public:
         board_.bias(0);
         if(healthy() && board_.configure_signal(signal) &&
            verify_voice_tx(board_,values_,board_.power_selector(),signal?TxSignalWord:TxActiveWord) &&
+           board_.verify_crystal(failed_register_) &&
            raise_bias())return true;
         stop();
         return false;

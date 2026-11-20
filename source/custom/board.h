@@ -7,6 +7,7 @@ extern "C" {
 #endif
 #include "../diagnostic/nmea_status.h"
 void board_init(void);
+void board_pa_bias_write(uint8_t bias);
 void board_tx_watch(uint16_t seconds, uint8_t selector);
 bool board_tx_budget_ok(void);
 void board_display_init(uint32_t now);

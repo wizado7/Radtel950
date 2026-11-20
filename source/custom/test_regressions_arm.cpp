@@ -139,6 +139,7 @@ struct TxBoard {
   return rt950::voice::prepare_voice_tx(*this,values,rt950::voice::uhf_tx_chip);
  }
  bool finish_voice(){return rt950::voice::finish_voice_tx(*this,power_selector());}
+ bool verify_crystal(uint8_t &) const {return true;}
  bool start_tail(){return healthy_flag;}
  void restore_rx(){bad_restore|=bias_value!=0;acquired=false;++restores;}
 };
@@ -748,7 +749,8 @@ extern "C" int regression_tests() {
  ptt.poll(tx,request,300,true);
  CHECK(tx.keys==1 && ptt.state()==voice::Ptt::State::Transmitting);
  ptt.poll(tx,request,15300,true);
- CHECK(tx.stops==3 && ptt.state()==voice::Ptt::State::WaitRelease);
+ CHECK(tx.stops==3 && ptt.state()==voice::Ptt::State::WaitRelease &&
+       ptt.release_error()==voice::Ptt::ReleaseError::Timeout);
  ptt.poll(tx,request,15301,false);
  ptt.poll(tx,request,15302,true);
  ptt.poll(tx,request,15303,false);
@@ -839,12 +841,12 @@ extern "C" int regression_tests() {
  tx_board.observation=TxBoard::Channel::Clear;
  tx_board.configure_ok=false;
  integrated.poll(uhf_tx,target,12,true);
- CHECK(!integrated.blocked_by_carrier() && tx_board.restores==2 && tx_board.nonzero_bias==0 && tx_board.route_writes==6);
+ CHECK(!integrated.blocked_by_carrier() && tx_board.restores==2 && tx_board.nonzero_bias==0 && tx_board.route_writes==9);
  integrated.poll(uhf_tx,target,13,false);
  tx_board.configure_ok=true;
  integrated.poll(uhf_tx,target,14,true);
  CHECK(integrated.state()==voice::Ptt::State::Transmitting && tx_board.bias_value==136 &&
-       tx_board.route_writes==15 && tx_board.register_writes==16 && tx_board.delay_total==3100 && tx_board.nonzero_bias==4);
+       tx_board.route_writes==18 && tx_board.register_writes==16 && tx_board.delay_total==3100 && tx_board.nonzero_bias==4);
  integrated.poll(uhf_tx,target,15,false);
  CHECK(tx_board.restores==3 && !tx_board.bad_restore && !tx_board.acquired);
  integrated.poll(uhf_tx,target,16,true);
@@ -1516,7 +1518,9 @@ extern "C" uint32_t frequency_copy_board_probe(uint32_t hz,uint32_t cancel) {
  return 1;
 }
 
-static uint32_t run_voice_board_tx_probe(uint32_t hz,uint32_t tone,bool narrow,bool busy_lock) {
+extern "C" uint32_t get_tick(void) {return 0xfffffff0u;}
+extern "C" void board_pa_bias_write(uint8_t bias) {DAC->DHR8R2=bias;}
+static uint32_t run_voice_board_tx_probe(uint32_t hz,uint32_t tone,bool narrow,bool busy_lock,unsigned guard=0) {
  using namespace rt950::voice;
  BoardReceiver receiver;
  receiver.enable(true);
@@ -1560,12 +1564,21 @@ static uint32_t run_voice_board_tx_probe(uint32_t hz,uint32_t tone,bool narrow,b
   if(!transmitter.set_signal({1750,0}))return 11;
   if(!interrupt && !transmitter.set_signal({}))return 12;
  }
+ adapter.release_guard(guard!=0);
  ptt.poll(transmitter,request,184,false,!interrupt);
  if(tail && !interrupt) {
   if(ptt.state()!=Ptt::State::Ending)return 6;
   ptt.poll(transmitter,request,583,false);
   if(ptt.state()!=Ptt::State::Ending)return 7;
   ptt.poll(transmitter,request,584,false);
+ }
+ if(guard) {
+  const uint32_t now=get_tick();
+  if(!adapter.releasing() || DAC->DHR8R2 || !(GPIOE->ODR&GPIO_PIN_7))return 17;
+  adapter.poll_release(now+99u,false);
+  if(!adapter.releasing() || !(GPIOE->ODR&GPIO_PIN_7))return 18;
+  adapter.poll_release(guard==2?now+99u:now+100u,guard==2);
+  if(adapter.releasing() || (GPIOE->ODR&GPIO_PIN_7))return 19;
  }
  if(cb_fm_frequency(hz)) {
   receiver.tune(hz,185);
@@ -1577,6 +1590,10 @@ static uint32_t run_voice_board_tx_probe(uint32_t hz,uint32_t tone,bool narrow,b
 
 extern "C" uint32_t voice_board_tx_probe(uint32_t hz,uint32_t tone) {
  return run_voice_board_tx_probe(hz,tone,true,true);
+}
+
+extern "C" uint32_t voice_release_guard_probe(uint32_t guard) {
+ return run_voice_board_tx_probe(446081250,0,true,true,guard);
 }
 
 extern "C" uint32_t pmr_tail_profile_probe(uint32_t mode,uint32_t ctcss,uint32_t enabled) {
@@ -2416,6 +2433,17 @@ extern "C" int power_diagnostics_tests() {
  trace.observe(100,false,0,Owner::Voice,0,8200,2000,false);
  trace.observe(200,true,446081250,Owner::Voice,35,8200,2100,false);
  CHECK(!trace.before() && !trace.samples());
+ TxSupplyTrace journal;
+ for(unsigned i=0;i<9;++i) {
+  const unsigned now=i*100u;
+  journal.observe(now,false,0,Owner::Voice,0,8100,0,true);
+  journal.observe(now+1,true,446018750,Owner::Voice,35,8100,0,true);
+  journal.observe(now+2,true,446018750,Owner::Voice,35,7750,0,true);
+  journal.observe(now+3+i,false,0,Owner::Voice,0,8000,0,true,4);
+ }
+ CHECK(journal.session(0)->ms==10 && journal.session(7)->ms==3 && !journal.session(8));
+ CHECK(journal.session(0)->first==8100 && journal.session(0)->last==8000 &&
+       journal.session(0)->loaded==7750 && journal.session(0)->reason==4 && journal.end_count(4)==9);
  WorkloadTime workload;
  workload.observe(0xfffffff0u,1u<<WorkloadTime::Gps);
  workload.observe(0x10u,(1u<<WorkloadTime::Gps)|(1u<<WorkloadTime::WatchRx));
@@ -2430,8 +2458,10 @@ extern "C" int power_diagnostics_tests() {
  app.key(Key::Down);CHECK(app.power_status_page()==2 && !app.take_mcu_sample_request());
  app.key(Key::Ok);CHECK(app.take_mcu_sample_request() && !app.take_mcu_sample_request());
  app.key(Key::Down);CHECK(app.power_status_page()==3);
+ app.key(Key::Down);CHECK(app.power_status_page()==4);
+ app.key(Key::Down);CHECK(app.power_status_page()==5);
  app.key(Key::Down);CHECK(app.power_status_page()==0);
- app.key(Key::Up);CHECK(app.power_status_page()==3);
+ app.key(Key::Up);CHECK(app.power_status_page()==5);
  const auto hz=app.config().vfo[0].rx_hz;
  app.digit(4);app.key(Key::Ok);CHECK(app.page()==Page::PowerStatus && app.config().vfo[0].rx_hz==hz);
  app.key(Key::Back);CHECK(app.page()==Page::Settings);

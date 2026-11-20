@@ -24,6 +24,10 @@ static bool gps_sleeping;
 static uint32_t gps_tx_deadline;
 static uint8_t gps_tx[20],gps_tx_pos,gps_tx_len;
 
+void board_pa_bias_write(uint8_t bias) {
+    DAC->DHR8R2=bias;
+}
+
 // Called before C runtime initialization and from exception context.
 void board_rf_quiet(void) {
     CRM->APB2EN|=CRM_APB2EN_IOPAEN|CRM_APB2EN_IOPBEN|CRM_APB2EN_IOPEEN;
@@ -31,7 +35,7 @@ void board_rf_quiet(void) {
 
     GPIOA->CLR=GPIO_PIN_5;
     if(CRM->APB1EN&CRM_APB1EN_DACEN) {
-        DAC->DHR8R2=0;
+        board_pa_bias_write(0);
         DAC->CR&=~DAC_CR_EN2;
     }
     GPIOA->CRL=(GPIOA->CRL&~0x00f00000u)|0x00200000u;
@@ -39,11 +43,11 @@ void board_rf_quiet(void) {
     // Six active-high RF selects, PB8/PE4 audio power, and both BK4829 CS.
     GPIOB->CLR=GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_8;
     GPIOE->CLR=GPIO_PIN_4|GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14;
-    GPIOE->SCR=GPIO_PIN_8|GPIO_PIN_15;
+    GPIOE->SCR=GPIO_PIN_1|GPIO_PIN_8|GPIO_PIN_15;
     // Preload the levels before switching the pins to 2 MHz push-pull.
     GPIOB->CRL=(GPIOB->CRL&~0xffu)|0x22u;
     GPIOB->CRH=(GPIOB->CRH&~0xfu)|0x2u;
-    GPIOE->CRL=(GPIOE->CRL&~0xf00f0000u)|0x20020000u;
+    GPIOE->CRL=(GPIOE->CRL&~0xf00f00f0u)|0x20020020u;
     GPIOE->CRH=(GPIOE->CRH&~0xffff000fu)|0x22220002u;
 }
 
@@ -214,10 +218,7 @@ uint8_t board_ptt_mask(void) {
 }
 void board_power_cut(void) {
     board_gps_enable(0);
-    gpio_clear_pin(GPIOE,GPIO_PIN_7|GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14);
-    gpio_clear_pin(GPIOB,GPIO_PIN_0|GPIO_PIN_1);
-    gpio_set_pin(GPIOE,GPIO_PIN_1);
-    gpio_clear_pin(GPIOB,GPIO_PIN_8);gpio_clear_pin(GPIOE,GPIO_PIN_4);
+    board_rf_quiet();
     gpio_clear_pin(GPIOC,GPIO_PIN_13|GPIO_PIN_14);
     board_display_shutdown();
     /* Match OEM 0.29 0x0800C460..0x0800C476: dark, 100 ms, PA11 LOW.

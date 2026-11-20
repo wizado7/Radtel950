@@ -4,7 +4,7 @@
 #include "voice_sql.hpp"
 extern "C" {
 #include "drivers/gpio.h"
-#include "custom_clock.h"
+#include "board.h"
 #include "drivers/dac_audio.h"
 }
 
@@ -131,21 +131,21 @@ void prepare_board_pa_bias() {
     // AT32F403A PA5 is DAC2_OUT. OEM enables DAC2 at 0x0800D4B6.
     // Clear the holding register before enabling the DAC output.
     CRM->APB1EN|=CRM_APB1EN_DACEN;
-    DAC->DHR8R2=0;
+    board_pa_bias_write(0);
     gpio_config_pin(GPIOA,GPIO_PIN_5,GPIO_MODE_INPUT,GPIO_CNF_ANALOG);
     DAC->CR|=DAC_CR_EN2;
 }
 
 void clear_board_pa_bias() {
     // OEM 0x0801D824: clear DAC2 before other TX teardown.
-    if(CRM->APB1EN&CRM_APB1EN_DACEN)DAC->DHR8R2=0;
+    if(CRM->APB1EN&CRM_APB1EN_DACEN)board_pa_bias_write(0);
 }
 
 void release_board_pa_bias() {
     // Preload the GPIO latch before taking PA5 out of analog mode.
     gpio_clear_pin(GPIOA,GPIO_PIN_5);
     if(CRM->APB1EN&CRM_APB1EN_DACEN) {
-        DAC->DHR8R2=0;
+        board_pa_bias_write(0);
         DAC->CR&=~DAC_CR_EN2;
     }
     gpio_config_pin(GPIOA,GPIO_PIN_5,GPIO_MODE_OUT_2MHZ,GPIO_CNF_PP);

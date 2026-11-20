@@ -77,6 +77,7 @@ public:
         if(state_==State::WaitRelease)return;
         if(!request.authorized || !request.frequency || request.slot>2 ||
            !request.timeout_seconds || request.timeout_seconds>300) {
+            if(state_==State::Transmitting)release_error_=ReleaseError::Permission;
             finish(backend,State::WaitRelease);
             return;
         }
@@ -90,12 +91,15 @@ public:
             target_=request;since_=now;state_=State::Preparing;
         }
         if(!same_target(request)) {
+            if(state_==State::Transmitting)release_error_=ReleaseError::Changed;
             finish(backend,State::WaitRelease);
             return;
         }
         if(state_==State::Transmitting) {
-            if(uint32_t(now-since_)>=uint32_t(target_.timeout_seconds)*1000u || !backend.healthy())
-                finish(backend,State::WaitRelease);
+            if(uint32_t(now-since_)>=uint32_t(target_.timeout_seconds)*1000u)
+                release_error_=ReleaseError::Timeout;
+            else if(!backend.healthy())release_error_=ReleaseError::Radio;
+            if(release_error_!=ReleaseError::None)finish(backend,State::WaitRelease);
             return;
         }
         if(uint32_t(now-since_)>=250u) {

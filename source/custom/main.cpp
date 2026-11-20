@@ -178,6 +178,9 @@ extern "C" int main(void) {
         if(!quiet || !board_battery_idle() || clock_due(now,maintenance_at(board_battery_deadline(now),true)))
             board_battery_poll(now);
         const bool switch_off=board_power_switch_off()!=0;
+#ifdef RT950_MAIN_TX
+        tx_board.poll_release(now,switch_off);
+#endif
         if(power.poll(switch_off,now)) {
             settings_export.cancel();settings_import.cancel();
 #ifdef RT950_BENCH_TX_HZ
@@ -185,6 +188,7 @@ extern "C" int main(void) {
             ble_export.enable(false,now);
             packet_rx.stop();vox_adc.stop();
             packet_tx.stop(now);relay.cancel();
+            tx_board.release_guard(false);
 #endif
             ptt.poll(transmitter,{},now,false);
 #endif
@@ -256,7 +260,7 @@ extern "C" int main(void) {
         if(!switch_off) {
             bool rf_busy=input.ptt_mask!=0;
 #ifdef RT950_MAIN_TX
-            rf_busy=rf_busy || packet_tx.active();
+            rf_busy=rf_busy || rf_session || tx_board.releasing();
 #endif
             if(const char *result=autosave.poll(app,now,false,rf_busy || settings_export.active() || settings_import.active() || app.page()==Page::Backup || app.page()==Page::Import))app.report_save(result);
         }
@@ -325,6 +329,7 @@ extern "C" int main(void) {
         const char *tx_protection=watchdog_lock?"TX LOCKED AFTER WATCHDOG":
             !board_tx_budget_ok()?"TX DUTY LIMIT":"";
         const bool power_tx_ok=supply_fault==SupplyFault::None && !*tx_protection;
+        if(!power_tx_ok)tx_board.poll_release(now,true);
         // Capture the reason before a voice or APRS stop removes TX ownership.
         if(!power_tx_ok)input.power.trace.trip(supply_fault);
         app.power_battery(power_sample_ok?board_battery_mv():0);
@@ -376,7 +381,7 @@ extern "C" int main(void) {
         const auto &routing=app.aprs_routing();
         const uint32_t relay_hz=routing.relay_use_beacon?packet_hz:config.aprs_rx_hz;
         const bool packet_permitted=voice_enabled && !ptt_down && !vox_holding && !monitor && power_tx_ok &&
-            ptt.state()==voice::Ptt::State::Idle;
+            ptt.state()==voice::Ptt::State::Idle && !tx_board.releasing();
         const bool beacon_allowed=packet_permitted && page==Page::Radio && config.beacon_on &&
             position_ready && identity.callsign[0] && calibrated_packet(packet_hz);
         if(!beacon_allowed || !app.beacon_requested(now))app.cancel_beacon_request();
@@ -531,6 +536,7 @@ extern "C" int main(void) {
             power_allowed;
 #ifdef RT950_MAIN_TX
         const bool pressed=source!=0;
+        tx_board.release_guard(allowed && !pressed);
         if(ptt.state()==voice::Ptt::State::Idle)held_ptt_source=source;
         // Keep a finite software limit even when the configured TOT is off.
         const uint16_t timeout=power_probe?5:profile.timeout_seconds?profile.timeout_seconds:300;
@@ -556,7 +562,11 @@ extern "C" int main(void) {
         const bool was_transmitting=ptt.state()==voice::Ptt::State::Transmitting ||
             ptt.state()==voice::Ptt::State::Ending;
 #endif
-        if(!waiting_for_tx && (!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready))
+        if(!waiting_for_tx &&
+#ifdef RT950_MAIN_TX
+           !tx_board.releasing() &&
+#endif
+           (!pressed || !allowed || ptt.state()!=voice::Ptt::State::Idle || voice_rx.status().ready))
             ptt.poll(transmitter,request,now,pressed
 #ifdef RT950_MAIN_TX
                 ,!tx_signal.active()
@@ -568,7 +578,7 @@ extern "C" int main(void) {
         if(!tx_signal.poll(now,signal_keyed,signal_allowed,input.sampled,keys.accepted(),
             [&](const voice::TxSignal &tone){return transmitter.set_signal(tone);}))
             ptt.poll(transmitter,request,now,pressed,false);
-        if(!pressed && was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
+        if(was_transmitting && ptt.release_error()!=voice::Ptt::ReleaseError::None)
             release_notice_since=now;
 #endif
         transmitting=ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending;
@@ -582,6 +592,7 @@ extern "C" int main(void) {
         constexpr const char *tx_on="BENCH TX ON";
 #endif
 #ifdef RT950_MAIN_TX
+        tx_owns_radio|=tx_board.releasing();
         if(packet_tx.active()) {
             tx_owns_radio=true;
             transmitting=packet_tx.transmitting();
@@ -612,6 +623,7 @@ extern "C" int main(void) {
                 case 0x38:dynamic_failure="TX BK4829 REG 38";break;
                 case 0x39:dynamic_failure="TX BK4829 REG 39";break;
                 case 0x36:dynamic_failure="TX BK4829 REG 36";break;
+                case 0x3b:dynamic_failure="TX BK4829 REG 3B";break;
                 }
             }
         }
@@ -631,8 +643,9 @@ extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
         constexpr const char *release_errors[]={"","TX END NOT PERMITTED","TX END PROFILE CHANGED",
             "TX END TIME LIMIT","TX END RADIO BLOCKED","TX END SIGNAL FAILED"};
-        if(!pressed && ptt.state()==voice::Ptt::State::Idle &&
-           ptt.release_error()!=voice::Ptt::ReleaseError::None && uint32_t(now-release_notice_since)<2000u) {
+        if((ptt.state()==voice::Ptt::State::WaitRelease ||
+            (!pressed && ptt.state()==voice::Ptt::State::Idle && uint32_t(now-release_notice_since)<2000u)) &&
+           ptt.release_error()!=voice::Ptt::ReleaseError::None) {
             input.bench_ptt=release_errors[unsigned(ptt.release_error())];
             if(ptt.release_error()==voice::Ptt::ReleaseError::Signalling) {
                 constexpr const char *tail_errors[]={"TX END SIGNAL FAILED","TX END NO RF STATE",
@@ -652,7 +665,8 @@ extern "C" int main(void) {
         const uint8_t commanded_code=(CRM->APB1EN&CRM_APB1EN_DACEN)?uint8_t(DAC->DHR8R2):0;
         diagnostics.trace.observe(now,transmitting,packet_transmitting?packet_tx_hz:slot.tx_hz,
             packet_transmitting?TxSupplyTrace::Owner::Aprs:TxSupplyTrace::Owner::Voice,
-            commanded_code,board_battery_mv(),board_battery_sample_age(now),power_sample_ok);
+            commanded_code,board_battery_mv(),board_battery_sample_age(now),power_sample_ok,
+            uint8_t(ptt.release_error()));
 #endif
 #endif
         input.power.battery_mv=board_battery_mv();
@@ -932,6 +946,9 @@ extern "C" int main(void) {
             WakeDeadline wake(done);
             wake.at(last_input+keypad_interval(app.screen_awake()));
             wake.at(last_encoder+encoder_interval(app.screen_awake()));
+#ifdef RT950_MAIN_TX
+            if(tx_board.releasing())wake.at(done+1u);
+#endif
             wake.at(maintenance_at(board_battery_deadline(done),quiet && board_battery_idle()));
             if(draw_ready)wake.at(last_draw+draw_interval);
 #ifdef RT950_MAIN_TX

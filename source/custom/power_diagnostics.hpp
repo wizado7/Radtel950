@@ -38,10 +38,16 @@ inline const char *supply_fault_text(SupplyFault fault) {
 class TxSupplyTrace final {
 public:
     enum class Owner : uint8_t { Voice, Aprs };
+    struct Session {uint32_t ms;uint16_t first,last,loaded;uint8_t reason;};
+    const Session *session(unsigned row) const {
+        return row<count_?&history_[(head_+7u-row)&7u]:nullptr;
+    }
+    unsigned end_count(unsigned reason) const {return reasons_[reason];}
     void observe(uint32_t now,bool transmitting,uint32_t hz,Owner owner,uint8_t code,
-                 unsigned mv,uint32_t age,bool fresh) {
+                 unsigned mv,uint32_t age,bool fresh,uint8_t reason=0) {
         const bool usable=fresh && mv && age<2000u;
         if(!transmitting) {
+            if(active_)record_end(now,usable?mv:0,owner_==Owner::Aprs?uint8_t(fault_!=SupplyFault::None):reason);
             active_=false;
             idle_valid_=usable;
             if(usable){idle_mv_=uint16_t(mv);idle_stamp_=now-age;}
@@ -79,6 +85,15 @@ public:
     bool sag_valid() const {return before_ && samples_;}
     int sag() const {return int(before_)-int(minimum_);}
 private:
+    __attribute__((noinline)) void record_end(uint32_t now,unsigned mv,uint8_t reason) {
+        history_[head_]={now-started_,before_,uint16_t(mv),minimum_,reason};
+        head_=(head_+1u)&7u;
+        if(count_<8u)++count_;
+        if(reasons_[reason]!=65535u)++reasons_[reason];
+    }
+    Session history_[8]{};
+    uint16_t reasons_[6]{};
+    uint8_t head_=0,count_=0;
     uint32_t frequency_=0,started_=0,idle_stamp_=0,sample_stamp_=0;
     uint16_t idle_mv_=0,before_=0,minimum_=0,maximum_=0,samples_=0;
     uint8_t code_=0;

@@ -25,6 +25,16 @@ SECTIONS {
         *(.text._ZN5rt9505voice10BoardUhfTx10start_tailEv)
         . = ORIGIN(HEADER) + 0x7E0;
         KEEP(*(.boot_model_sig))
+        /* Existing application header pages after both model signatures. */
+        *(.text._ZN5rt9505voice10BoardUhfTx14finish_releaseEv)
+        *(.text._ZN5rt9505voice10BoardUhfTx15configure_voiceERKNS0_11UhfTxValuesE)
+        *(.text._ZN5rt9505voice10BoardUhfTx4readEhRt)
+        *(.text._ZN5rt9505voice10BoardUhfTx14verify_crystalERh)
+        *(.text._ZN5rt9505voice10BoardUhfTx12poll_releaseEmb)
+        *(.text._ZN5rt9505voice13BoardReceiver11mute_for_txEh)
+        *(.text.*draw_tx_history*) *(.text.*TxSupplyTrace*record_end*)
+        *(.text._ZN5rt9505voice10BoardUhfTx10restore_rxEv)
+        *(.text._ZNK5rt9505voice10BoardUhfTx9tx_valuesEtRNS0_11UhfTxValuesE)
         . = ALIGN(4);
     } > HEADER
     .text : {
