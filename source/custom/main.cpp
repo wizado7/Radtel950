@@ -326,8 +326,10 @@ extern "C" int main(void) {
         if(!aprs_listen)packet_rx.stop();
         // Release ADC1 before the APRS capture below may start in this same loop.
         mcu_temperature.poll(page==Page::PowerStatus && app.power_status_page()==2 &&
-            !aprs_listen && !ptt_down && !packet_tx.active() && !switch_off,now);
-        input.power.mcu_degrees=mcu_temperature.reading(now);
+            !aprs_listen && !ptt_down && !packet_tx.active() && !switch_off,now,app.take_mcu_sample_request());
+        const int mcu_degrees=mcu_temperature.reading();
+        ui_dirty|=input.power.mcu_degrees!=mcu_degrees;
+        input.power.mcu_degrees=mcu_degrees;
         const bool vox_session=held_ptt_source==voice::VoxSource &&
             (ptt.state()==voice::Ptt::State::Preparing || ptt.state()==voice::Ptt::State::Transmitting);
         const auto vox_frequency=config.vfo[config.active].tx_hz;
@@ -683,7 +685,7 @@ extern "C" int main(void) {
                     const auto tone=rx_profile.heard_tone(app.reverse_active(rx_slot));
                     if(hz)voice_rx.tune_profile(hz,tone,tone_level(tone),now,rx_profile.narrow,rx_profile.squelch);
                     else voice_rx.standby();
-                });
+                },voice_rx.tone_acquiring());
             bool tone_scan_fault=false;
             if(tone_search) {
                 const auto tone=app.tone_candidate();
@@ -721,9 +723,8 @@ extern "C" int main(void) {
                 } else voice_rx.set_profile({},0,now,true,3);
             }
             using Decoder=voice::BoardReceiver::Decoder;
-            const bool can_doze=app.power_save() && page==Page::Radio &&
-                (voice_target || background) && config.watch_mode==RT_WATCH_SINGLE && !monitor && !ptt_down &&
-                !rf_session && !transmitting && (low_power || !app.vox_on());
+            const bool can_doze=low_power && (page==Page::Radio || page==Page::PowerStatus) && voice_target &&
+                !monitor && !ptt_down && !rf_session && !transmitting;
             if(rx_activity!=app.last_activity()) {
                 rx_activity=app.last_activity();
                 voice_rx.idle_activity(now);
@@ -861,7 +862,7 @@ extern "C" int main(void) {
         display_awake=draw_ready;
 #ifdef RT950_MAIN_TX
         using Load=WorkloadTime;
-        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && !spectrum_open && !frequency_copy_open && input.voice.ready;
+        const bool voice_listening=voice_enabled && !weather_open && !tx_owns_radio && !aprs_listen && !tone_search && !spectrum_open && !frequency_copy_open && input.voice.ready && !voice_rx.sleeping();
         const bool watching=voice_listening && !monitor && !scan_has_target && config.watch_mode!=RT_WATCH_SINGLE;
         input.power.workload.observe(now,
             (voice_listening && !watching && !scan_has_target?1u<<Load::SingleRx:0u) |
@@ -873,7 +874,7 @@ extern "C" int main(void) {
         ui_dirty|=previous_rx!=input.voice.receiving || last_tx!=transmitting;
         last_tx=transmitting;
         const bool redraw=ui_dirty || animating;
-        const uint32_t draw_interval=redraw?40u:app.low_power() || (app.page()==Page::Radio &&
+        const uint32_t draw_interval=redraw?40u:app.low_power() || app.page()==Page::PowerStatus || (app.page()==Page::Radio &&
             !input.voice.receiving && !transmitting)?1000u:200u;
 #ifdef RT950_MAIN_TX
         const unsigned clock_reasons=

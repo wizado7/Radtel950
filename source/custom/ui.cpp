@@ -630,7 +630,7 @@ void ui_draw(Application &a,const InputStatus &input,uint32_t now) {
   static constexpr const char *titles[]={"Settings","Radio","Channels & zones","GPS settings","APRS settings","Bluetooth settings","Display & power","System","Diagnostics","APRS RX Setup","Beacon Setup","Repeater","User keys","APRS routing"};
   static_assert(sizeof(titles)/sizeof(titles[0])==unsigned(MenuGroup::Count));
   copy(line,titles[unsigned(a.menu_group())]);
- } else if(a.page()==Page::PowerStatus)copy(line,"TX DISABLED ON THIS PAGE");
+ } else if(a.page()==Page::PowerStatus)copy(line,a.power_status_page()==2?"OK: MEASURE MCU":"TX DISABLED ON THIS PAGE");
  else if(a.page()==Page::FmProbe && a.sw_am()) {
   const auto band=a.broadcast_band();
   copy(line,band==fm::Band::Longwave?"Longwave AM":

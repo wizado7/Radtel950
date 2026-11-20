@@ -1617,6 +1617,15 @@ extern "C" uint32_t voice_board_rx_tone_probe(uint32_t packed) {
   rx.poll(now,false,false,packet);
   if(rx.status().receiving!=(now==206))return 3;
  }
+ if(packed&0x40000u) {
+  for(uint32_t now=221;now<=296;now+=15) {
+   rx.poll(now,false);
+   if(rx.status().receiving!=(now<281) || rx.audio_active()!=rx.status().receiving)return 5;
+  }
+  rx.low_power(true,300);
+  if(rx.idle_sleep(300,true) || rx.idle_sleep(10400,true) || rx.idle_sleep(10700,true))return 6;
+  return 0;
+ }
  rx.set_profile(tone,47,207);
  rx.tune(446093750,208);
  return rx.status().receiving || rx.carrier()?4:0;
@@ -1651,6 +1660,7 @@ extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
   return rx.audio_active()?22:0;
  }
  if(mode==5) {
+  rx.low_power(true,131);
   if(!rx.carrier() || rx.carrier_at_squelch() || rx.idle_sleep(131,true))return 23;
   if(rx.idle_sleep(10131,true,true))return 24;
   rx.stop(); // Releasing and retuning for the borrowed APRS window.
@@ -1660,10 +1670,24 @@ extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
   rx.poll(11362,false);
   return rx.idle_sleep(11363,true)?0:26;
  }
- if(mode==6 || mode==7) {
-  const bool saver=mode==7;
-  rx.low_power(saver,131);rx.idle_sleep(131,true);
-  const uint32_t at=10131u+(saver?60000u:1800000u);
+ if(mode==6) {
+  // Normal listening stays on across both previous sleep thresholds.
+  if(rx.idle_sleep(131,true) || rx.idle_sleep(10131,true) ||
+     rx.idle_sleep(1810131,true) || !rx.has_sample())return 31;
+  rx.poll(1810131,false);
+  if(!rx.status().receiving || !rx.audio_active())return 34;
+  rx.poll(1810146,false);
+  if(rx.status().receiving || rx.audio_active())return 35;
+  // Entering and leaving the explicit profile wakes a sleeping receiver.
+  rx.low_power(true,1810147);rx.idle_sleep(1810147,true);
+  if(!rx.idle_sleep(1820147,true))return 32;
+  rx.low_power(false,1820148);
+  if(rx.sleeping() || rx.idle_sleep(1820148,true))return 33;
+  return 0;
+ }
+ if(mode==7) {
+  rx.low_power(true,131);rx.idle_sleep(131,true);
+  const uint32_t at=70131u;
   if(!rx.idle_sleep(at,true) || rx.next_poll(at)!=at+800u)return 27;
   if(!rx.idle_sleep(at+799u,true) || rx.idle_sleep(at+800u,true))return 28;
   rx.poll(at+802u,false);rx.poll(at+832u,false);
@@ -1673,6 +1697,7 @@ extern "C" uint32_t voice_board_idle_decode_probe(unsigned mode) {
   return 0;
  }
  if(mode==0 || mode==3) {
+  rx.low_power(true,131);
   const auto routed=[](){return !(GPIOE->ODR&0x3000u) && (GPIOB->ODR&1u);};
   const auto off=[](){return (GPIOE->ODR&0x3000u)==0x3000u && (GPIOB->ODR&1u);};
   if(!routed() || rx.idle_sleep(131,true) || rx.idle_sleep(10130,true))return 3;
@@ -2332,7 +2357,8 @@ extern "C" int power_diagnostics_tests() {
  CHECK(!app.voice_tx_page() && !app.voice_tx_page(true));
  app.tick(100000);CHECK(app.page()==Page::PowerStatus);
  app.key(Key::Down);CHECK(app.power_status_page()==1);
- app.key(Key::Down);CHECK(app.power_status_page()==2);
+ app.key(Key::Down);CHECK(app.power_status_page()==2 && !app.take_mcu_sample_request());
+ app.key(Key::Ok);CHECK(app.take_mcu_sample_request() && !app.take_mcu_sample_request());
  app.key(Key::Down);CHECK(app.power_status_page()==3);
  app.key(Key::Down);CHECK(app.power_status_page()==0);
  app.key(Key::Up);CHECK(app.power_status_page()==3);
@@ -2463,11 +2489,13 @@ extern "C" int mcu_diagnostics_probe() {
  McuTemperature sensor;
  ADC1->CR2=ADC_CR2_ADON|ADC_CR2_DMA;
  CRM->APB2EN=CRM_APB2EN_ADC1EN|CRM_APB2EN_ADC2EN;
- sensor.poll(true,0);
+ sensor.poll(true,0,true);
  CHECK(ADC1->CR2==(ADC_CR2_ADON|ADC_CR2_DMA));
  ADC1->CR2=0;ADC1->SMPR1=2;ADC1->SQR3=2;
  CRM->APB2EN=CRM_APB2EN_ADC2EN;ADC2->CR2=0x123;
- sensor.poll(false,1);sensor.poll(true,2);sensor.poll(true,3);
+ sensor.poll(false,1);sensor.poll(true,2);
+ CHECK(!ADC1->CR2 && CRM->APB2EN==CRM_APB2EN_ADC2EN);
+ sensor.poll(true,2,true);sensor.poll(true,3);
  CHECK(ADC1->CR2&ADC_CR2_RSTCAL);
  ADC1->CR2&=~ADC_CR2_RSTCAL;sensor.poll(true,4);
  CHECK(ADC1->CR2&ADC_CR2_CAL);
@@ -2476,13 +2504,15 @@ extern "C" int mcu_diagnostics_probe() {
  ADC1->DR=1536;ADC1->SR=ADC_SR_EOC;sensor.poll(true,6);
  CHECK(ADC1->SQR3==17);
  ADC1->DR=1440;ADC1->SR=ADC_SR_EOC;sensor.poll(true,7);
- CHECK(sensor.reading(7)==25 && sensor.reading(6007)==McuTemperature::Unavailable);
+ CHECK(sensor.reading()==25);
+ for(unsigned now=20;now<10000;now+=250)sensor.poll(true,now);
+ CHECK(sensor.reading()==25);
  CHECK(ADC1->CR2==0 && ADC1->SMPR1==2 && ADC1->SQR3==2 &&
        ADC2->CR2==0x123 && CRM->APB2EN==CRM_APB2EN_ADC2EN);
- sensor.poll(true,2002);sensor.poll(false,2003);
+ sensor.poll(true,10002,true);sensor.poll(false,10003);
  CHECK(ADC1->CR2==0 && CRM->APB2EN==CRM_APB2EN_ADC2EN);
- sensor.poll(true,2004);sensor.poll(true,2024);
- CHECK(ADC1->CR2==0 && sensor.reading(2024)==McuTemperature::Unavailable);
+ sensor.poll(true,10004,true);sensor.poll(true,10024);
+ CHECK(ADC1->CR2==0 && sensor.reading()==McuTemperature::Unavailable);
  using Result=voice::MicAdc::Result;
  voice::MicAdc mic;
  uint16_t sample=0;
@@ -4353,6 +4383,16 @@ extern "C" int gps_power_tests() {
 extern "C" int idle_policy_tests() {
  CHECK(maintenance_at(17,true)==32 && maintenance_at(19,true)==32 && maintenance_at(32,true)==32);
  CHECK(maintenance_at(19,false)==19 && maintenance_at(0xfffffff1u,true)==0);
+ rt_config config{};
+ rt_defaults(&config);
+ config.vfo[0].rx_hz=145500000u;config.vfo[1].rx_hz=145525000u;
+ VoiceReceiver radio;voice::Watch watch;
+ auto select=[&](uint8_t,uint32_t hz){radio.tune(hz,0);};
+ watch.poll(radio,config,0,true,false,select);
+ watch.poll(radio,config,319,true,false,select,true);
+ CHECK(watch.slot()==0 && !watch.receiving());
+ watch.poll(radio,config,320,true,false,select,true);
+ CHECK(watch.slot()==1 && !watch.receiving());
  ClockGovernor governor;
  CHECK(!governor.low(999,0) && governor.low(1000,0));
  constexpr uint32_t wrap=0xffffffedu;

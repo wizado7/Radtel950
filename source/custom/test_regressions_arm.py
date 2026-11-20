@@ -1297,6 +1297,13 @@ if a.stock:
    assert call_tx(u,symbols['voice_board_rx_tone_probe'],tone,budget=6000000)==0,tone
    assert any(chip==0 and reg==0x51 and value for chip,reg,value,_ in transfers)
   print('ARM board CTCSS/DCS RX: wrong tone stays muted, three matches open audio, retune clears carrier PASS')
+  for tone,match,wrong in ((0x101,0x0400,0x0800),(0x201,0x4000,0x8000),(0x26a,0x8000,0x4000)):
+   transfers.clear()
+   tail=(wrong,170,match,170)+(wrong,170)*3+(0,55)
+   words=[iter((0xa800,)+(wrong,170)*3+(match,170)*3+tail),iter(())]
+   assert call_tx(u,symbols['voice_board_rx_tone_probe'],tone|0x40000,budget=6000000)==0,tone
+   assert not any((reg,value)==(0x37,0x1d00) for chip,reg,value,_ in transfers if chip==0)
+  print('ARM tone RX continuity: CTCSS 67 Hz, DCS N/I, three mismatches close, transient flag retained and quiet tone RX never sleeps PASS')
   transfers.clear()
   words=[iter((0xa800,)+(0x0800,170)*3+(0x0400,170)*3),iter(())]
   assert call_tx(u,symbols['voice_board_rx_tone_probe'],0x10109,budget=6000000)==0
@@ -1316,10 +1323,11 @@ if a.stock:
   assert sum(1 for chip,reg,value,_ in transfers if (chip,reg,value)==(0,0x37,0x1d00))==2
   for mode in (6,7):
    transfers.clear()
-   words=[iter((0xa800,0,55,0,55)),iter(())]
+   samples=(0xa800,0,55,0,170,0,55) if mode==6 else (0xa800,0,55,0,55)
+   words=[iter(samples),iter(())]
    result=call_tx(u,symbols['voice_board_idle_decode_probe'],mode,budget=6000000)
    assert result==0,(mode,result)
-  print('ARM RX long idle: 30 minute normal or 1 minute Low Power transition to 180/800, with immediate wake on input PASS')
+  print('ARM RX onset: normal RX stays awake, Low Power 180/800 after one minute, immediate wake on input or profile exit PASS')
   print('ARM active BK4829 doze: settled quiet RX, timed 300/300 phases, external RX GPIO isolation and restore, PTT and RF/LDO ordering PASS')
   transfers.clear()
   words=[iter((0xa800,0,170,0x07fe,1,0x0800,0x0a00,0x0ffe)),iter(())]
@@ -1573,7 +1581,7 @@ if a.stock:
  print('ARM APRS ADC1: TIM4/CH4, keypad TIM2 independent, DMA1/CH1 to AX.25, overrun, calibration timeout and clock gating PASS')
  result=call_tx(u,symbols['mcu_diagnostics_probe'],budget=1000000)
  assert result==0,f'MCU diagnostics failed at C++ line {result}'
- print('ARM MCU diagnostics and VOX ADC1: temperature trend, PA0, busy ownership, internal channels, restoration, cancellation and timeout PASS')
+ print('ARM MCU diagnostics and VOX ADC1: manual temperature snapshot, no periodic acquisition, PA0, ownership, restore, cancel and timeout PASS')
 
  u.mem_map(0x40013000,0x1000)
  result=call_tx(u,symbols['aprs_ble_probe'],budget=1000000)

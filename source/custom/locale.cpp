@@ -134,6 +134,7 @@ constexpr Text catalog[]={
     {"VOICE TX SAMPLES","ОТСЧЁТЫ ПРИ ГОЛОСОВОМ TX"},
     {"Last PA DAC","Посл. DAC"},
     {"MCU temp","Темп. MCU"},
+    {"OK: MEASURE MCU","OK: ЗАМЕР MCU"},
     {"PA temp","Темп. PA"},
     {"PA current","Ток PA"},
     {"NOT READ","НЕ ЧИТАЕТСЯ"},

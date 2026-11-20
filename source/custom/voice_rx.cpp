@@ -119,7 +119,7 @@ void BoardReceiver::wake_receiver(uint32_t now) {
 void BoardReceiver::idle_activity(uint32_t now) {
     wake_receiver(now);
     sleep_at_=now+10000u;
-    recent_until_=sleep_at_+(low_power_?60000u:1800000u);
+    recent_until_=sleep_at_+60000u;
 }
 
 uint32_t BoardReceiver::next_poll(uint32_t now) const {
@@ -136,7 +136,7 @@ bool BoardReceiver::idle_sleep(uint32_t now,bool allowed,bool packet_window) {
         wake_receiver(now);
         return false;
     }
-    if(!allowed || !status_.ready || !status_.frequency || !sql_ ||
+    if(!low_power_ || !allowed || !status_.ready || !status_.frequency || !sql_ || tone_.kind!=ToneKind::Off ||
        status_.fault || sql_open_ || status_.receiving) {
         sleep_eligible_=false;
         wake_receiver(now);
@@ -373,10 +373,18 @@ void BoardReceiver::poll(uint32_t now,bool ptt,bool monitor,bool packet_audio,We
             uhf_tx_frequency(status_.frequency));
         const auto threshold=calibrated?sql_calibration_->thresholds(status_.frequency,sql_):fallback_sql(sql_);
         sql_open_=sql_==0 || status_.rssi>=(sql_open_?threshold.close:threshold.open);
-        if(sql_open_ && tone_ready_ && rx_tone_detected(tone_,status_.status)) {
-            if(tone_matches_<RxToneSamples)++tone_matches_;
+        const bool signal=sql_==0?carrier_:sql_open_;
+        if(!signal || (tone_.kind!=ToneKind::Off && !tone_ready_)) {
+            tone_matches_=0;
+            status_.receiving=false;
+        } else if(tone_.kind==ToneKind::Off)status_.receiving=true;
+        else if(rx_tone_detected(tone_,status_.status)) {
+            if(status_.receiving)tone_matches_=RxToneSamples;
+            else status_.receiving=++tone_matches_==RxToneSamples;
+        } else if(status_.receiving) {
+            // Brief detector dropouts must not mute an already qualified carrier.
+            status_.receiving=--tone_matches_!=0;
         } else tone_matches_=0;
-        status_.receiving=(sql_==0?carrier_:sql_open_) && (tone_.kind==ToneKind::Off || tone_matches_>=RxToneSamples);
 #else
         status_.receiving=carrier_;
 #endif

@@ -59,6 +59,9 @@ public:
     }
     uint32_t next_poll(uint32_t now) const;
     bool sleeping() const {return asleep_;}
+    bool tone_acquiring() const {
+        return status_.sampled && tone_.kind!=ToneKind::Off && tone_ready_ && carrier_at_squelch();
+    }
     enum class Decoder : uint8_t {Off,Dtmf,Same};
     char decode(Decoder mode,uint32_t now,char (&event)[4]);
 #endif

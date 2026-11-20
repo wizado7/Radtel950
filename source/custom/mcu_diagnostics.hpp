@@ -13,18 +13,15 @@ public:
         const int degrees=25+(millivolts-1280)*100/426;
         return degrees>=-40 && degrees<=105?degrees:Unavailable;
     }
-    int reading(uint32_t now) const {
-        return uint32_t(now-sampled_)<6000u?degrees_:Unavailable;
-    }
-    void poll(bool allowed,uint32_t now) {
+    int reading() const {return degrees_;}
+    void poll(bool allowed,uint32_t now,bool requested=false) {
         if(!allowed) {
             if(state_!=State::Idle)release();
-            attempted_=false;
             return;
         }
         const uint32_t elapsed=now-since_;
         if(state_==State::Idle) {
-            if(!attempted_ || uint32_t(now-attempted_at_)>=2000u)acquire(now);
+            if(requested){degrees_=Unavailable;acquire(now);}
             return;
         }
         if(elapsed>=20u) {
@@ -51,7 +48,6 @@ public:
         case State::Reference:
             if(ADC1->SR&ADC_SR_EOC) {
                 degrees_=estimate(temperature_,ADC1->DR);
-                sampled_=now;
                 release();
             }
             break;
@@ -64,7 +60,6 @@ private:
     static constexpr uint32_t Internal=1u<<23;
     void advance(State state,uint32_t now){state_=state;since_=now;}
     void acquire(uint32_t now) {
-        attempted_=true;attempted_at_=now;
         had_clock_=(CRM->APB2EN&CRM_APB2EN_ADC1EN)!=0;
         CRM->APB2EN|=CRM_APB2EN_ADC1EN;
         if(ADC1->CR2) {
@@ -91,8 +86,8 @@ private:
         state_=State::Idle;
     }
     State state_=State::Idle;
-    bool attempted_=false,had_clock_=false;
-    uint32_t since_=0,attempted_at_=0,sampled_=0,ctrl1_=0,sample_times_=0,sequence_len_=0,sequence_=0;
+    bool had_clock_=false;
+    uint32_t since_=0,ctrl1_=0,sample_times_=0,sequence_len_=0,sequence_=0;
     uint16_t temperature_=0;
     int degrees_=Unavailable;
 };

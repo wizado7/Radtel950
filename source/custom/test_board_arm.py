@@ -464,6 +464,13 @@ print('ARM idle input: timer compare 1/5 ms, return to 1 ms and encoder 2/25 ms 
 
 # ADC calibration/EOC are advanced explicitly by this peripheral model.
 m=Machine(raw)
+def adc2_clocked(machine):
+    return bool(read32(machine,crm+0x18)&0x400)
+def guard_adc_clock(machine):
+    def access(u,kind,address,size,value,data):
+        assert adc2_clocked(machine),hex(address)
+    machine.u.hook_add(UC_HOOK_MEM_READ|UC_HOOK_MEM_WRITE,access,begin=0x40012800,end=0x4001284f)
+guard_adc_clock(m)
 def poll_battery(now):
     m.u.reg_write(UC_ARM_REG_R0,now);m.function('board_battery_poll')
 def adc(off,value):m.u.mem_write(0x40012800+off,struct.pack('<I',value))
@@ -491,27 +498,40 @@ if stock:
     oracle=Machine(stock);oracle.u.mem_write(0x40012800,struct.pack('<I',2));oracle.u.mem_write(0x4001284c,struct.pack('<I',0xa00))
     assert oracle.call(0x08016988)==160
     assert struct.unpack('<I',oracle.u.mem_read(0x40012834,4))[0]&31==1
-poll_battery(1005);adc(0,0);poll_battery(1025)
+assert not adc2_clocked(m) and reg(8)&1==0 and m.function('board_battery_idle')
+poll_battery(1004);assert not adc2_clocked(m)
+poll_battery(1005);assert adc2_clocked(m) and reg(8)&1 and m.function('board_battery_mv')==7736
+poll_battery(1006);assert reg(8)&8
+adc(8,reg(8)&~8);poll_battery(1007);assert reg(8)&4
+adc(8,reg(8)&~4);poll_battery(1008)
+adc(0,0);poll_battery(1028)
 assert m.function('board_battery_mv')==0 and m.function('board_battery_errors')==1
-assert m.function('board_battery_sample_age')==0xffffffff
+assert not adc2_clocked(m) and m.function('board_battery_sample_age')==0xffffffff
 assert m.function('board_battery_sample_fresh')==0
-poll_battery(2025);poll_battery(2026);poll_battery(2046)
-assert m.function('board_battery_errors')==2
+poll_battery(2028);poll_battery(2029);poll_battery(2049)
+assert m.function('board_battery_errors')==2 and not adc2_clocked(m)
 print('ARM battery: ADC2 PA1 sequence, dummy sample, OEM raw oracle, 12-bit 7.736V scaling, 2s freshness, EOC/calibration timeouts PASS')
 
-m=Machine(raw)
+m=Machine(raw);guard_adc_clock(m)
 m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_init')
 poll_battery(1);adc(8,reg(8)&~8);poll_battery(2);adc(8,reg(8)&~4);poll_battery(3)
 adc(0,2);poll_battery(4);adc(0,2);adc(0x4c,0xa00);poll_battery(5)
+assert not adc2_clocked(m)
+m.u.mem_write(crm+0x18,struct.pack('<I',read32(m,crm+0x18)|0x200))
 m.u.reg_write(UC_ARM_REG_R0,1);m.function('board_battery_fast')
-adc(0,2);poll_battery(24);assert reg(0)&2
-poll_battery(25);assert not reg(0)&2
-adc(0,2);poll_battery(26);adc(0,2);adc(0x4c,188<<4);poll_battery(27)
-assert m.function('board_battery_raw')==188
+poll_battery(6);assert adc2_clocked(m) and reg(8)&1
+poll_battery(7);adc(8,reg(8)&~8);poll_battery(8);adc(8,reg(8)&~4);poll_battery(9)
+adc(0,2);poll_battery(10);adc(0,2);adc(0x4c,188<<4);poll_battery(11)
+assert m.function('board_battery_raw')==188 and adc2_clocked(m)
+adc(0,2);poll_battery(30);assert reg(0)&2
+poll_battery(31);assert not reg(0)&2
+adc(0,2);poll_battery(32);adc(0,2);adc(0x4c,188<<4);poll_battery(33)
 m.u.reg_write(UC_ARM_REG_R0,0);m.function('board_battery_fast')
-adc(0,2);poll_battery(1026);assert reg(0)&2
-poll_battery(1027);assert not reg(0)&2
-print('ARM battery schedule: 20ms TX conversions, high sample and return to 1s standby PASS')
+m.u.reg_write(UC_ARM_REG_R0,33);assert m.function('board_battery_deadline')==34
+poll_battery(34);assert not adc2_clocked(m) and read32(m,crm+0x18)&0x200
+poll_battery(1032);assert not adc2_clocked(m)
+poll_battery(1033);assert adc2_clocked(m) and reg(8)&1
+print('ARM battery schedule: ADC2 gated at idle, immediate fast wake, 20ms TX cadence, ADC1 preserved and 1s standby PASS')
 
 
 m=Machine(raw)
@@ -1086,12 +1106,12 @@ menu_key('PowerStatus');menu_draw()
 assert '1/4 Battery readings' in menu_ui.texts and 'TX DISABLED ON THIS PAGE' in menu_ui.texts
 menu_key('Down');menu_draw();assert '2/4 Last TX supply' in menu_ui.texts and 'NO TX HISTORY' in menu_ui.texts
 menu_key('Down');menu_draw()
-assert '3/4 Available sensors' in menu_ui.texts and 'NO DATA' in menu_ui.texts and 'NOT VERIFIED' in menu_ui.texts
+assert all(s in menu_ui.texts for s in ('3/4 Available sensors','NO DATA','NOT VERIFIED','OK: MEASURE MCU'))
 menu_key('Down');menu_draw();assert '4/4 Activity time' in menu_ui.texts and 'GPS on s' in menu_ui.texts and 'Reset flags' in menu_ui.texts
 menu_key('Back');menu_key('LanguageSelect');menu_key('Down');menu_key('Ok');menu_key('PowerStatus');menu_draw()
 assert '1/4 Измерения питания' in menu_ui.texts
 menu_key('Down');menu_draw();assert '2/4 Питание при TX' in menu_ui.texts
-menu_key('Down');menu_draw();assert '3/4 Доступные датчики' in menu_ui.texts and 'НЕ ПОДТВ.' in menu_ui.texts
+menu_key('Down');menu_draw();assert all(s in menu_ui.texts for s in ('3/4 Доступные датчики','НЕ ПОДТВ.','OK: ЗАМЕР MCU'))
 menu_key('Down');menu_draw();assert '4/4 Время работы' in menu_ui.texts and 'Приём APRS, с' in menu_ui.texts
 print('ARM power diagnostics UI: four read-only pages, activity time, RU/EN and LCD bounds PASS')
 menu_key('MicGain');menu_draw()

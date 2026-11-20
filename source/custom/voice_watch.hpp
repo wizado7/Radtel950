@@ -18,7 +18,7 @@ public:
     }
 
     template<class Receiver,class Select>
-    void poll(Receiver &receiver,const rt_config &config,uint32_t now,bool enabled,bool ptt,Select select) {
+    void poll(Receiver &receiver,const rt_config &config,uint32_t now,bool enabled,bool ptt,Select select,bool acquiring_tone=false) {
         if(!enabled || config.active>2) {
             if(running_)receiver.stop();
             running_=false;locked_=false;watch_={};return;
@@ -28,6 +28,12 @@ public:
             config.vfo[slot_].rx_hz==frequency_;
         if(!same_config)watch_={};
         const bool open=same_config && frequency_ && !ptt && receiver.squelch_open(now);
+        // Give a carrier with a configured tone a bounded acquisition window.
+        // Only an actual match may start the configured Watch hold.
+        if(!open && same_config && !ptt && acquiring_tone && config.watch_mode!=RT_WATCH_SINGLE &&
+           now-watch_.changed<320u) {
+            locked_=false;return;
+        }
         const uint8_t slot=rt_watch_tick(&watch_,&config,now,open,ptt);
         const uint32_t frequency=config.vfo[slot].rx_hz;
         if(!running_ || slot!=slot_ || frequency!=frequency_) {

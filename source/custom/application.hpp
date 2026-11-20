@@ -101,6 +101,11 @@ public:
     uint16_t vox_delay() const {return voice::VoxDelays[vox_delay_];}
     MicGain mic_gain_draft() const {return mic_gain_draft_;}
     unsigned power_status_page() const {return power_status_page_;}
+    bool take_mcu_sample_request() {
+        const bool requested=mcu_sample_request_;
+        mcu_sample_request_=false;
+        return requested;
+    }
     TxPower band_power() const {return band_power_;}
     unsigned band_channel() const {return band_channel_;}
     unsigned band_draft_channel() const {return editor_digits_?editor_value_:band_channel_;}
@@ -377,6 +382,7 @@ private:
     MeasuredPower measured_power_{};
     TxPower band_power_=TxPower::Pmr500mW;
     uint8_t band_channel_=1,power_status_page_=0;
+    bool mcu_sample_request_=false;
     uint16_t power_battery_mv_=0;
     uint32_t power_hz_=0;
     TxPower power_kind_=TxPower::Low;
