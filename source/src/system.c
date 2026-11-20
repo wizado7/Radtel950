@@ -72,7 +72,13 @@ void TIM3_IRQHandler(void)
     extern volatile uint32_t custom_heartbeat;
     extern volatile uint8_t custom_watchdog_armed;
     const uint32_t now=get_tick();
-    if(custom_watchdog_armed && (uint32_t)(now-custom_heartbeat)>=500u)return;
+    if(custom_watchdog_armed && (uint32_t)(now-custom_heartbeat)>=500u) {
+        extern void board_rf_quiet(void);
+        __disable_irq();
+        board_rf_quiet();
+        // The stalled foreground must not regain control before the reset.
+        for(;;)__asm volatile("nop");
+    }
 
     extern void encoder_tick(void);
     static uint32_t encoder_last;

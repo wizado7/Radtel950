@@ -39,6 +39,7 @@
 #include "debug_uart.h"
 #ifdef RT950_CUSTOM
 #include "at32f403a.h"
+extern void board_rf_quiet(void);
 uint8_t custom_reset_flags;
 #endif
 
@@ -302,6 +303,9 @@ void Reset_Handler(void)
     while (!(*(volatile uint32_t *)0x40004C00 & (1UL<<6))) ; /* wait TC */
 #endif
 
+#ifdef RT950_CUSTOM
+    board_rf_quiet();
+#endif
     /* Copy initialized data from flash to SRAM */
     src = &_sidata;
     dst = &_sdata;
@@ -359,11 +363,27 @@ void Reset_Handler(void)
  *  Spins forever; attach a debugger to identify the fault source.
  * ======================================================================== */
 
+#ifdef RT950_CUSTOM
+__attribute__((noreturn)) static void fault_hold(void)
+{
+    __asm volatile ("cpsid i" ::: "memory");
+    board_rf_quiet();
+    for (;;) {
+        if (GPIOE->IDR & GPIO_PIN_0) GPIOA->CLR = GPIO_PIN_11;
+        *(volatile uint32_t *)0x40003000UL = 0xAAAAu;
+    }
+}
+#endif
+
 void Default_Handler(void)
 {
+#ifdef RT950_CUSTOM
+    fault_hold();
+#else
     while (1) {
         __asm volatile ("bkpt #0");
     }
+#endif
 }
 
 /* ========================================================================
@@ -390,6 +410,10 @@ void HardFault_Handler(void)
 
 void HardFault_Handler_C(const uint32_t *frame)
 {
+#ifdef RT950_CUSTOM
+    (void)frame;
+    fault_hold();
+#else
     /* Feed IWDG so we stay alive long enough to print diagnostics */
     *(volatile uint32_t *)0x40003000UL = 0x0000AAAAUL;
 
@@ -425,4 +449,5 @@ void HardFault_Handler_C(const uint32_t *frame)
         *(volatile uint32_t *)0x40003000UL = 0x0000AAAAUL;
         __asm volatile ("nop");
     }
+#endif
 }

@@ -86,7 +86,26 @@ class Machine:
         return self.u.reg_read(UC_ARM_REG_R0)
     def function(self,name):return self.call(symbols[name])
 
+def keyed_board(m):
+    m.u.mem_write(0x4002101c,struct.pack('<I',1<<29))
+    m.u.mem_write(0x40007400,struct.pack('<I',0x10001))
+    m.u.mem_write(0x4000741c,struct.pack('<I',180))
+    for port in (GPIO[0],GPIO[1],GPIO[4]):
+        m.u.mem_write(port,bytes([0x44])*8)
+
+def assert_rf_quiet(m):
+    assert not m.odr[GPIO[0]]&0x20
+    assert not m.odr[GPIO[1]]&0x103
+    assert m.odr[GPIO[4]]&0xf190==0x8100
+    assert struct.unpack('<I',m.u.mem_read(0x4000741c,4))[0]==0
+    assert struct.unpack('<I',m.u.mem_read(0x40007400,4))[0]==1
+    for port,pins in ((GPIO[0],(5,)),(GPIO[1],(0,1,8)),(GPIO[4],(4,7,8,12,13,14,15))):
+        for pin in pins:
+            config=struct.unpack('<I',m.u.mem_read(port+4*(pin//8),4))[0]
+            assert (config>>(4*(pin%8)))&15==2,(hex(port),pin,config)
+
 startup=Machine(raw)
+keyed_board(startup)
 startup.u.mem_write(0x40021024,struct.pack('<I',(1<<29)|(1<<28)|3))
 def stop_at_system_init(u,address,size,data):
     u.emu_stop()
@@ -96,6 +115,20 @@ assert startup.u.reg_read(UC_ARM_REG_PC)==symbols['SystemInit']
 assert bytes(startup.u.mem_read(symbols['custom_reset_flags'],1))==b'\x0c'
 assert struct.unpack('<I',startup.u.mem_read(0x40021024,4))[0]==((1<<24)|1)
 print('ARM reset telemetry: real Reset_Handler captures combined CRM flags before SystemInit PASS')
+assert_rf_quiet(startup)
+assert startup.feeds==0 and startup.odr[GPIO[0]]&0x800
+print('ARM startup RF guard: inherited active DAC and RF lines dropped before SystemInit PASS')
+
+for handler in ('HardFault_Handler','Default_Handler'):
+    fault=Machine(raw)
+    keyed_board(fault)
+    fault.cut=True
+    fault.function(handler)
+    assert fault.feeds==1 and fault.u.reg_read(UC_ARM_REG_PRIMASK)
+    assert fault.u.reg_read(UC_ARM_REG_PC)!=STOP
+    assert_rf_quiet(fault)
+print('ARM fault guard: real HardFault and default-vector entry cut PA and RF before watchdog feed PASS')
+
 
 # Model only the read-only ready and source-status signals of the clock tree.
 crm=0x40021000
@@ -302,11 +335,18 @@ for step in (1,5):
     m=WakeTimer(raw)
     m.u.mem_write(symbols['custom_idle_wake_ms'],bytes([step]))
     m.u.mem_write(symbols['custom_watchdog_armed'],b'\x01')
-    for t in range(step,601,step):
+    keyed_board(m)
+    for t in range(step,500,step):
         m.alarm(2*t)
         assert read32(m,timer+0x34)==2*(t+step)
+        assert m.u.reg_read(UC_ARM_REG_PC)==STOP
+    assert read32(m,0x4000741c)==180
+    m.at(1000,2)
+    m.call(symbols['TIM3_IRQHandler'],budget=1500)
     assert m.feeds==499//step,m.feeds
-print('ARM watchdog: foreground stall stops compare-IRQ feeding at 500 ms in both modes PASS')
+    assert m.u.reg_read(UC_ARM_REG_PC)!=STOP and m.u.reg_read(UC_ARM_REG_PRIMASK)
+    assert_rf_quiet(m)
+print('ARM watchdog: foreground stall cuts PA and RF at 500 ms before withholding watchdog feed PASS')
 
 m=WakeTimer(raw)
 m.at(0xfffe)
