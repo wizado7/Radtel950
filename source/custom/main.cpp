@@ -45,6 +45,7 @@ static constexpr bool KeypadEdgeWake=false;
 static uint8_t held_ptt_source,enabled_ptt_inputs;
 static uint16_t session_power_mv;
 static bool tail_hold,vox_holding;
+static voice::PttInputs ptt_inputs;
 #endif
 extern "C" int main(void) {
 #ifdef RT950_MAIN_TX
@@ -88,13 +89,16 @@ extern "C" int main(void) {
     voice::CbPaCalibration cb;
     const bool cb_valid=factory_valid && voice::read_board_cb_calibration(cb);
 #endif
+    static voice::Ptt ptt;
     voice::BoardUhfTx tx_board(voice_rx,factory,voice::factory_power_selector(TxPower::Low),[] {
 #ifdef RT950_MAIN_TX
         if(board_power_switch_off())return false;
         if(held_ptt_source==voice::VoxSource)return vox_holding && !board_ptt_mask();
-        if(tail_hold)return voice::tail_inputs_released(board_ptt_mask(),enabled_ptt_inputs);
-        return voice::ptt_source(board_ptt_mask()&enabled_ptt_inputs)==held_ptt_source &&
-            held_ptt_source;
+        // Before key-up, keep a live interlock for RF setup and the PA ramp.
+        // Once keyed, poll() and this guard must agree on the sampled edge.
+        if(ptt.state()==voice::Ptt::State::Transmitting || ptt.state()==voice::Ptt::State::Ending)
+            return ptt_inputs.holds(enabled_ptt_inputs,held_ptt_source,tail_hold);
+        return held_ptt_source && voice::ptt_source(board_ptt_mask()&enabled_ptt_inputs)==held_ptt_source;
 #else
         return (board_ptt_mask()&1u) && !board_power_switch_off();
 #endif
@@ -107,7 +111,6 @@ extern "C" int main(void) {
 #endif
     );
     voice::UhfTransmitter<voice::BoardUhfTx> transmitter(tx_board);
-    voice::Ptt ptt;
 #ifdef RT950_MAIN_TX
     voice::BoardUhfTx packet_board(voice_rx,factory,voice::factory_power_selector(TxPower::Low),[] {
         return !board_ptt_mask() && !board_power_switch_off();
@@ -226,7 +229,11 @@ extern "C" int main(void) {
             if(dir) {if(dir>0)++input.cw;else ++input.ccw;if(!wake_encoder){app.encoder(dir);ui_dirty=true;}wake_encoder=false;}
         }
         const uint8_t previous_ptt=input.ptt_mask;
+#ifdef RT950_MAIN_TX
+        input.ptt_mask=ptt_inputs.sample(board_ptt_mask());
+#else
         input.ptt_mask=board_ptt_mask();
+#endif
         if(!app.side_ptt_enabled())input.ptt_mask&=3u;
         if(previous_ptt!=input.ptt_mask)ui_dirty=true;
         if(input.ptt_mask) {
@@ -308,7 +315,7 @@ extern "C" int main(void) {
         ble_export.enable(config.ble_on && !switch_off,now);
         const bool export_allowed=config.ble_on && config.ble_export && !switch_off;
         if(!raw_ptt || !custom_clock_low || !export_allowed)ble_export.poll(export_allowed,now);
-        const bool ptt_down=board_ptt_mask()!=0;
+        const bool ptt_down=ptt_inputs.mask()!=0;
         const bool power_sample_ok=board_battery_sample_fresh(now);
         const uint8_t battery_raw=board_battery_raw();
         const auto battery_age=board_battery_sample_age(now);

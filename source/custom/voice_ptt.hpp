@@ -7,6 +7,23 @@ constexpr uint8_t ptt_source(uint8_t mask) {return mask&1u?1u:mask&4u?4u:mask&2u
 constexpr uint8_t ptt_slot(uint8_t source,uint8_t active) {return source==4u?2u:source==2u?1u:active;}
 constexpr bool tail_inputs_released(uint8_t mask,uint8_t enabled) {return (mask&enabled)==0;}
 
+class PttInputs {
+public:
+    uint8_t sample(uint8_t raw) {
+        // Press immediately; release only after two consecutive open samples.
+        mask_=raw|(mask_&previous_raw_);
+        previous_raw_=raw;
+        return mask_;
+    }
+    uint8_t mask() const {return mask_;}
+    bool holds(uint8_t enabled,uint8_t source,bool ending) const {
+        return ending?tail_inputs_released(mask_,enabled):
+            source && ptt_source(mask_&enabled)==source;
+    }
+private:
+    uint8_t mask_=0,previous_raw_=0;
+};
+
 struct TxRequest {
     uint32_t frequency=0;
     uint16_t timeout_seconds=0;

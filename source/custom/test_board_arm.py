@@ -92,6 +92,35 @@ class Machine:
         return self.u.reg_read(UC_ARM_REG_R0)
     def function(self,name):return self.call(symbols[name])
 
+if not args.bench:
+    # Exercise the hold callback actually linked into main.
+    hold=Machine(raw)
+    hold.ptt_pins=1<<3
+    hold.u.mem_write(symbols['_ZL18enabled_ptt_inputs'],b'\x07')
+    hold.u.mem_write(symbols['_ZL15held_ptt_source'],b'\x01')
+    hold.u.mem_write(symbols['_ZL10ptt_inputs'],b'\x01\x01')
+    state=symbols['_ZZ4mainE3ptt'] # Ptt::state_ is the first byte
+    callback='_ZZ4mainENUlvE_4_FUNEv'
+    hold.u.mem_write(state,b'\x02') # Preparing
+    assert hold.function(callback)==1
+    hold.ptt_pins=0 # release after the loop sample
+    assert hold.function(callback)==0 # keep the live key-up interlock
+    hold.u.mem_write(state,b'\x03') # Transmitting
+    assert hold.function(callback)==1 # should wait for the sampled edge
+    hold.u.mem_write(symbols['_ZL10ptt_inputs'],b'\x00\x00')
+    hold.u.mem_write(symbols['_ZL9tail_hold'],b'\x01')
+    hold.ptt_pins=1<<3 # re-press after the sampled release
+    assert hold.function(callback)==1 # hold the tail for this iteration
+    hold.u.mem_write(state,b'\x04') # Ending
+    hold.u.mem_write(symbols['_ZL10ptt_inputs'],b'\x01\x01')
+    assert hold.function(callback)==0 # sampled re-press aborts it
+    hold.u.mem_write(symbols['_ZL10ptt_inputs'],b'\x00\x00')
+    def power_off(u,access,address,size,value,data):
+        u.mem_write(address,struct.pack('<I',1))
+    hold.u.hook_add(UC_HOOK_MEM_READ,power_off,begin=GPIO[4]+8,end=GPIO[4]+8)
+    assert hold.function(callback)==0
+    print('ARM main PTT hold: sampled release while keyed, live key-up and power-off guards PASS')
+
 def keyed_board(m):
     m.u.mem_write(0x4002101c,struct.pack('<I',1<<29))
     m.u.mem_write(0x40007400,struct.pack('<I',0x10001))

@@ -757,6 +757,29 @@ extern "C" int regression_tests() {
  ptt.poll(tx,request,15304,true);
  CHECK(tx.keys==2 && ptt.state()==voice::Ptt::State::WaitRelease);
  {
+  struct SampledBackend : TxBackend {
+   voice::PttInputs inputs;
+   bool ending=false;
+   bool healthy() const {return healthy_flag && inputs.holds(7,1,ending);}
+  } sampled;
+  voice::Ptt edge_ptt;
+  voice::TxRequest edge_request{446018750,15,0,true,true,true};
+  const auto poll_edge=[&](uint8_t raw,uint32_t now) {
+   const bool pressed=voice::ptt_source(sampled.inputs.sample(raw))!=0;
+   sampled.ending=!pressed;
+   edge_ptt.poll(sampled,edge_request,now,pressed);
+  };
+  poll_edge(0,0);poll_edge(1,1);
+  poll_edge(0,2); // one open contact sample is filtered
+  CHECK(edge_ptt.state()==voice::Ptt::State::Transmitting && sampled.stops==0);
+  poll_edge(1,3);poll_edge(0,4);poll_edge(0,5);
+  CHECK(edge_ptt.state()==voice::Ptt::State::Ending && sampled.tails==1 && sampled.stops==0);
+  poll_edge(0,404);
+  CHECK(edge_ptt.state()==voice::Ptt::State::Ending);
+  poll_edge(0,405);
+  CHECK(edge_ptt.state()==voice::Ptt::State::Idle && sampled.stops==1);
+ }
+ {
   TxBackend end_radio;
   voice::Ptt end_ptt;
   voice::TxRequest end_request{446081250,15,1,true,true,true};
